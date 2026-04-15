@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "owa-piggy"
+version = "0.1.0"
+description = "Get an Outlook/Graph access token without registering an app in Azure AD"
+requires-python = ">=3.8"
+
+[project.scripts]
+owa-piggy = "owa_piggy:main"
+
+[tool.setuptools]
+py-modules = ["owa_piggy"]

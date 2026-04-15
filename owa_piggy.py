@@ -317,7 +317,9 @@ def main():
     if do_setup:
         print('\n\tOWA-PIGGY 🐽  CONFIGURED!\n', file=sys.stderr)
         print('  REMEMBER TO REFRESH IN THE 24-HOUR WINDOW', file=sys.stderr)
-        print('  RUN ./add-to-path.sh TO SYMLINK TO /usr/local/bin/', file=sys.stderr)
+        print('  TO INSTALL:', file=sys.stderr)
+        print('    pipx install .           (recommended)', file=sys.stderr)
+        print('    ./add-to-path.sh         (symlink to /usr/local/bin/)', file=sys.stderr)
         print('  RUN ./setup-cron.sh TO REFRESH THE TOKEN EVERY HOUR', file=sys.stderr)
         print('\n\tENJOY YOUR APP-REG-FREE SCOPES\n', file=sys.stderr)
 

@@ -1,6 +1,12 @@
 # owa-piggy
 
-Get a Microsoft Outlook/Graph access token without registering an app in Azure AD.
+Get a Graph access token without an app registration, client secret or tenant admin permissions.
+
+*`This is very good “clever personal tool” code.`*  
+*`It has that nice smell of “I needed this, so I built the smallest thing that works”.`*  
+*`I like that.`*
+-- *Codex*
+
 
 Piggybacks on OWA's (One Outlook Web) existing first-party SPA client registration to exchange a refresh token for a fresh access token — no tenant admin, no app registration, no client secret.
 
@@ -53,10 +59,14 @@ export OWA_TENANT_ID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 ## Install
 
 ```sh
-./add-to-path.sh
+pipx install .
 ```
 
-Symlinks `owa-piggy` into `/usr/local/bin`.
+Or symlink directly (no pipx required):
+
+```sh
+./add-to-path.sh
+```
 
 ## Usage
 
