@@ -19,10 +19,24 @@ The token comes back with a broad set of scopes including `Calendars.ReadWrite`,
 One-time. Takes about 2 minutes.
 
 1. Open [outlook.cloud.microsoft](https://outlook.cloud.microsoft) in your browser
-2. Open DevTools (F12) > Application > Local Storage > `https://outlook.cloud.microsoft`
-3. Find the key ending in `-refreshtoken-9199bf20-a13f-4107-85dc-02114787ef48--`
-4. Copy the `secret` field value (starts with `1.AQ...`)
-5. Find the IdToken entry, copy the `realm` field (your tenant ID, a UUID)
+2. Open DevTools (F12) > Console and run:
+
+```js
+const key = Object.keys(localStorage).find(k => k.includes('|refreshtoken|'))
+const token = JSON.parse(localStorage.getItem(key)).secret
+console.log(token)
+```
+
+3. Copy the logged token (starts with `1.AQ...`)
+4. Find your tenant ID - run:
+
+```js
+const key = Object.keys(localStorage).find(k => k.includes('|idtoken|'))
+const tenant = JSON.parse(localStorage.getItem(key)).realm
+console.log(tenant)
+```
+
+5. Copy the logged tenant ID (a UUID)
 6. Run:
 
 ```sh

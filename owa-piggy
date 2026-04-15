@@ -19,12 +19,16 @@ Config (any of):
   ~/.config/owa-piggy/config       KEY=value file
 
 One-time setup:
-  1. Open DevTools on outlook.cloud.microsoft
-  2. Application > Local Storage > https://outlook.cloud.microsoft
-  3. Find key ending in: -refreshtoken-9199bf20-a13f-4107-85dc-02114787ef48--
-  4. Copy the "secret" field (starts with "1.AQ...")
-  5. Find your tenant ID in the "realm" field of the IdToken entry
-  6. owa-piggy --save-config
+  1. Open https://outlook.cloud.microsoft in your browser
+  2. Open DevTools (F12) > Console and run:
+       const key = Object.keys(localStorage).find(k => k.includes('|refreshtoken|'))
+       const token = JSON.parse(localStorage.getItem(key)).secret
+       console.log(token)
+  3. For your tenant ID, run:
+       const key = Object.keys(localStorage).find(k => k.includes('|idtoken|'))
+       const tenant = JSON.parse(localStorage.getItem(key)).realm
+       console.log(tenant)
+  4. owa-piggy --save-config
      or: export OWA_REFRESH_TOKEN=... OWA_TENANT_ID=...
 
 Notes:
@@ -121,19 +125,61 @@ def exchange_token(refresh_token, tenant_id, client_id, scope):
         return None
 
 
+def read_input(prompt):
+    """Read input in raw tty mode to bypass the terminal line-length limit (~4096 bytes).
+    Strips embedded newlines so paste from browser console works regardless of wrapping."""
+    print(prompt)
+    sys.stdout.flush()
+    try:
+        import termios
+        import tty
+        fd = sys.stdin.fileno()
+        old = termios.tcgetattr(fd)
+        chars = []
+        try:
+            tty.setraw(fd)
+            while True:
+                ch = sys.stdin.read(1)
+                if ch in ('\r', '\n'):
+                    if chars:
+                        break  # Enter ends input once we have something
+                elif ch == '\x03':
+                    raise KeyboardInterrupt
+                elif ch in ('\x7f', '\x08'):  # backspace / ctrl-H
+                    if chars:
+                        chars.pop()
+                        sys.stdout.write('\b \b')
+                        sys.stdout.flush()
+                else:
+                    chars.append(ch)
+                    sys.stdout.write(ch)
+                    sys.stdout.flush()
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        print()
+        return ''.join(chars).strip()
+    except (ImportError, Exception):
+        return input().strip()
+
+
 def interactive_setup(config):
     print('owa-piggy setup\n')
-    print('1. Open DevTools on outlook.cloud.microsoft (F12)')
-    print('2. Application tab > Local Storage > https://outlook.cloud.microsoft')
-    print('3. Find key ending in: -refreshtoken-9199bf20-a13f-4107-85dc-02114787ef48--')
-    print('4. Copy the "secret" field value (starts with "1.AQ...")\n')
-    rt = input('Refresh token: ').strip()
+    print('1. Open https://outlook.cloud.microsoft in your browser')
+    print('2. Open DevTools (F12) > Console')
+    print('3. Run this to get your refresh token:\n')
+    print('   const key = Object.keys(localStorage).find(k => k.includes(\'|refreshtoken|\'))')
+    print('   const token = JSON.parse(localStorage.getItem(key)).secret')
+    print('   console.log(token)\n')
+    rt = read_input('Refresh token (starts with "1.AQ..."), then press Enter:')
     if not rt:
         print('ERROR: no refresh token provided', file=sys.stderr)
         return False
 
-    print('\n5. Find the IdToken entry, copy the "realm" field (your tenant ID)')
-    tid = input('Tenant ID: ').strip()
+    print('\n4. Run this to get your tenant ID:\n')
+    print('   const key = Object.keys(localStorage).find(k => k.includes(\'|idtoken|\'))')
+    print('   const tenant = JSON.parse(localStorage.getItem(key)).realm')
+    print('   console.log(tenant)\n')
+    tid = read_input('Tenant ID (a UUID), then press Enter:')
     if not tid:
         print('ERROR: no tenant ID provided', file=sys.stderr)
         return False
@@ -169,6 +215,7 @@ options:
   --remaining       print minutes remaining on the current token
   --scope <scope>   override default scope (default: outlook.office.com)
   --save-config     interactive first-time setup, saves to config file
+  --setup           alias for --save-config
   --help            show this help
 
 config:
@@ -181,12 +228,17 @@ config:
   Environment variables take precedence over the config file.
 
 one-time setup:
-  1. Open DevTools on outlook.cloud.microsoft (F12)
-  2. Application > Local Storage > https://outlook.cloud.microsoft
-  3. Find key ending in: -refreshtoken-9199bf20-a13f-4107-85dc-02114787ef48--
-  4. Copy the "secret" value (starts with "1.AQ...")
-  5. Find the IdToken entry, copy the "realm" field (your tenant ID)
-  6. Run: owa-piggy --save-config
+  1. Open https://outlook.cloud.microsoft in your browser
+  2. Open DevTools (F12) > Console
+  3. Run to get your refresh token:
+       const key = Object.keys(localStorage).find(k => k.includes('|refreshtoken|'))
+       const token = JSON.parse(localStorage.getItem(key)).secret
+       console.log(token)
+  4. Run to get your tenant ID:
+       const key = Object.keys(localStorage).find(k => k.includes('|idtoken|'))
+       const tenant = JSON.parse(localStorage.getItem(key)).realm
+       console.log(tenant)
+  5. Run: owa-piggy --save-config
 
 examples:
   owa-piggy                                         # raw token to stdout
@@ -205,7 +257,7 @@ def main():
     args = sys.argv[1:]
     want_json = '--json' in args
     want_remaining = '--remaining' in args
-    do_setup = '--save-config' in args
+    do_setup = '--save-config' in args or '--setup' in args
 
     if '--help' in args or '-h' in args:
         print_help()
@@ -261,6 +313,13 @@ def main():
         print(f'{remaining}min' if remaining is not None else 'unknown')
     else:
         print(access_token)
+
+    if do_setup:
+        print('\n\tOWA-PIGGY 🐽  CONFIGURED!\n', file=sys.stderr)
+        print('  REMEMBER TO REFRESH IN THE 24-HOUR WINDOW', file=sys.stderr)
+        print('  RUN ./add-to-path.sh TO SYMLINK TO /usr/local/bin/', file=sys.stderr)
+        print('  RUN ./setup-cron.sh TO REFRESH THE TOKEN EVERY HOUR', file=sys.stderr)
+        print('\n\tENJOY YOUR APP-REG-FREE SCOPES\n', file=sys.stderr)
 
     return 0
 
