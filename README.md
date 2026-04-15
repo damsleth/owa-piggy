@@ -1,135 +1,118 @@
 # owa-piggy
 
-Get a Graph access token without an app registration, client secret or tenant admin permissions.
+Get a Microsoft Graph/Outlook access token without registering an app, asking a tenant admin, or managing a client secret.
 
-*`This is very good “clever personal tool” code.`*  
-*`It has that nice smell of “I needed this, so I built the smallest thing that works”.`*  
-*`I like that.`*
--- *Codex*
-
-
-Piggybacks on OWA's (One Outlook Web) existing first-party SPA client registration to exchange a refresh token for a fresh access token — no tenant admin, no app registration, no client secret.
+Two minutes of setup. Then just:
 
 ```sh
 token=$(owa-piggy)
 ```
 
-## How it works
+---
 
-OWA is registered in Azure AD as a public SPA client (`9199bf20-a13f-4107-85dc-02114787ef48`). Public clients don't need a client secret. SPA refresh tokens are stored in your browser's `localStorage` and can be exchanged at Microsoft's standard OAuth2 token endpoint — as long as the request includes the `Origin` header that AAD requires for SPA clients.
+## Quickstart
 
-The token comes back with a broad set of scopes including `Calendars.ReadWrite`, `Mail.ReadWrite`, `Files.ReadWrite`, and more. OWA is also a FOCI (Family of Client IDs) member, so the same token works against `outlook.office.com`, `graph.microsoft.com`, and other Microsoft first-party APIs.
-
-## Setup
-
-One-time. Takes about 2 minutes.
-
-1. Open [outlook.cloud.microsoft](https://outlook.cloud.microsoft) in your browser
-2. Open DevTools (F12) > Console and run:
-
-```js
-const key = Object.keys(localStorage).find(k => k.includes('|refreshtoken|'))
-const token = JSON.parse(localStorage.getItem(key)).secret
-console.log(token)
-```
-
-3. Copy the logged token (starts with `1.AQ...`)
-4. Find your tenant ID - run:
-
-```js
-const key = Object.keys(localStorage).find(k => k.includes('|idtoken|'))
-const tenant = JSON.parse(localStorage.getItem(key)).realm
-console.log(tenant)
-```
-
-5. Copy the logged tenant ID (a UUID)
-6. Run:
-
-```sh
-owa-piggy --save-config
-```
-
-Or set environment variables directly:
-
-```sh
-export OWA_REFRESH_TOKEN="1.AQ..."
-export OWA_TENANT_ID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-```
-
-## Install
+**Install:**
 
 ```sh
 pipx install .
 ```
 
-Or symlink directly (no pipx required):
+**One-time setup** - open [outlook.cloud.microsoft](https://outlook.cloud.microsoft), then DevTools (F12) > Console:
 
-```sh
-./add-to-path.sh
+```js
+// Refresh token
+const key = Object.keys(localStorage).find(k => k.includes('|refreshtoken|'))
+const token = JSON.parse(localStorage.getItem(key)).secret
+console.log(token)
+
+// Tenant ID
+const key2 = Object.keys(localStorage).find(k => k.includes('|idtoken|'))
+const tenant = JSON.parse(localStorage.getItem(key2)).realm
+console.log(tenant)
 ```
 
-## Usage
+Then run the interactive setup wizard:
 
 ```sh
-owa-piggy                    # access token to stdout
-owa-piggy --remaining        # minutes left on current token
-owa-piggy --json             # full token response as JSON
-owa-piggy --json | jq .scope # inspect granted scopes
+owa-piggy --setup
+```
+
+That's it. The token rotates automatically on every use.
+
+---
+
+## Examples
+
+```sh
+owa-piggy                         # access token to stdout
+owa-piggy --remaining             # minutes left on current token
+owa-piggy --json | jq .scope      # inspect granted scopes
 owa-piggy --scope 'https://graph.microsoft.com/.default'  # Graph token
-owa-piggy --help             # full usage
 ```
 
-Pipe-friendly — raw token goes to stdout, everything else to stderr:
+Pipe-friendly - raw token goes to stdout, everything else to stderr:
 
 ```sh
+# Fetch calendar events
 curl -s -H "Authorization: Bearer $(owa-piggy)" \
   "https://outlook.office.com/api/v2.0/me/events" | jq .
+
+# Graph API
+curl -s -H "Authorization: Bearer $(owa-piggy --scope 'https://graph.microsoft.com/.default')" \
+  "https://graph.microsoft.com/v1.0/me/messages" | jq .
+
+# Use in scripts
+TOKEN=$(owa-piggy)
+az rest --headers "Authorization=Bearer $TOKEN" --url "https://graph.microsoft.com/v1.0/me"
 ```
 
-## Token lifetime
+---
+
+## How it works
+
+OWA (One Outlook Web) is registered in Azure AD as a public SPA client with ID `9199bf20-a13f-4107-85dc-02114787ef48`. Public clients require no client secret. SPA refresh tokens live in your browser's `localStorage` and can be exchanged at Microsoft's standard OAuth2 token endpoint - the only requirement is that the request includes the `Origin` header AAD expects for SPA clients.
+
+The token comes back with a broad set of delegated scopes: `Calendars.ReadWrite`, `Mail.ReadWrite`, `Files.ReadWrite`, and more. OWA is also a FOCI (Family of Client IDs) member, so the same refresh token works against `outlook.office.com`, `graph.microsoft.com`, and other Microsoft first-party APIs.
 
 | Token | Lifetime |
 |---|---|
 | Access token | ~90 minutes |
-| Refresh token | 24h sliding window |
+| Refresh token | 24h sliding window, rotates on each use |
 
-The refresh token rotates on every exchange and is saved automatically to `~/.config/owa-piggy/config`. Use `owa-piggy` at least once a day and the refresh token never expires. If it does lapse, re-run the setup steps above to seed a fresh one.
-
-## Keeping the token alive automatically
-
-Set up an hourly cron job that silently refreshes the token in the background:
+The rotated refresh token is saved automatically to `~/.config/owa-piggy/config` after every exchange. Use `owa-piggy` at least once a day and the token never expires. Set up an hourly cron to keep it alive without thinking about it:
 
 ```sh
 ./setup-cron.sh
 ```
 
-This registers a cron entry that runs `owa-piggy` at the top of every hour, keeping the refresh token well within its 24h sliding window. Errors are logged to `~/.config/owa-piggy/cron.log`.
+---
 
-```sh
-# verify
-crontab -l | grep owa-piggy
+## Security model
 
-# check logs
-tail -f ~/.config/owa-piggy/cron.log
+This tool deliberately operates within the boundaries of what Microsoft allows for public SPA clients:
 
-# remove
-crontab -e   # delete the owa-piggy line
-```
+- **No credentials stored in Azure** - there is no app registration to compromise
+- **Delegated permissions only** - the token acts as you, with your existing access, nothing more
+- **Standard OAuth2 token exchange** - no browser automation, no cookie theft, no undocumented APIs
+- **Your session, your token** - the refresh token is the same one OWA already stores in your browser; this tool just makes it usable from the terminal
 
-## Config file
+The token is scoped to your user identity. A password change or admin revocation invalidates it immediately - the same as it would in the browser.
 
-Auto-created at `~/.config/owa-piggy/config` by `--save-config`:
+Config is stored at `~/.config/owa-piggy/config`:
 
 ```
 OWA_REFRESH_TOKEN="1.AQ..."
 OWA_TENANT_ID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 ```
 
-Environment variables take precedence over the file if both are set.
-`OWA_CLIENT_ID` can be set to override the default client (rarely needed).
+Environment variables (`OWA_REFRESH_TOKEN`, `OWA_TENANT_ID`) take precedence over the config file. `OWA_CLIENT_ID` can override the default client ID if needed.
+
+---
 
 ## Caveats
 
-- Only works with accounts that have OWA access (Microsoft 365 / Exchange Online)
-- Refresh tokens are tied to your user session — a password change or admin revocation invalidates them
-- This uses a Microsoft first-party client ID, not your own registration. Use for personal tooling, not production services
+- Requires an account with OWA access (Microsoft 365 / Exchange Online)
+- Uses a Microsoft first-party client ID - fine for personal tooling, not for production services or anything you'd ship to other users
+- Refresh tokens are bound to your session; admin revocation or a password change will invalidate them
+- If the token lapses (no use for 24h), re-run `owa-piggy --setup` to seed a fresh one from the browser
