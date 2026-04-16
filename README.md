@@ -116,3 +116,10 @@ Environment variables (`OWA_REFRESH_TOKEN`, `OWA_TENANT_ID`) take precedence ove
 - Uses a Microsoft first-party client ID - fine for personal tooling, not for production services or anything you'd ship to other users
 - Refresh tokens are bound to your session; admin revocation or a password change will invalidate them
 - If the token lapses (no use for 24h), re-run `owa-piggy --setup` to seed a fresh one from the browser
+
+## Disclaimer
+
+```
+This is a personal CLI tool for people who already understand OAuth tokens and their risks.  
+If you don't immediately know why storing a refresh token on disk might be a bad idea, you should not use this.
+```

@@ -69,7 +69,7 @@ def load_config():
 
 
 def save_config(config):
-    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     lines = []
     if CONFIG_PATH.exists():
         # Preserve existing lines, update known keys
@@ -90,6 +90,7 @@ def save_config(config):
         for k, v in config.items():
             lines.append(f'{k}="{v}"')
     CONFIG_PATH.write_text('\n'.join(lines) + '\n')
+    CONFIG_PATH.chmod(0o600)
 
 
 def exchange_token(refresh_token, tenant_id, client_id, scope):
@@ -122,6 +123,9 @@ def exchange_token(refresh_token, tenant_id, client_id, scope):
             print(f'ERROR: {code}: {desc}', file=sys.stderr)
         except Exception:
             print(f'ERROR: HTTP {e.code}: {err_body[:200]}', file=sys.stderr)
+        return None
+    except urllib.error.URLError as e:
+        print(f'ERROR: {e.reason}', file=sys.stderr)
         return None
 
 
@@ -196,8 +200,8 @@ def token_minutes_remaining(access_token):
     import time
     try:
         payload_b64 = access_token.split('.')[1]
-        payload_b64 += '=' * (4 - len(payload_b64) % 4)
-        payload = json.loads(base64.b64decode(payload_b64))
+        payload_b64 += '=' * ((4 - len(payload_b64) % 4) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(payload_b64))
         return int((payload.get('exp', 0) - time.time()) / 60)
     except Exception:
         return None
