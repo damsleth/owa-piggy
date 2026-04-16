@@ -27,7 +27,8 @@ One-time setup:
   1. Open https://outlook.cloud.microsoft in your browser
   2. Open DevTools (F12) > Console and run:
        const key = Object.keys(localStorage).find(k => k.includes('|refreshtoken|'))
-       const token = JSON.parse(localStorage.getItem(key)).secret
+       const value = JSON.parse(localStorage.getItem(key))
+       const token = value.data
        console.log(token)
   3. For your tenant ID, run:
        const key = Object.keys(localStorage).find(k => k.includes('|idtoken|'))
@@ -194,7 +195,8 @@ def interactive_setup(config):
     print('2. Open DevTools (F12) > Console')
     print('3. Run this to get your refresh token:\n')
     print('   const key = Object.keys(localStorage).find(k => k.includes(\'|refreshtoken|\'))')
-    print('   const token = JSON.parse(localStorage.getItem(key)).secret')
+    print('   const value = JSON.parse(localStorage.getItem(key))')
+    print('   const token = value.data')
     print('   console.log(token)\n')
     rt = read_input('Refresh token (starts with "1.AQ..."), then press Enter:')
     if not rt:
@@ -282,7 +284,8 @@ one-time setup:
   2. Open DevTools (F12) > Console
   3. Run to get your refresh token:
        const key = Object.keys(localStorage).find(k => k.includes('|refreshtoken|'))
-       const token = JSON.parse(localStorage.getItem(key)).secret
+       const value = JSON.parse(localStorage.getItem(key))
+       const token = value.data
        console.log(token)
   4. Run to get your tenant ID:
        const key = Object.keys(localStorage).find(k => k.includes('|idtoken|'))
