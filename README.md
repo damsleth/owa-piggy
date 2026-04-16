@@ -1,16 +1,24 @@
 # owa-piggy
 
-Get a MS JWT without an app registration, asking a tenant admin or managing client secrets.
+Turn your existing Outlook Web session into a reusable API token from the terminal.  
+No app registration, asking a tenant admin or managing client secrets.
 
 ```sh
 brew install --HEAD damsleth/tap/owa-piggy
 owa-piggy --setup
 ```
 
-Then just:
+Then
 
 ```sh
 curl -H "Authorization: Bearer $(owa-piggy --graph)" https://graph.microsoft.com/v1.0/me
+```
+
+Or
+
+```sh
+curl -s -H "Authorization: Bearer $(owa-piggy)" \
+  "https://outlook.office.com/api/v2.0/me/messages?\$top=1" | jq -r '.value[0].Subject'
 ```
 
 ---
@@ -44,9 +52,9 @@ OWA (One Outlook Web) is registered in Azure AD as a public SPA client with ID `
 
 The token comes back with a broad set of delegated scopes: `Calendars.ReadWrite`, `Mail.ReadWrite`, `Files.ReadWrite`, and more. OWA is also a FOCI (Family of Client IDs) member, so the same refresh token works against `outlook.office.com`, `graph.microsoft.com`, and other Microsoft first-party APIs.
 
-| Token | Lifetime |
-|---|---|
-| Access token | ~90 minutes |
+| Token         | Lifetime                                |
+| ------------- | --------------------------------------- |
+| Access token  | ~90 minutes                             |
 | Refresh token | 24h sliding window, rotates on each use |
 
 The rotated refresh token is saved automatically to `~/.config/owa-piggy/config` after every exchange. Use `owa-piggy` at least once a day and the token never expires. Set up an hourly cron to keep it alive without thinking about it:
@@ -89,6 +97,6 @@ Environment variables (`OWA_REFRESH_TOKEN`, `OWA_TENANT_ID`) take precedence ove
 ## Disclaimer
 
 ```
-This is a personal CLI tool for people who understand OAuth tokens and their risks.  
+This is a personal CLI tool for people who understand OAuth tokens and their risks.
 If you don't know why storing a refresh token on disk might be a bad idea you should not use this.
 ```
