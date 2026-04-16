@@ -11,8 +11,13 @@ browser's MSAL cache and the Origin header that makes AAD happy.
 Usage:
   owa-piggy                        # print access token to stdout
   owa-piggy --json                 # print full response as JSON
+  owa-piggy --env                  # print ACCESS_TOKEN=... EXPIRES_IN=...
+  owa-piggy --decode               # decode and print the JWT header + payload
   owa-piggy --remaining            # print minutes remaining on token
-  owa-piggy --scope <scope>        # override default scope
+  owa-piggy --graph                # get a Microsoft Graph token
+  owa-piggy --teams                # get a Teams token
+  owa-piggy --list-scopes          # show all FOCI audiences
+  owa-piggy --scope <scope>        # override scope explicitly
 
 Config (any of):
   Environment variables:           OWA_REFRESH_TOKEN, OWA_TENANT_ID
@@ -50,6 +55,23 @@ from pathlib import Path
 CLIENT_ID = '9199bf20-a13f-4107-85dc-02114787ef48'
 ORIGIN = 'https://outlook.cloud.microsoft'
 DEFAULT_SCOPE = 'https://outlook.office.com/Calendars.ReadWrite openid profile offline_access'
+
+# Well-known FOCI-accessible audiences (same refresh token works for all)
+KNOWN_SCOPES = {
+    'outlook':    ('https://outlook.office.com',                   'Outlook REST (default)'),
+    'graph':      ('https://graph.microsoft.com',                  'Microsoft Graph'),
+    'teams':      ('https://api.spaces.skype.com',                 'Microsoft Teams'),
+    'azure':      ('https://management.azure.com',                 'Azure Resource Manager'),
+    'keyvault':   ('https://vault.azure.net',                      'Azure Key Vault'),
+    'storage':    ('https://storage.azure.com',                    'Azure Blob/Table/Queue Storage'),
+    'sql':        ('https://database.windows.net',                 'Azure SQL'),
+    'outlook365': ('https://outlook.office365.com',                'Outlook REST (alternate)'),
+    'substrate':  ('https://substrate.office.com',                 'Office Substrate (Copilot, search)'),
+    'manage':     ('https://manage.office.com',                    'Office Management API'),
+    'powerbi':    ('https://analysis.windows.net/powerbi/api',     'Power BI'),
+    'flow':       ('https://service.flow.microsoft.com',           'Power Automate'),
+    'devops':     ('https://app.vssps.visualstudio.com',           'Azure DevOps'),
+}
 CONFIG_PATH = Path.home() / '.config' / 'owa-piggy' / 'config'
 
 
@@ -195,16 +217,34 @@ def interactive_setup(config):
     return True
 
 
-def token_minutes_remaining(access_token):
+def decode_jwt_segment(segment):
     import base64
+    segment += '=' * ((4 - len(segment) % 4) % 4)
+    return json.loads(base64.urlsafe_b64decode(segment))
+
+
+def token_minutes_remaining(access_token):
     import time
     try:
-        payload_b64 = access_token.split('.')[1]
-        payload_b64 += '=' * ((4 - len(payload_b64) % 4) % 4)
-        payload = json.loads(base64.urlsafe_b64decode(payload_b64))
+        payload = decode_jwt_segment(access_token.split('.')[1])
         return int((payload.get('exp', 0) - time.time()) / 60)
     except Exception:
         return None
+
+
+def decode_jwt(access_token):
+    parts = access_token.split('.')
+    lines = []
+    for i, label in enumerate(['Header', 'Payload']):
+        if i >= len(parts):
+            break
+        try:
+            decoded = decode_jwt_segment(parts[i])
+            lines.append(f'=== {label} ===')
+            lines.append(json.dumps(decoded, indent=2))
+        except Exception as e:
+            print(f'Error decoding {label}: {e}', file=sys.stderr)
+    return '\n'.join(lines)
 
 
 def print_help():
@@ -216,8 +256,14 @@ def print_help():
 options:
   (none)            print access token to stdout
   --json            print full token response as JSON
+  --env             print ACCESS_TOKEN and EXPIRES_IN as KEY=value lines
+  --decode          decode and print the JWT header and payload
   --remaining       print minutes remaining on the current token
-  --scope <scope>   override default scope (default: outlook.office.com)
+  --graph           use Microsoft Graph scope
+  --teams           use Microsoft Teams scope
+  --<name>          use any known FOCI scope (see --list-scopes)
+  --list-scopes     list all known FOCI-accessible audiences
+  --scope <scope>   override scope explicitly (takes precedence)
   --save-config     interactive first-time setup, saves to config file
   --setup           alias for --save-config
   --help            show this help
@@ -248,8 +294,13 @@ examples:
   owa-piggy                                         # raw token to stdout
   owa-piggy --remaining                             # 73min
   token=$(owa-piggy)                                # use in scripts
+  owa-piggy --graph                                  # Microsoft Graph token
+  owa-piggy --teams                                  # Teams token
+  owa-piggy --list-scopes                            # show all FOCI audiences
   owa-piggy --scope 'https://graph.microsoft.com/.default'
   owa-piggy --json | jq .scope
+  eval $(owa-piggy --env)                             # export into shell
+  owa-piggy --decode                                  # inspect JWT claims
 
 notes:
   - Refresh tokens have a 24h sliding window - use daily to keep alive
@@ -260,6 +311,8 @@ notes:
 def main():
     args = sys.argv[1:]
     want_json = '--json' in args
+    want_env = '--env' in args
+    want_decode = '--decode' in args
     want_remaining = '--remaining' in args
     do_setup = '--save-config' in args or '--setup' in args
 
@@ -267,7 +320,19 @@ def main():
         print_help()
         return 0
 
+    if '--list-scopes' in args:
+        max_name = max(len(n) for n in KNOWN_SCOPES)
+        max_aud = max(len(aud) for aud, _ in KNOWN_SCOPES.values())
+        for name, (aud, desc) in KNOWN_SCOPES.items():
+            flag = f'--{name}'
+            print(f'  {flag:<{max_name + 3}} {aud:<{max_aud + 2}} {desc}')
+        return 0
+
     scope = DEFAULT_SCOPE
+    for name, (aud, _) in KNOWN_SCOPES.items():
+        if f'--{name}' in args:
+            scope = f'{aud}/.default openid profile offline_access'
+            break
     if '--scope' in args:
         idx = args.index('--scope')
         if idx + 1 < len(args):
@@ -312,6 +377,11 @@ def main():
 
     if want_json:
         print(json.dumps(result, indent=2))
+    elif want_env:
+        print(f'ACCESS_TOKEN={access_token}')
+        print(f'EXPIRES_IN={result.get("expires_in", "")}')
+    elif want_decode:
+        print(decode_jwt(access_token))
     elif want_remaining:
         remaining = token_minutes_remaining(access_token)
         print(f'{remaining}min' if remaining is not None else 'unknown')
