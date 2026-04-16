@@ -1,44 +1,17 @@
 # owa-piggy
 
-Get a Microsoft Graph/Outlook access token without registering an app, asking a tenant admin, or managing a client secret.
-
-Two minutes of setup. Then just:
+Get a MS JWT without an app registration, asking a tenant admin or managing client secrets.
 
 ```sh
-token=$(owa-piggy)
-```
-
----
-
-## Quickstart
-
-**Install:**
-
-```sh
-pipx install .
-```
-
-**One-time setup** - open [outlook.cloud.microsoft](https://outlook.cloud.microsoft), then DevTools (F12) > Console:
-
-```js
-// Refresh token
-const key = Object.keys(localStorage).find(k => k.includes('|refreshtoken|'))
-const token = JSON.parse(localStorage.getItem(key)).secret
-console.log(token)
-
-// Tenant ID
-const key2 = Object.keys(localStorage).find(k => k.includes('|idtoken|'))
-const tenant = JSON.parse(localStorage.getItem(key2)).realm
-console.log(tenant)
-```
-
-Then run the interactive setup wizard:
-
-```sh
+brew install --HEAD damsleth/tap/owa-piggy
 owa-piggy --setup
 ```
 
-That's it. The token rotates automatically on every use.
+Then just:
+
+```sh
+curl -H "Authorization: Bearer $(owa-piggy --graph)" https://graph.microsoft.com/v1.0/me
+```
 
 ---
 
@@ -46,9 +19,9 @@ That's it. The token rotates automatically on every use.
 
 ```sh
 owa-piggy                         # access token to stdout
+owa-piggy --graph                 # Graph API token
 owa-piggy --remaining             # minutes left on current token
 owa-piggy --json | jq .scope      # inspect granted scopes
-owa-piggy --scope 'https://graph.microsoft.com/.default'  # Graph token
 ```
 
 Pipe-friendly - raw token goes to stdout, everything else to stderr:
@@ -58,18 +31,14 @@ Pipe-friendly - raw token goes to stdout, everything else to stderr:
 curl -s -H "Authorization: Bearer $(owa-piggy)" \
   "https://outlook.office.com/api/v2.0/me/events" | jq .
 
-# Graph API
-curl -s -H "Authorization: Bearer $(owa-piggy --scope 'https://graph.microsoft.com/.default')" \
-  "https://graph.microsoft.com/v1.0/me/messages" | jq .
-
 # Use in scripts
-TOKEN=$(owa-piggy)
+TOKEN=$(owa-piggy --graph)
 az rest --headers "Authorization=Bearer $TOKEN" --url "https://graph.microsoft.com/v1.0/me"
 ```
 
 ---
 
-## How it works
+## How?
 
 OWA (One Outlook Web) is registered in Azure AD as a public SPA client with ID `9199bf20-a13f-4107-85dc-02114787ef48`. Public clients require no client secret. SPA refresh tokens live in your browser's `localStorage` and can be exchanged at Microsoft's standard OAuth2 token endpoint - the only requirement is that the request includes the `Origin` header AAD expects for SPA clients.
 
@@ -120,6 +89,6 @@ Environment variables (`OWA_REFRESH_TOKEN`, `OWA_TENANT_ID`) take precedence ove
 ## Disclaimer
 
 ```
-This is a personal CLI tool for people who already understand OAuth tokens and their risks.  
-If you don't immediately know why storing a refresh token on disk might be a bad idea, you should not use this.
+This is a personal CLI tool for people who understand OAuth tokens and their risks.  
+If you don't know why storing a refresh token on disk might be a bad idea you should not use this.
 ```
