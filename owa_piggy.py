@@ -411,17 +411,32 @@ RESEED_SCRIPT_NAME = 'reseed-from-edge.sh'
 
 
 def find_reseed_script():
-    """Locate reseed-from-edge.sh. Checks OWA_RESEED_SCRIPT first (override
-    for non-standard layouts / pipx installs), then looks alongside this
-    file in ./scripts/ - the repo-checkout layout."""
+    """Locate reseed-from-edge.sh across install layouts.
+
+    Search order:
+      1. OWA_RESEED_SCRIPT env var (explicit override)
+      2. ./scripts/ next to this file (repo checkout)
+      3. <sys.prefix>/share/owa-piggy/scripts/ (pip / pipx data-files)
+      4. Homebrew share dirs (/usr/local/share, /opt/homebrew/share)
+
+    pyproject.toml ships the scripts as data-files to share/owa-piggy/scripts/
+    so installs via pipx/pip/brew get a working --reseed. The repo-checkout
+    path stays first so local development picks up edits immediately."""
     override = os.environ.get('OWA_RESEED_SCRIPT')
     if override:
         p = Path(override)
         if p.is_file():
             return p
-    candidate = Path(__file__).resolve().parent / 'scripts' / RESEED_SCRIPT_NAME
-    if candidate.is_file():
-        return candidate
+
+    candidates = [
+        Path(__file__).resolve().parent / 'scripts' / RESEED_SCRIPT_NAME,
+        Path(sys.prefix) / 'share' / 'owa-piggy' / 'scripts' / RESEED_SCRIPT_NAME,
+        Path('/usr/local/share/owa-piggy/scripts') / RESEED_SCRIPT_NAME,
+        Path('/opt/homebrew/share/owa-piggy/scripts') / RESEED_SCRIPT_NAME,
+    ]
+    for c in candidates:
+        if c.is_file():
+            return c
     return None
 
 
@@ -435,10 +450,13 @@ def do_reseed():
     script = find_reseed_script()
     if not script:
         print(
-            f'ERROR: {RESEED_SCRIPT_NAME} not found.\n'
-            '  Expected in ./scripts/ next to owa_piggy.py (repo checkout).\n'
-            '  Set OWA_RESEED_SCRIPT=/path/to/reseed-from-edge.sh to override,\n'
-            '  or clone the repo: https://github.com/damsleth/owa-piggy',
+            f'ERROR: {RESEED_SCRIPT_NAME} not found. Searched:\n'
+            '    $OWA_RESEED_SCRIPT\n'
+            '    <module_dir>/scripts/ (repo checkout)\n'
+            '    <sys.prefix>/share/owa-piggy/scripts/ (pipx/pip)\n'
+            '    /usr/local/share/owa-piggy/scripts/ (brew intel)\n'
+            '    /opt/homebrew/share/owa-piggy/scripts/ (brew apple silicon)\n'
+            '  Reinstall, or set OWA_RESEED_SCRIPT=/path/to/reseed-from-edge.sh',
             file=sys.stderr,
         )
         return 1
@@ -701,7 +719,8 @@ def do_debug():
 
     reseed = find_reseed_script()
     row('ok' if reseed else 'no', 'reseed script',
-        str(reseed) if reseed else 'not found (pipx install strips scripts/)')
+        str(reseed) if reseed else
+        'not found in any standard location (OWA_RESEED_SCRIPT overrides)')
 
     return 0
 

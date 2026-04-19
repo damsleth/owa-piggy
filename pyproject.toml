@@ -1,6 +1,6 @@
 [build-system]
 requires = ["setuptools>=68"]
-build-backend = "setuptools.backends.legacy:build"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "owa-piggy"
@@ -13,3 +13,12 @@ owa-piggy = "owa_piggy:main"
 
 [tool.setuptools]
 py-modules = ["owa_piggy"]
+
+# Ship the reseed helpers alongside the module so `owa-piggy --reseed` works
+# in packaged installs (pipx, pip, brew). They land at
+# <sys.prefix>/share/owa-piggy/scripts/ which find_reseed_script() checks.
+[tool.setuptools.data-files]
+"share/owa-piggy/scripts" = [
+  "scripts/reseed-from-edge.sh",
+  "scripts/scrape_edge.py",
+]
