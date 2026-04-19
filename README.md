@@ -6,6 +6,9 @@ No app registration, asking a tenant admin or managing client secrets.
 ```sh
 brew install --HEAD damsleth/tap/owa-piggy
 owa-piggy --setup
+# or, to avoid terminal paste-corruption on long tokens:
+# copy the two lines the browser snippet prints, then
+pbpaste | owa-piggy --save-config
 ```
 
 Then
@@ -57,11 +60,13 @@ The token comes back with a broad set of delegated scopes: `Calendars.ReadWrite`
 | Access token  | ~90 minutes                             |
 | Refresh token | 24h sliding window, rotates on each use |
 
-The rotated refresh token is saved automatically to `~/.config/owa-piggy/config` after every exchange. Use `owa-piggy` at least once a day and the token never expires. Set up an hourly cron to keep it alive without thinking about it:
+The rotated refresh token is saved automatically to `~/.config/owa-piggy/config` after every exchange (only when the token originally came from the config file - env-only callers keep env-only semantics and get a rotation notice on stderr). Use `owa-piggy` at least once a day and the token never expires. Install a LaunchAgent to keep it alive without thinking about it:
 
 ```sh
-./setup-cron.sh
+./scripts/setup-refresh.sh
 ```
+
+The agent runs hourly via `launchd`'s `StartCalendarInterval` and, unlike cron, fires on wake for any hour that was missed while the Mac was asleep - so an overnight-closed laptop still rotates the token before the 24h SPA window closes.
 
 ---
 
@@ -89,6 +94,7 @@ Environment variables (`OWA_REFRESH_TOKEN`, `OWA_TENANT_ID`) take precedence ove
 
 ## Caveats
 
+- **Seed from Microsoft Edge.** Edge integrates with Microsoft's native SSO broker and stores a real FOCI refresh token (`1.AQ...`) in MSAL's cache. Plain Chromium browsers (Vivaldi, Brave, Chrome) fall back to a lighter flow that stores a session-bound opaque token which AAD rejects as malformed (`AADSTS9002313`). That's also why those browsers log you out of OWA more often - the session token has a shorter fuse.
 - Requires an account with OWA access (Microsoft 365 / Exchange Online)
 - Uses a Microsoft first-party client ID - fine for personal tooling, not for production services or anything you'd ship to other users
 - Refresh tokens are bound to your session; admin revocation or a password change will invalidate them

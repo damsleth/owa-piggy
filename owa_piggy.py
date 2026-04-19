@@ -25,16 +25,17 @@ Config (any of):
 
 One-time setup:
   1. Open https://outlook.cloud.microsoft in your browser
-  2. Open DevTools (F12) > Console and run:
-       const key = Object.keys(localStorage).find(k => k.includes('|refreshtoken|'))
-       const value = JSON.parse(localStorage.getItem(key))
-       const token = value.data
-       console.log(token)
-  3. For your tenant ID, run:
-       const key = Object.keys(localStorage).find(k => k.includes('|idtoken|'))
-       const tenant = JSON.parse(localStorage.getItem(key)).realm
-       console.log(tenant)
-  4. owa-piggy --save-config
+  2. Use Microsoft Edge (plain Chromium browsers like Vivaldi/Brave/Chrome
+     store a session-bound token in `.data` that AAD will reject as malformed;
+     Edge integrates with the MS SSO broker and stores a real FOCI refresh
+     token in `.secret`). Open DevTools (F12) > Console and run:
+       const find = s => Object.keys(localStorage).find(k => k.includes(s))
+       const parse = s => JSON.parse(localStorage[find(s)])
+       const rt = parse('|refreshtoken|'), it = parse('|idtoken|')
+       if (!rt.secret) console.warn('WARN: non-MSAL shape; seed from Edge.')
+       console.log('OWA_REFRESH_TOKEN=' + (rt.secret || rt.data))
+       console.log('OWA_TENANT_ID=' + (it.realm || find('|idtoken|').split('|')[5]))
+  3. owa-piggy --save-config
      or: export OWA_REFRESH_TOKEN=... OWA_TENANT_ID=...
 
 Notes:
@@ -77,21 +78,37 @@ CONFIG_PATH = Path.home() / '.config' / 'owa-piggy' / 'config'
 
 
 def load_config():
+    """Returns (config, persist). persist is True only when OWA_REFRESH_TOKEN
+    came from the on-disk config; env-only callers keep env-only semantics so
+    rotated tokens are never silently written to disk."""
     config = {}
+    file_keys = set()
     if CONFIG_PATH.exists():
         for line in CONFIG_PATH.read_text().splitlines():
             line = line.strip()
             if line and not line.startswith('#') and '=' in line:
                 k, _, v = line.partition('=')
-                config[k.strip()] = v.strip().strip('"')
+                k = k.strip()
+                config[k] = v.strip().strip('"')
+                file_keys.add(k)
     # Environment overrides file
     for key in ('OWA_REFRESH_TOKEN', 'OWA_TENANT_ID', 'OWA_CLIENT_ID'):
         if key in os.environ:
             config[key] = os.environ[key]
-    return config
+    persist = 'OWA_REFRESH_TOKEN' in file_keys
+    return config, persist
 
 
 def save_config(config):
+    """Atomically rewrite the config file.
+
+    Refresh tokens rotate on every successful exchange, so a partial write here
+    would corrupt the only live token and force the user to reseed from the
+    browser. Write the new contents to a sibling temp file, fsync, chmod, then
+    rename over the target - rename within a filesystem is atomic on POSIX, so
+    either the old or the new file is visible, never a truncated mix.
+    """
+    import tempfile
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     lines = []
     if CONFIG_PATH.exists():
@@ -112,8 +129,25 @@ def save_config(config):
     else:
         for k, v in config.items():
             lines.append(f'{k}="{v}"')
-    CONFIG_PATH.write_text('\n'.join(lines) + '\n')
-    CONFIG_PATH.chmod(0o600)
+    payload = '\n'.join(lines) + '\n'
+
+    fd, tmp_path = tempfile.mkstemp(
+        prefix='.config.', suffix='.tmp', dir=str(CONFIG_PATH.parent)
+    )
+    tmp = Path(tmp_path)
+    try:
+        os.chmod(tmp, 0o600)  # apply perms before the file holds any secret
+        with os.fdopen(fd, 'w') as f:
+            f.write(payload)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, CONFIG_PATH)
+    except Exception:
+        try:
+            tmp.unlink()
+        except FileNotFoundError:
+            pass
+        raise
 
 
 def exchange_token(refresh_token, tenant_id, client_id, scope):
@@ -152,9 +186,18 @@ def exchange_token(refresh_token, tenant_id, client_id, scope):
         return None
 
 
-def read_input(prompt):
+def read_input(prompt, secret=False):
     """Read input in raw tty mode to bypass the terminal line-length limit (~4096 bytes).
-    Strips embedded newlines so paste from browser console works regardless of wrapping."""
+
+    Modern terminals wrap pasted text with bracketed-paste escape sequences
+    (ESC [200~ ... ESC [201~). In cooked mode the terminal strips these; in
+    raw mode they leak through as literal bytes and corrupt the payload, which
+    for a refresh token means AAD rejects the exchange as malformed. We detect
+    the BP start/end sequences and drop them, and strip any stray CSI escape.
+
+    When secret=True, characters are not echoed and backspace does not emit
+    visual feedback."""
+    import re
     print(prompt)
     sys.stdout.flush()
     try:
@@ -163,50 +206,118 @@ def read_input(prompt):
         fd = sys.stdin.fileno()
         old = termios.tcgetattr(fd)
         chars = []
+        in_paste = False
         try:
             tty.setraw(fd)
             while True:
                 ch = sys.stdin.read(1)
+                # Handle CSI escape sequences (bracketed paste + anything else)
+                if ch == '\x1b':
+                    seq = ch + sys.stdin.read(1)  # expect '['
+                    if seq == '\x1b[':
+                        tail = ''
+                        while True:
+                            c = sys.stdin.read(1)
+                            tail += c
+                            if c.isalpha() or c == '~':
+                                break
+                        full = seq + tail
+                        if full == '\x1b[200~':
+                            in_paste = True
+                        elif full == '\x1b[201~':
+                            in_paste = False
+                        # drop any other CSI sequence silently
+                    continue
                 if ch in ('\r', '\n'):
+                    # Inside a pasted block, a newline is data, not submit.
+                    if in_paste:
+                        continue  # silently drop embedded newlines
                     if chars:
-                        break  # Enter ends input once we have something
-                elif ch == '\x03':
+                        break
+                    continue
+                if ch == '\x03':
                     raise KeyboardInterrupt
-                elif ch in ('\x7f', '\x08'):  # backspace / ctrl-H
-                    if chars:
+                if ch in ('\x7f', '\x08'):  # backspace / ctrl-H
+                    if chars and not in_paste:
                         chars.pop()
-                        sys.stdout.write('\b \b')
-                        sys.stdout.flush()
-                else:
-                    chars.append(ch)
+                        if not secret:
+                            sys.stdout.write('\b \b')
+                            sys.stdout.flush()
+                    continue
+                if ord(ch) < 0x20:
+                    continue  # drop other control chars (tabs, etc.)
+                chars.append(ch)
+                if not secret:
                     sys.stdout.write(ch)
                     sys.stdout.flush()
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old)
         print()
-        return ''.join(chars).strip()
+        # Belt-and-suspenders: strip any residual CSI sequence that slipped
+        # through a partial read, then trim whitespace.
+        cleaned = re.sub(r'\x1b\[[\d;]*[ -/]*[@-~]', '', ''.join(chars))
+        return cleaned.strip()
     except (ImportError, Exception):
+        if secret:
+            import getpass
+            return getpass.getpass('').strip()
         return input().strip()
 
 
+def parse_kv_stream(text):
+    """Parse KEY=value lines. Only recognises known OWA_* keys to avoid
+    writing arbitrary junk to the config file."""
+    allowed = {'OWA_REFRESH_TOKEN', 'OWA_TENANT_ID', 'OWA_CLIENT_ID'}
+    out = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith('#') or '=' not in line:
+            continue
+        k, _, v = line.partition('=')
+        k = k.strip()
+        v = v.strip().strip('"').strip("'")
+        if k in allowed and v:
+            out[k] = v
+    return out
+
+
 def interactive_setup(config):
+    # Non-interactive path: if stdin is piped, parse KEY=value lines from it.
+    # This avoids the bracketed-paste corruption that raw-tty input is prone
+    # to with very long secrets, and pairs directly with the JS snippet's
+    # KEY=value output (e.g. `pbpaste | owa-piggy --save-config`).
+    if not sys.stdin.isatty():
+        parsed = parse_kv_stream(sys.stdin.read())
+        if not parsed.get('OWA_REFRESH_TOKEN') or not parsed.get('OWA_TENANT_ID'):
+            print('ERROR: stdin missing OWA_REFRESH_TOKEN and/or OWA_TENANT_ID. '
+                  'Expected KEY=value lines as printed by the browser snippet.',
+                  file=sys.stderr)
+            return False
+        config.update(parsed)
+        save_config(config)
+        print(f'Config saved to {CONFIG_PATH}', file=sys.stderr)
+        return True
+
     print('owa-piggy setup\n')
-    print('1. Open https://outlook.cloud.microsoft in your browser')
+    print('1. Open https://outlook.cloud.microsoft in Microsoft Edge')
+    print('   (plain Chromium browsers store a session-bound token that')
+    print('    AAD rejects as malformed - seed from Edge only.)')
     print('2. Open DevTools (F12) > Console')
-    print('3. Run this to get your refresh token:\n')
-    print('   const key = Object.keys(localStorage).find(k => k.includes(\'|refreshtoken|\'))')
-    print('   const value = JSON.parse(localStorage.getItem(key))')
-    print('   const token = value.data')
-    print('   console.log(token)\n')
-    rt = read_input('Refresh token (starts with "1.AQ..."), then press Enter:')
+    print('3. Paste this snippet to print both values:\n')
+    print('   const find = s => Object.keys(localStorage).find(k => k.includes(s))')
+    print('   const parse = s => JSON.parse(localStorage[find(s)])')
+    print('   const rt = parse(\'|refreshtoken|\'), it = parse(\'|idtoken|\')')
+    print('   if (!rt.secret) console.warn(\'WARN: non-MSAL shape; seed from Edge.\')')
+    print('   console.log(\'OWA_REFRESH_TOKEN=\' + (rt.secret || rt.data))')
+    print('   console.log(\'OWA_TENANT_ID=\' + (it.realm || find(\'|idtoken|\').split(\'|\')[5]))\n')
+    print('   Tip: to avoid terminal paste-corruption on very long tokens,')
+    print('   copy the two output lines and pipe them in instead:')
+    print('     pbpaste | owa-piggy --save-config\n')
+    rt = read_input('Refresh token (starts with "1.AQ..."), then press Enter (input hidden):', secret=True)
     if not rt:
         print('ERROR: no refresh token provided', file=sys.stderr)
         return False
 
-    print('\n4. Run this to get your tenant ID:\n')
-    print('   const key = Object.keys(localStorage).find(k => k.includes(\'|idtoken|\'))')
-    print('   const tenant = JSON.parse(localStorage.getItem(key)).realm')
-    print('   console.log(tenant)\n')
     tid = read_input('Tenant ID (a UUID), then press Enter:')
     if not tid:
         print('ERROR: no tenant ID provided', file=sys.stderr)
@@ -282,16 +393,15 @@ config:
 one-time setup:
   1. Open https://outlook.cloud.microsoft in your browser
   2. Open DevTools (F12) > Console
-  3. Run to get your refresh token:
-       const key = Object.keys(localStorage).find(k => k.includes('|refreshtoken|'))
-       const value = JSON.parse(localStorage.getItem(key))
-       const token = value.data
-       console.log(token)
-  4. Run to get your tenant ID:
-       const key = Object.keys(localStorage).find(k => k.includes('|idtoken|'))
-       const tenant = JSON.parse(localStorage.getItem(key)).realm
-       console.log(tenant)
-  5. Run: owa-piggy --save-config
+  3. Paste this snippet to print both values (use Microsoft Edge - other
+     Chromium browsers store a session-bound token AAD rejects):
+       const find = s => Object.keys(localStorage).find(k => k.includes(s))
+       const parse = s => JSON.parse(localStorage[find(s)])
+       const rt = parse('|refreshtoken|'), it = parse('|idtoken|')
+       if (!rt.secret) console.warn('WARN: non-MSAL shape; seed from Edge.')
+       console.log('OWA_REFRESH_TOKEN=' + (rt.secret || rt.data))
+       console.log('OWA_TENANT_ID=' + (it.realm || find('|idtoken|').split('|')[5]))
+  4. Run: owa-piggy --save-config
 
 examples:
   owa-piggy                                         # raw token to stdout
@@ -344,16 +454,29 @@ def main():
             print('ERROR: --scope requires a value', file=sys.stderr)
             return 1
 
-    config = load_config()
+    config, persist = load_config()
 
     if do_setup:
         if not interactive_setup(config):
             return 1
-        config = load_config()
+        config, persist = load_config()
 
     refresh_token = config.get('OWA_REFRESH_TOKEN', '').strip()
     tenant_id = config.get('OWA_TENANT_ID', '').strip()
     client_id = config.get('OWA_CLIENT_ID', CLIENT_ID).strip()
+
+    # Sanity-check the token shape before we ship it to AAD. Real FOCI refresh
+    # tokens are "{version}.{base64url payload}" with version 0 or 1. Plain
+    # Chromium browsers (Vivaldi/Brave/Chrome) store a session-bound opaque
+    # token at MSAL's cache location that lacks this prefix and that AAD
+    # rejects as malformed. Fail fast with an actionable message instead of
+    # letting AADSTS9002313 confuse the user.
+    if refresh_token and not (refresh_token.startswith('1.') or refresh_token.startswith('0.')):
+        print('ERROR: OWA_REFRESH_TOKEN does not look like an AAD FOCI refresh '
+              'token (expected "1.AQ..." or "0.AQ..."). Plain Chromium browsers '
+              'store a session-bound token that AAD will not accept. Reseed '
+              'from Microsoft Edge via `owa-piggy --setup`.', file=sys.stderr)
+        return 1
 
     if not refresh_token or not tenant_id:
         if not refresh_token:
@@ -373,10 +496,17 @@ def main():
         print(f'ERROR: no access_token in response: {list(result.keys())}', file=sys.stderr)
         return 1
 
-    # Persist rotated refresh token
+    # Persist rotated refresh token only when the original came from the config
+    # file. Env-only callers stay env-only; writing to disk would silently turn
+    # non-persistent usage into persistent secret storage.
     if new_refresh:
         config['OWA_REFRESH_TOKEN'] = new_refresh
-        save_config(config)
+        if persist:
+            save_config(config)
+        elif new_refresh != refresh_token:
+            print('NOTE: refresh token rotated; OWA_REFRESH_TOKEN was env-only so '
+                  'the new token was not written to disk. Update your environment '
+                  'or run `owa-piggy --save-config` to persist.', file=sys.stderr)
 
     if want_json:
         print(json.dumps(result, indent=2))
@@ -396,8 +526,8 @@ def main():
         print('  REMEMBER TO REFRESH IN THE 24-HOUR WINDOW', file=sys.stderr)
         print('  TO INSTALL:', file=sys.stderr)
         print('    pipx install .           (recommended)', file=sys.stderr)
-        print('    ./add-to-path.sh         (symlink to /usr/local/bin/)', file=sys.stderr)
-        print('  RUN ./setup-cron.sh TO REFRESH THE TOKEN EVERY HOUR', file=sys.stderr)
+        print('    ./scripts/add-to-path.sh (symlink to /usr/local/bin/)', file=sys.stderr)
+        print('  RUN ./scripts/setup-refresh.sh TO REFRESH THE TOKEN EVERY HOUR', file=sys.stderr)
         print('\n\tENJOY YOUR APP-REG-FREE SCOPES\n', file=sys.stderr)
 
     return 0
