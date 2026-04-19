@@ -73,6 +73,7 @@ launch_edge() {
     --remote-debugging-port="$PORT"
     --user-data-dir="$PROFILE_DIR"
   )
+  # shellcheck disable=SC2054  # commas inside Chrome flags are literal syntax, not array separators
   case "$mode" in
     headless)
       args=(--headless=new --window-position=-32000,-32000 --window-size=1,1 "${args[@]}")

@@ -1,0 +1,32 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.8", "3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - name: Install
+        run: pip install -e '.[test]'
+      - name: Syntax check
+        run: python -m compileall -q owa_piggy
+      - name: Tests
+        run: pytest -q
+      - name: Shellcheck
+        run: shellcheck scripts/*.sh
