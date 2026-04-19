@@ -1,14 +1,15 @@
 #!/bin/bash
+# Install owa-piggy as an editable pipx package so the `owa-piggy` console
+# script lands on PATH. Replaces the old direct-symlink approach (which
+# relied on the pre-package flat owa_piggy.py).
+set -e
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-LINK="/usr/local/bin/owa-piggy"
-TARGET="$REPO_DIR/owa_piggy.py"
 
-if [ -L "$LINK" ] || [ -e "$LINK" ]; then
-  echo "$LINK already exists."
-  read -p "Overwrite? (y/N): " answer
-  [[ "$answer" != "y" && "$answer" != "Y" ]] && exit 0
-  rm "$LINK"
+if ! command -v pipx >/dev/null 2>&1; then
+  echo "pipx not found. Install it first: brew install pipx" >&2
+  exit 1
 fi
 
-ln -s "$TARGET" "$LINK"
-echo "Linked: $LINK -> $TARGET"
+pipx install --force -e "$REPO_DIR"
+echo
+echo "owa-piggy installed via pipx. Run: owa-piggy --help"
