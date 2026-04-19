@@ -18,17 +18,29 @@ Usage:
   owa-piggy --teams                # get a Teams token
   owa-piggy --list-scopes          # show all FOCI audiences
   owa-piggy --scope <scope>        # override scope explicitly
+  owa-piggy --status               # compact health (ISO8601 expiries)
+  owa-piggy --debug                # full setup diagnostics
+  owa-piggy --reseed               # fresh token from Edge sidecar profile
+  owa-piggy --setup                # first-time setup (browser snippet)
 
 Config (any of):
   Environment variables:           OWA_REFRESH_TOKEN, OWA_TENANT_ID
   ~/.config/owa-piggy/config       KEY=value file
 
-One-time setup:
-  1. Open https://outlook.cloud.microsoft in your browser
-  2. Use Microsoft Edge (plain Chromium browsers like Vivaldi/Brave/Chrome
-     store a session-bound token in `.data` that AAD will reject as malformed;
-     Edge integrates with the MS SSO broker and stores a real FOCI refresh
-     token in `.secret`). Open DevTools (F12) > Console and run:
+Token lifetimes:
+  Access token:   ~60-90 minutes from issue
+  Refresh token:  24h sliding window (rotates on every use) AND 24h absolute
+                  hard-cap from original sign-in. The hard-cap is the binding
+                  constraint and triggers AADSTS700084. `--reseed` drives a
+                  headless Edge sidecar profile to fetch a fresh token when
+                  that happens.
+
+One-time setup (manual path):
+  1. Open https://outlook.cloud.microsoft in Microsoft Edge (plain Chromium
+     browsers like Vivaldi/Brave/Chrome store a session-bound token at
+     `.data` which AAD rejects as malformed; Edge integrates with the MS
+     SSO broker and stores a real FOCI refresh token at `.secret`).
+  2. DevTools (F12) > Console, paste:
        const find = s => Object.keys(localStorage).find(k => k.includes(s))
        const parse = s => JSON.parse(localStorage[find(s)])
        const rt = parse('|refreshtoken|'), it = parse('|idtoken|')
@@ -36,14 +48,20 @@ One-time setup:
        console.log('OWA_REFRESH_TOKEN=' + (rt.secret || rt.data))
        console.log('OWA_TENANT_ID=' + (it.realm || find('|idtoken|').split('|')[5]))
   3. owa-piggy --save-config
+     or: pbpaste | owa-piggy --save-config     (avoids tty paste corruption)
      or: export OWA_REFRESH_TOKEN=... OWA_TENANT_ID=...
 
+Automated reseed:
+  After the one-time manual setup above plus creating an Edge sidecar
+  profile (see scripts/reseed-from-edge.sh header), `owa-piggy --reseed`
+  refreshes the token without opening a browser interactively. The launchd
+  agent installed by scripts/setup-refresh.sh keeps the sliding window fresh;
+  --reseed handles the 24h hard-cap.
+
 Notes:
-  - Refresh tokens are SPA-scoped: 24h sliding window, rotates on each use
-  - New refresh token is saved automatically after each exchange
   - Default scope targets outlook.office.com (Calendars.ReadWrite + more)
-  - Use --scope 'https://graph.microsoft.com/.default' for Graph
-  - OWA is a FOCI client - the token works across Microsoft first-party APIs
+  - OWA is a FOCI client - the same RT works across Microsoft first-party
+    APIs (Graph, Teams, Azure, Key Vault, SQL, Power BI, DevOps, ...)
 """
 
 import json
@@ -473,6 +491,24 @@ def do_status():
 
     exp_ts = int(payload.get('exp', 0))
     scp = payload.get('scp') or payload.get('roles') or ''
+    # aud can be a string (v1) or an array (v2 spec allows it). Normalise.
+    raw_aud = payload.get('aud', '')
+    aud = raw_aud[0] if isinstance(raw_aud, list) and raw_aud else raw_aud
+    aud = aud if isinstance(aud, str) else str(aud)
+
+    # Map the aud claim back to a KNOWN_SCOPES short name (reverse lookup).
+    # Graph uses a GUID audience in some flows, so accept either the URL or
+    # the well-known Graph GUID.
+    aud_name = None
+    if aud == '00000003-0000-0000-c000-000000000000':
+        aud_name = 'graph'
+    else:
+        for name, entry in KNOWN_SCOPES.items():
+            url = entry[0]
+            if aud == url or aud.rstrip('/') == url.rstrip('/'):
+                aud_name = name
+                break
+    audience_line = f'{aud_name} ({aud})' if aud_name else (aud or 'unknown')
 
     # Persist rotated RT (matches main-flow behavior).
     new_rt = result.get('refresh_token')
@@ -501,6 +537,7 @@ def do_status():
         scopes_line = str(scp)
 
     print(f'authtoken:    expires {iso(exp_ts)}')
+    print(f'audience:     {audience_line}')
     print(f'scope(s):     {scopes_line}')
     print(f'refreshtoken: expires {rt_expires}')
     return 0
@@ -716,16 +753,23 @@ examples:
   owa-piggy                                         # raw token to stdout
   owa-piggy --remaining                             # 73min
   token=$(owa-piggy)                                # use in scripts
-  owa-piggy --graph                                  # Microsoft Graph token
-  owa-piggy --teams                                  # Teams token
-  owa-piggy --list-scopes                            # show all FOCI audiences
+  owa-piggy --graph                                 # Microsoft Graph token
+  owa-piggy --teams                                 # Teams token
+  owa-piggy --list-scopes                           # show all FOCI audiences
   owa-piggy --scope 'https://graph.microsoft.com/.default'
   owa-piggy --json | jq .scope
-  eval $(owa-piggy --env)                             # export into shell
-  owa-piggy --decode                                  # inspect JWT claims
+  eval $(owa-piggy --env)                           # export into shell
+  owa-piggy --decode                                # inspect JWT claims
+  owa-piggy --status                                # ISO8601 health summary
+  owa-piggy --debug                                 # full diagnostics
+  owa-piggy --reseed                                # automated token refresh
+  pbpaste | owa-piggy --save-config                 # pipe tokens from clipboard
 
 notes:
-  - Refresh tokens have a 24h sliding window - use daily to keep alive
+  - Refresh tokens have TWO expiry rules:
+      * 24h sliding window (rotates on every use)
+      * 24h absolute hard-cap from original sign-in (AADSTS700084)
+    The launchd agent handles the first; --reseed handles the second.
   - Rotated refresh token is saved automatically after each exchange
   - OWA is a FOCI client, so the token works across Microsoft first-party APIs""")
 
