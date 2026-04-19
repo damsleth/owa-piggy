@@ -292,6 +292,13 @@ def parse_kv_stream(text):
     return out
 
 
+def iso_utc_now():
+    """UTC ISO8601 with trailing Z. Used to stamp OWA_RT_ISSUED_AT on fresh
+    setup/reseed so --status can compute the 24h SPA hard-cap."""
+    import time
+    return time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+
+
 def interactive_setup(config):
     # Non-interactive path: if stdin is piped, parse KEY=value lines from it.
     # This avoids the bracketed-paste corruption that raw-tty input is prone
@@ -305,6 +312,10 @@ def interactive_setup(config):
                   file=sys.stderr)
             return False
         config.update(parsed)
+        # Stamp issuance time so --status can show the 24h hard-cap. This is
+        # set on setup/reseed paths only, never on ordinary rotation (which
+        # does not reset the SPA hard-cap timer).
+        config['OWA_RT_ISSUED_AT'] = iso_utc_now()
         save_config(config)
         print(f'Config saved to {CONFIG_PATH}', file=sys.stderr)
         return True
@@ -336,6 +347,7 @@ def interactive_setup(config):
 
     config['OWA_REFRESH_TOKEN'] = rt
     config['OWA_TENANT_ID'] = tid
+    config['OWA_RT_ISSUED_AT'] = iso_utc_now()
     save_config(config)
     print(f'\nConfig saved to {CONFIG_PATH}')
     return True
@@ -414,6 +426,84 @@ def do_reseed():
 
 
 LAUNCHD_LABEL = 'com.damsleth.owa-piggy'
+
+
+def do_status():
+    """Compact health summary. Does a live exchange probe to verify the RT
+    actually works (rotates it as a side effect, which is fine - the RT
+    rotates on every use anyway). Prints three ISO8601 lines or the single
+    line 'no valid token' if anything is missing or the probe fails.
+
+    Refresh-token expiry uses OWA_RT_ISSUED_AT + 24h if it's in the config
+    (set by --setup and --reseed). That's the SPA hard-cap, which is the
+    binding constraint since hourly rotation keeps the sliding window
+    permanently fresh. If the field is missing (pre-existing setups from
+    before this flag landed) we fall back to 'unknown'."""
+    from datetime import datetime, timezone, timedelta
+
+    config, persist = load_config()
+    rt = config.get('OWA_REFRESH_TOKEN', '').strip()
+    tid = config.get('OWA_TENANT_ID', '').strip()
+    cid = config.get('OWA_CLIENT_ID', CLIENT_ID).strip()
+
+    if not rt or not tid or not (rt.startswith('1.') or rt.startswith('0.')):
+        print('no valid token')
+        return 1
+
+    # Silence exchange_token's own stderr prints for --status; we surface a
+    # single-line status on failure instead of a multi-line AAD dump.
+    stderr_fd = sys.stderr
+    try:
+        import io
+        sys.stderr = io.StringIO()
+        result = exchange_token(rt, tid, cid, DEFAULT_SCOPE)
+    finally:
+        sys.stderr = stderr_fd
+
+    if not result or not result.get('access_token'):
+        print('no valid token')
+        return 1
+
+    at = result['access_token']
+    try:
+        payload = decode_jwt_segment(at.split('.')[1])
+    except Exception:
+        print('no valid token')
+        return 1
+
+    exp_ts = int(payload.get('exp', 0))
+    scp = payload.get('scp') or payload.get('roles') or ''
+
+    # Persist rotated RT (matches main-flow behavior).
+    new_rt = result.get('refresh_token')
+    if new_rt and new_rt != rt and persist:
+        config['OWA_REFRESH_TOKEN'] = new_rt
+        save_config(config)
+
+    def iso(ts):
+        return datetime.fromtimestamp(ts, tz=timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+    # Refresh token hard-cap: issued_at + 24h. Parse OWA_RT_ISSUED_AT if set.
+    rt_expires = 'unknown (run `owa-piggy --reseed` to establish)'
+    issued_at = config.get('OWA_RT_ISSUED_AT', '').strip()
+    if issued_at:
+        try:
+            dt = datetime.strptime(issued_at, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc)
+            rt_expires = (dt + timedelta(hours=24)).strftime('%Y-%m-%dT%H:%M:%SZ')
+        except ValueError:
+            pass
+
+    if isinstance(scp, str):
+        parts = scp.split()
+        scopes_line = (f'{", ".join(parts[:3])}, ... ({len(parts)} scopes)'
+                       if len(parts) > 3 else ', '.join(parts))
+    else:
+        scopes_line = str(scp)
+
+    print(f'authtoken:    expires {iso(exp_ts)}')
+    print(f'scope(s):     {scopes_line}')
+    print(f'refreshtoken: expires {rt_expires}')
+    return 0
 
 
 def do_debug():
@@ -594,6 +684,8 @@ options:
   --setup           alias for --save-config
   --reseed          fetch a fresh refresh token headlessly from the Edge
                     sidecar profile (for when the 24h SPA hard-expiry hits)
+  --status          compact health: authtoken/scope/refreshtoken expiries
+                    (ISO8601), or 'no valid token' if setup is broken
   --debug           dump setup diagnostics: config, token shape, live probe,
                     launchd agent, PATH install, sidecar profile
   --help            show this help
@@ -658,6 +750,9 @@ def main():
 
     if '--debug' in args:
         return do_debug()
+
+    if '--status' in args:
+        return do_status()
 
     if '--list-scopes' in args:
         max_name = max(len(n) for n in KNOWN_SCOPES)
