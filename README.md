@@ -1,15 +1,20 @@
 # owa-piggy
 
+![ci](https://github.com/damsleth/owa-piggy/actions/workflows/ci.yml/badge.svg)
+
 Turn your existing Outlook Web session into a reusable API token from the terminal.  
 No app registration, asking a tenant admin or managing client secrets.
 
 ```sh
-brew install --HEAD damsleth/tap/owa-piggy
+brew tap damsleth/tap
+brew install owa-piggy
 owa-piggy --setup
 # or, to avoid terminal paste-corruption on long tokens:
 # copy the two lines the browser snippet prints, then
 pbpaste | owa-piggy --save-config
 ```
+
+Bleeding edge (main): `brew install --HEAD damsleth/tap/owa-piggy`
 
 Then
 
