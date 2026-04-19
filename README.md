@@ -136,6 +136,8 @@ This tool deliberately operates within the boundaries of what Microsoft allows f
 
 The token is scoped to your user identity. A password change or admin revocation invalidates it immediately - the same as it would in the browser.
 
+See [SECURITY.md](SECURITY.md) for the full threat model and known failure modes.
+
 Config is stored at `~/.config/owa-piggy/config`, mode 0600:
 
 ```
