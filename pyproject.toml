@@ -11,10 +11,13 @@ requires-python = ">=3.8"
 [project.scripts]
 owa-piggy = "owa_piggy:main"
 
-[tool.setuptools]
-py-modules = ["owa_piggy"]
+[project.optional-dependencies]
+test = ["pytest"]
 
-# Ship the reseed helpers alongside the module so `owa-piggy --reseed` works
+[tool.setuptools]
+packages = ["owa_piggy"]
+
+# Ship the reseed helpers alongside the package so `owa-piggy --reseed` works
 # in packaged installs (pipx, pip, brew). They land at
 # <sys.prefix>/share/owa-piggy/scripts/ which find_reseed_script() checks.
 [tool.setuptools.data-files]
