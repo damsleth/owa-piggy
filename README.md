@@ -14,13 +14,13 @@ pbpaste | owa-piggy --save-config
 Then
 
 ```sh
-curl -H "Authorization: Bearer $(owa-piggy --graph)" https://graph.microsoft.com/v1.0/me
+curl -H "Authorization: Bearer $(owa-piggy)" https://graph.microsoft.com/v1.0/me
 ```
 
-Or
+Or, for the Outlook REST audience:
 
 ```sh
-curl -s -H "Authorization: Bearer $(owa-piggy)" \
+curl -s -H "Authorization: Bearer $(owa-piggy --outlook)" \
   "https://outlook.office.com/api/v2.0/me/messages?\$top=1" | jq -r '.value[0].Subject'
 ```
 
@@ -29,8 +29,9 @@ curl -s -H "Authorization: Bearer $(owa-piggy)" \
 ## Examples
 
 ```sh
-owa-piggy                         # access token to stdout
-owa-piggy --graph                 # Graph API token
+owa-piggy                         # Graph token (default audience)
+owa-piggy --outlook               # Outlook REST audience
+owa-piggy --teams                 # Teams audience
 owa-piggy --remaining             # minutes left on current token
 owa-piggy --json | jq .scope      # inspect granted scopes
 owa-piggy --status                # compact ISO8601 health summary
@@ -40,14 +41,16 @@ owa-piggy --debug                 # full setup diagnostics
 Pipe-friendly - raw token goes to stdout, everything else to stderr:
 
 ```sh
-# Fetch calendar events
+# Fetch calendar events via Graph
 curl -s -H "Authorization: Bearer $(owa-piggy)" \
-  "https://outlook.office.com/api/v2.0/me/events" | jq .
+  "https://graph.microsoft.com/v1.0/me/events" | jq .
 
 # Use in scripts
-TOKEN=$(owa-piggy --graph)
+TOKEN=$(owa-piggy)
 az rest --headers "Authorization=Bearer $TOKEN" --url "https://graph.microsoft.com/v1.0/me"
 ```
+
+Default audience is **Microsoft Graph**, which covers everything Outlook REST exposes plus OneDrive, Teams, SharePoint, directory, and more. Override persistently with `OWA_DEFAULT_AUDIENCE=<short-name-or-https-url>`, or per-call with `--outlook`/`--teams`/`--azure`/... or `--scope <explicit>`.
 
 ---
 
@@ -141,7 +144,11 @@ OWA_TENANT_ID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 OWA_RT_ISSUED_AT="2026-04-19T10:15:00Z"
 ```
 
-Writes are atomic (temp file + fsync + rename) so a crash mid-rotation cannot corrupt the only live token. Environment variables (`OWA_REFRESH_TOKEN`, `OWA_TENANT_ID`) take precedence over the config file. `OWA_CLIENT_ID` can override the default client ID if needed.
+Writes are atomic (temp file + fsync + rename) so a crash mid-rotation cannot corrupt the only live token. Environment variables take precedence over the config file:
+
+- `OWA_REFRESH_TOKEN`, `OWA_TENANT_ID` - override the corresponding config values (when `OWA_REFRESH_TOKEN` is env-supplied, rotated tokens are kept env-only and not written back to disk)
+- `OWA_CLIENT_ID` - override the default OWA client ID
+- `OWA_DEFAULT_AUDIENCE` - change the default audience (a short name from `--list-scopes` like `outlook`, or a full https URL). Command-line `--<name>` / `--scope` still wins.
 
 ---
 

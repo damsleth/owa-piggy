@@ -59,9 +59,13 @@ Automated reseed:
   --reseed handles the 24h hard-cap.
 
 Notes:
-  - Default scope targets outlook.office.com (Calendars.ReadWrite + more)
+  - Default audience is Microsoft Graph. Graph covers everything Outlook
+    REST exposes (mail/calendar/contacts/tasks) plus OneDrive, Teams,
+    SharePoint, directory, and more. Override with --outlook (or any other
+    --<name>), with --scope <explicit>, or persistently via
+    OWA_DEFAULT_AUDIENCE (short name like 'outlook' or a full https URL).
   - OWA is a FOCI client - the same RT works across Microsoft first-party
-    APIs (Graph, Teams, Azure, Key Vault, SQL, Power BI, DevOps, ...)
+    APIs (Graph, Outlook, Teams, Azure, Key Vault, SQL, Power BI, ...).
 """
 
 import json
@@ -74,12 +78,21 @@ from pathlib import Path
 
 CLIENT_ID = '9199bf20-a13f-4107-85dc-02114787ef48'
 ORIGIN = 'https://outlook.cloud.microsoft'
-DEFAULT_SCOPE = 'https://outlook.office.com/Calendars.ReadWrite openid profile offline_access'
 
-# Well-known FOCI-accessible audiences (same refresh token works for all)
+# Default audience for no-flag invocations. Graph is a strict superset of
+# Outlook REST (mail/calendar/contacts/tasks) plus OneDrive, Teams,
+# SharePoint, directory, and the rest of the Microsoft first-party surface,
+# so it's the more useful default. Override with `--outlook` (or any other
+# --<name> flag), with --scope, or persistently via OWA_DEFAULT_AUDIENCE
+# which accepts either a KNOWN_SCOPES short name or a full https URL.
+DEFAULT_AUDIENCE = 'https://graph.microsoft.com'
+
+# Well-known FOCI-accessible audiences (same refresh token works for all).
+# Named SCOPES for historical reasons - the dict actually maps short names
+# to audience URLs. The .default scope is what we actually ask AAD for.
 KNOWN_SCOPES = {
-    'outlook':    ('https://outlook.office.com',                   'Outlook REST (default)'),
-    'graph':      ('https://graph.microsoft.com',                  'Microsoft Graph'),
+    'outlook':    ('https://outlook.office.com',                   'Outlook REST'),
+    'graph':      ('https://graph.microsoft.com',                  'Microsoft Graph (default)'),
     'teams':      ('https://api.spaces.skype.com',                 'Microsoft Teams'),
     'azure':      ('https://management.azure.com',                 'Azure Resource Manager'),
     'keyvault':   ('https://vault.azure.net',                      'Azure Key Vault'),
@@ -93,6 +106,49 @@ KNOWN_SCOPES = {
     'devops':     ('https://app.vssps.visualstudio.com',           'Azure DevOps'),
 }
 CONFIG_PATH = Path.home() / '.config' / 'owa-piggy' / 'config'
+
+
+def resolve_scope(args):
+    """Compute the scope string to request, honoring precedence:
+      1. --scope <explicit>      (raw string, returned as-is)
+      2. --<known-name>          (e.g. --outlook, --graph, --teams)
+      3. OWA_DEFAULT_AUDIENCE    (short name or full https URL)
+      4. DEFAULT_AUDIENCE        (graph)
+
+    Returns (scope, error_message). error_message is non-empty only when
+    --scope was given without a value; the caller should treat that as a
+    fatal arg error and bail.
+
+    A malformed OWA_DEFAULT_AUDIENCE logs a warning and falls back to the
+    built-in default rather than erroring - a typo in an env var should
+    not silently break every invocation."""
+    # --scope wins over everything else.
+    if '--scope' in args:
+        idx = args.index('--scope')
+        if idx + 1 < len(args):
+            return args[idx + 1], None
+        return None, '--scope requires a value'
+
+    # Known-name flag.
+    for name, entry in KNOWN_SCOPES.items():
+        if f'--{name}' in args:
+            return f'{entry[0]}/.default openid profile offline_access', None
+
+    # Env var default.
+    env = os.environ.get('OWA_DEFAULT_AUDIENCE', '').strip()
+    aud_url = None
+    if env:
+        if env in KNOWN_SCOPES:
+            aud_url = KNOWN_SCOPES[env][0]
+        elif env.startswith('https://'):
+            aud_url = env.rstrip('/')
+        else:
+            print(f'WARNING: OWA_DEFAULT_AUDIENCE={env!r} is not a known '
+                  f'short name or an https URL; using default',
+                  file=sys.stderr)
+    if aud_url is None:
+        aud_url = DEFAULT_AUDIENCE
+    return f'{aud_url}/.default openid profile offline_access', None
 
 
 def load_config():
@@ -492,13 +548,21 @@ def do_status():
         print('no valid token')
         return 1
 
+    # Resolve scope BEFORE capturing stderr so any OWA_DEFAULT_AUDIENCE
+    # misconfiguration warning still reaches the user. --status honors the
+    # same flags as the main path, so `owa-piggy --outlook --status`
+    # probes the outlook audience.
+    scope, err = resolve_scope(sys.argv[1:])
+    if err:
+        print(f'ERROR: {err}', file=sys.stderr)
+        return 1
     # Silence exchange_token's own stderr prints for --status; we surface a
     # single-line status on failure instead of a multi-line AAD dump.
     stderr_fd = sys.stderr
     try:
         import io
         sys.stderr = io.StringIO()
-        result = exchange_token(rt, tid, cid, DEFAULT_SCOPE)
+        result = exchange_token(rt, tid, cid, scope)
     finally:
         sys.stderr = stderr_fd
 
@@ -615,7 +679,8 @@ def do_debug():
 
         if shape_ok and tid:
             print('  probing live exchange against AAD...')
-            result = exchange_token(rt, tid, cid, DEFAULT_SCOPE)
+            debug_scope, _ = resolve_scope(sys.argv[1:])
+            result = exchange_token(rt, tid, cid, debug_scope)
             if result and result.get('access_token'):
                 row('ok', 'exchange succeeded')
                 at = result['access_token']
@@ -755,9 +820,12 @@ options:
 config:
   ~/.config/owa-piggy/config   KEY=value file (auto-created by --save-config)
 
-  OWA_REFRESH_TOKEN   MSAL refresh token secret from browser localStorage
-  OWA_TENANT_ID       your Azure AD tenant ID
-  OWA_CLIENT_ID       override client ID (default: OWA's public client)
+  OWA_REFRESH_TOKEN      MSAL refresh token secret from browser localStorage
+  OWA_TENANT_ID          your Azure AD tenant ID
+  OWA_CLIENT_ID          override client ID (default: OWA's public client)
+  OWA_DEFAULT_AUDIENCE   override default audience (short name from
+                         --list-scopes, e.g. 'outlook', or a full https URL).
+                         --<name> / --scope on the command line still win.
 
   Environment variables take precedence over the config file.
 
@@ -791,6 +859,9 @@ examples:
   pbpaste | owa-piggy --save-config                 # pipe tokens from clipboard
 
 notes:
+  - Default audience is Microsoft Graph (superset of Outlook REST plus
+    OneDrive, Teams, SharePoint, directory). Set OWA_DEFAULT_AUDIENCE to
+    change it persistently; --outlook and friends still work per-call.
   - Refresh tokens have TWO expiry rules:
       * 24h sliding window (rotates on every use)
       * 24h absolute hard-cap from original sign-in (AADSTS700084)
@@ -831,18 +902,10 @@ def main():
             print(f'  {flag:<{max_name + 3}} {aud:<{max_aud + 2}} {desc}')
         return 0
 
-    scope = DEFAULT_SCOPE
-    for name, (aud, _) in KNOWN_SCOPES.items():
-        if f'--{name}' in args:
-            scope = f'{aud}/.default openid profile offline_access'
-            break
-    if '--scope' in args:
-        idx = args.index('--scope')
-        if idx + 1 < len(args):
-            scope = args[idx + 1]
-        else:
-            print('ERROR: --scope requires a value', file=sys.stderr)
-            return 1
+    scope, err = resolve_scope(args)
+    if err:
+        print(f'ERROR: {err}', file=sys.stderr)
+        return 1
 
     config, persist = load_config()
 
