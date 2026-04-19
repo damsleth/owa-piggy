@@ -96,9 +96,12 @@ CONFIG_PATH = Path.home() / '.config' / 'owa-piggy' / 'config'
 
 
 def load_config():
-    """Returns (config, persist). persist is True only when OWA_REFRESH_TOKEN
-    came from the on-disk config; env-only callers keep env-only semantics so
-    rotated tokens are never silently written to disk."""
+    """Returns (config, persist). persist is True only when the *effective*
+    OWA_REFRESH_TOKEN came from the on-disk config - i.e. the file has the
+    key AND no environment override is shadowing it. When env overrides,
+    the env value is what we send to AAD and the rotated token belongs to
+    that env-driven session; writing it back would silently clobber the
+    unrelated file token."""
     config = {}
     file_keys = set()
     if CONFIG_PATH.exists():
@@ -113,7 +116,10 @@ def load_config():
     for key in ('OWA_REFRESH_TOKEN', 'OWA_TENANT_ID', 'OWA_CLIENT_ID'):
         if key in os.environ:
             config[key] = os.environ[key]
-    persist = 'OWA_REFRESH_TOKEN' in file_keys
+    persist = (
+        'OWA_REFRESH_TOKEN' in file_keys
+        and 'OWA_REFRESH_TOKEN' not in os.environ
+    )
     return config, persist
 
 
