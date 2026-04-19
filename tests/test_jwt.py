@@ -66,3 +66,59 @@ def test_decode_jwt_handles_malformed_middle(capsys):
     # Header segment is malformed too, but let's at least not traceback.
     assert 'Error decoding' in capsys.readouterr().err
     assert isinstance(out, str)
+
+
+# --- Token-shape validation ---------------------------------------------
+# owa-piggy never validates JWT signatures (it is a client, not an RP).
+# "Shape" here means: three dot-separated base64url segments where the
+# middle segment decodes to a JSON object with the claims we care about
+# (`exp` at minimum). These tests lock in the assumptions decode_jwt /
+# token_minutes_remaining make so we notice if they drift.
+
+
+def test_shape_three_segments(make_jwt):
+    token = make_jwt({'exp': 1})
+    assert token.count('.') == 2
+
+
+def test_shape_middle_is_json_object(make_jwt):
+    token = make_jwt({'exp': 1, 'aud': 'x', 'tid': 'tenant', 'iss': 'issuer'})
+    payload = decode_jwt_segment(token.split('.')[1])
+    assert isinstance(payload, dict)
+    for required in ('exp', 'aud', 'tid', 'iss'):
+        assert required in payload
+
+
+def test_shape_exp_is_numeric(make_jwt):
+    token = make_jwt({'exp': 1_700_000_000})
+    payload = decode_jwt_segment(token.split('.')[1])
+    assert isinstance(payload['exp'], (int, float))
+
+
+def test_shape_accepts_real_world_claims(make_jwt):
+    """A plausible MSAL-issued access token has this shape."""
+    token = make_jwt({
+        'aud': 'https://graph.microsoft.com',
+        'iss': 'https://login.microsoftonline.com/tid/v2.0',
+        'iat': 1_700_000_000,
+        'exp': 1_700_003_600,
+        'tid': '00000000-0000-0000-0000-000000000000',
+        'scp': 'Mail.Read Mail.Send Files.Read',
+        'appid': '9199bf20-a13f-4107-85dc-02114787ef48',
+    })
+    payload = decode_jwt_segment(token.split('.')[1])
+    assert payload['appid'] == '9199bf20-a13f-4107-85dc-02114787ef48'
+    assert 'Mail.Read' in payload['scp']
+
+
+def test_shape_empty_middle_segment_is_not_a_token(frozen_time):
+    """An empty middle segment decodes to '' (bytes), which is not JSON -
+    token_minutes_remaining must surface None, not raise."""
+    assert token_minutes_remaining('a..c') is None
+
+
+def test_shape_middle_is_base64_but_not_json(frozen_time):
+    """Middle segment decodes cleanly to bytes but is not JSON."""
+    import base64
+    garbage = base64.urlsafe_b64encode(b'not json').rstrip(b'=').decode()
+    assert token_minutes_remaining(f'a.{garbage}.c') is None
