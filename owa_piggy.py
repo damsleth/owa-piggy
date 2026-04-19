@@ -413,6 +413,166 @@ def do_reseed():
         return 1
 
 
+LAUNCHD_LABEL = 'com.damsleth.owa-piggy'
+
+
+def do_debug():
+    """Dump everything useful to diagnose a broken setup: config file,
+    refresh-token shape, live exchange probe, access-token claims, launchd
+    agent status, PATH install, sidecar profile. Read-mostly: the probe
+    exchange does rotate the refresh token as a side effect (same as a
+    normal invocation), because that's the only honest way to prove the
+    token is currently valid."""
+    import subprocess
+    import time as _time
+
+    def row(status, label, detail=''):
+        print(f'  [{status}] {label}' + (f': {detail}' if detail else ''))
+
+    print('owa-piggy --debug\n')
+
+    # --- Config file ---
+    print(f'Config file ({CONFIG_PATH}):')
+    if CONFIG_PATH.exists():
+        st = CONFIG_PATH.stat()
+        mode = oct(st.st_mode & 0o777)
+        age_min = int((_time.time() - st.st_mtime) / 60)
+        row('ok', 'present', f'perms {mode}, modified {age_min}min ago')
+    else:
+        row('no', 'missing')
+
+    config, persist = load_config()
+    rt = config.get('OWA_REFRESH_TOKEN', '').strip()
+    tid = config.get('OWA_TENANT_ID', '').strip()
+    cid = config.get('OWA_CLIENT_ID', CLIENT_ID).strip()
+    source = 'config file' if persist else ('env only' if rt else '')
+    row('ok' if rt else 'no', 'OWA_REFRESH_TOKEN',
+        f'{len(rt)} bytes, {source}' if rt else 'unset')
+    row('ok' if tid else 'no', 'OWA_TENANT_ID', tid or 'unset')
+    row('..', 'OWA_CLIENT_ID',
+        f'{cid}{" (default OWA first-party)" if cid == CLIENT_ID else " (override)"}')
+
+    # --- Refresh token shape + live probe ---
+    print('\nRefresh token:')
+    if not rt:
+        row('no', 'absent; run `owa-piggy --setup` or `owa-piggy --reseed`')
+    else:
+        shape_ok = rt.startswith('1.') or rt.startswith('0.')
+        row('ok' if shape_ok else 'no',
+            f'FOCI shape ({rt[:2]}...)' if shape_ok else
+            f'NOT FOCI (starts {rt[:4]!r}); AAD will reject as malformed')
+
+        if shape_ok and tid:
+            print('  probing live exchange against AAD...')
+            result = exchange_token(rt, tid, cid, DEFAULT_SCOPE)
+            if result and result.get('access_token'):
+                row('ok', 'exchange succeeded')
+                at = result['access_token']
+                try:
+                    payload = decode_jwt_segment(at.split('.')[1])
+                    aud = payload.get('aud', '?')
+                    scp = payload.get('scp', payload.get('roles', '?'))
+                    exp = payload.get('exp', 0)
+                    iat = payload.get('iat', 0)
+                    now = _time.time()
+                    row('..', 'access token aud', str(aud))
+                    if isinstance(scp, str) and len(scp) > 80:
+                        # OWA scopes are legion (~100 space-separated entries).
+                        # Show count and the first few so --debug stays useful.
+                        parts = scp.split()
+                        preview = ', '.join(parts[:3])
+                        row('..', 'access token scp',
+                            f'{len(parts)} scopes ({preview}, ...)')
+                    else:
+                        row('..', 'access token scp', str(scp))
+                    row('..', 'access token exp',
+                        f'in {int((exp-now)/60)} min ({_time.strftime("%H:%M:%S", _time.localtime(exp))})')
+                    row('..', 'access token iat',
+                        f'{int((now-iat)/60)} min ago')
+                except Exception as e:
+                    row('no', 'access token decode failed', str(e))
+
+                new_rt = result.get('refresh_token', '')
+                if new_rt and new_rt != rt:
+                    if persist:
+                        config['OWA_REFRESH_TOKEN'] = new_rt
+                        save_config(config)
+                        row('ok', 'refresh token rotated and persisted')
+                    else:
+                        row('..', 'refresh token rotated (env-only, not persisted)')
+            else:
+                row('no', 'exchange failed - see error above')
+
+    # --- Launchd agent ---
+    print('\nLaunchd refresh agent:')
+    plist_path = Path.home() / 'Library' / 'LaunchAgents' / f'{LAUNCHD_LABEL}.plist'
+    row('ok' if plist_path.exists() else 'no', 'plist file', str(plist_path))
+
+    uid = os.getuid()
+    target = f'gui/{uid}/{LAUNCHD_LABEL}'
+    try:
+        proc = subprocess.run(['launchctl', 'print', target],
+                              capture_output=True, text=True, timeout=5)
+        if proc.returncode == 0:
+            row('ok', 'bootstrapped', target)
+            # Surface the handful of fields that actually tell you if it's
+            # healthy: runs, last exit, state, pid. launchctl print is a
+            # nested tree so `state` appears multiple times - take only the
+            # first occurrence of each wanted key (the top-level scope).
+            wanted = ('state', 'runs', 'last exit code', 'last exit reason', 'pid')
+            seen = set()
+            for line in proc.stdout.splitlines():
+                s = line.strip()
+                for w in wanted:
+                    if w in seen:
+                        continue
+                    if s.startswith(w + ' =') or s.startswith(w + ':'):
+                        print(f'      {s}')
+                        seen.add(w)
+                        break
+        else:
+            row('no', 'not loaded',
+                (proc.stderr.strip().splitlines() or [''])[0][:120])
+    except FileNotFoundError:
+        row('..', 'launchctl not found on PATH (non-macOS?)')
+    except subprocess.TimeoutExpired:
+        row('no', 'launchctl print timed out')
+
+    try:
+        proc = subprocess.run(['crontab', '-l'], capture_output=True,
+                              text=True, timeout=5)
+        if 'owa-piggy' in proc.stdout:
+            row('!!', 'legacy cron entry still present',
+                'run ./scripts/setup-refresh.sh to migrate')
+    except Exception:
+        pass
+
+    # --- Installation / PATH ---
+    print('\nInstallation:')
+    import shutil
+    installed = shutil.which('owa-piggy')
+    if installed:
+        p = Path(installed)
+        detail = str(p)
+        if p.is_symlink():
+            detail += f' -> {os.readlink(p)}'
+        row('ok', 'owa-piggy on PATH', detail)
+    else:
+        row('no', 'owa-piggy not on PATH',
+            'run ./scripts/add-to-path.sh or pipx install .')
+
+    sidecar = Path.home() / '.config' / 'owa-piggy' / 'edge-profile'
+    row('ok' if sidecar.is_dir() else 'no',
+        'Edge sidecar profile', str(sidecar) if sidecar.is_dir() else
+        f'{sidecar} (missing; --reseed needs this)')
+
+    reseed = find_reseed_script()
+    row('ok' if reseed else 'no', 'reseed script',
+        str(reseed) if reseed else 'not found (pipx install strips scripts/)')
+
+    return 0
+
+
 def print_help():
     print("""usage: owa-piggy [options]
 
@@ -434,6 +594,8 @@ options:
   --setup           alias for --save-config
   --reseed          fetch a fresh refresh token headlessly from the Edge
                     sidecar profile (for when the 24h SPA hard-expiry hits)
+  --debug           dump setup diagnostics: config, token shape, live probe,
+                    launchd agent, PATH install, sidecar profile
   --help            show this help
 
 config:
@@ -493,6 +655,9 @@ def main():
     # cannot block recovery.
     if '--reseed' in args:
         return do_reseed()
+
+    if '--debug' in args:
+        return do_debug()
 
     if '--list-scopes' in args:
         max_name = max(len(n) for n in KNOWN_SCOPES)
