@@ -178,6 +178,17 @@ def exchange_token(refresh_token, tenant_id, client_id, scope):
             code = err.get('error', '')
             desc = err.get('error_description', '').split('\r\n')[0]
             print(f'ERROR: {code}: {desc}', file=sys.stderr)
+            # AADSTS700084 is the 24h SPA hard-expiry: the refresh token has
+            # hit its absolute lifetime ceiling (not the sliding window) and
+            # cannot be extended by any amount of hourly rotation. The only
+            # remedy is a fresh token from a live browser session. Point the
+            # user at the automated reseed path so they are not left parsing
+            # AAD error codes to figure out what to do next.
+            if 'AADSTS700084' in err_body:
+                print('hint: refresh token has hit its 24h SPA hard-expiry. '
+                      'Run `owa-piggy --reseed` to fetch a fresh token '
+                      'headlessly from the Edge sidecar profile.',
+                      file=sys.stderr)
         except Exception:
             print(f'ERROR: HTTP {e.code}: {err_body[:200]}', file=sys.stderr)
         return None
@@ -360,6 +371,48 @@ def decode_jwt(access_token):
     return '\n'.join(lines)
 
 
+RESEED_SCRIPT_NAME = 'reseed-from-edge.sh'
+
+
+def find_reseed_script():
+    """Locate reseed-from-edge.sh. Checks OWA_RESEED_SCRIPT first (override
+    for non-standard layouts / pipx installs), then looks alongside this
+    file in ./scripts/ - the repo-checkout layout."""
+    override = os.environ.get('OWA_RESEED_SCRIPT')
+    if override:
+        p = Path(override)
+        if p.is_file():
+            return p
+    candidate = Path(__file__).resolve().parent / 'scripts' / RESEED_SCRIPT_NAME
+    if candidate.is_file():
+        return candidate
+    return None
+
+
+def do_reseed():
+    """Run the Edge-headless reseed flow. The script boots a sidecar Edge
+    profile, scrapes a fresh FOCI refresh token via CDP, and pipes it into
+    `owa-piggy --save-config`. On success the new token is already on disk
+    and a fresh access token has been printed - so we just return the
+    script's exit code and let it own the user feedback."""
+    import subprocess
+    script = find_reseed_script()
+    if not script:
+        print(
+            f'ERROR: {RESEED_SCRIPT_NAME} not found.\n'
+            '  Expected in ./scripts/ next to owa_piggy.py (repo checkout).\n'
+            '  Set OWA_RESEED_SCRIPT=/path/to/reseed-from-edge.sh to override,\n'
+            '  or clone the repo: https://github.com/damsleth/owa-piggy',
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        return subprocess.call([str(script)])
+    except OSError as e:
+        print(f'ERROR: failed to run {script}: {e}', file=sys.stderr)
+        return 1
+
+
 def print_help():
     print("""usage: owa-piggy [options]
 
@@ -379,6 +432,8 @@ options:
   --scope <scope>   override scope explicitly (takes precedence)
   --save-config     interactive first-time setup, saves to config file
   --setup           alias for --save-config
+  --reseed          fetch a fresh refresh token headlessly from the Edge
+                    sidecar profile (for when the 24h SPA hard-expiry hits)
   --help            show this help
 
 config:
@@ -432,6 +487,12 @@ def main():
     if '--help' in args or '-h' in args:
         print_help()
         return 0
+
+    # --reseed shells out to the Edge-headless reseed script and exits with
+    # its status. Handled before load_config so an expired on-disk token
+    # cannot block recovery.
+    if '--reseed' in args:
+        return do_reseed()
 
     if '--list-scopes' in args:
         max_name = max(len(n) for n in KNOWN_SCOPES)
