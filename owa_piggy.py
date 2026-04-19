@@ -583,12 +583,7 @@ def main():
         print(access_token)
 
     if do_setup:
-        print('\n\tOWA-PIGGY 🐽  CONFIGURED!\n', file=sys.stderr)
-        print('  REMEMBER TO REFRESH IN THE 24-HOUR WINDOW', file=sys.stderr)
-        print('  TO INSTALL:', file=sys.stderr)
-        print('    pipx install .           (recommended)', file=sys.stderr)
-        print('    ./scripts/add-to-path.sh (symlink to /usr/local/bin/)', file=sys.stderr)
-        print('  RUN ./scripts/setup-refresh.sh TO REFRESH THE TOKEN EVERY HOUR', file=sys.stderr)
+        print('\n\tOWA-PIGGY 🐽  CONFIGURED', file=sys.stderr)
         print('\n\tENJOY YOUR APP-REG-FREE SCOPES\n', file=sys.stderr)
 
     return 0
