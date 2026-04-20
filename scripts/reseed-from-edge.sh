@@ -113,18 +113,19 @@ if [ "$scrape_status" -eq 2 ]; then
 
   launch_edge visible
   # Wait for either Edge to exit on its own or the user to press Enter.
-  # `wait -n $EDGE_PID` would block on Edge; running `read` in parallel lets
-  # whichever happens first win. Background a watcher that sends SIGUSR1 to
-  # ourselves when Edge exits, and just read in the foreground.
-  (
-    wait "$EDGE_PID" 2>/dev/null
-    kill -USR1 $$ 2>/dev/null || true
-  ) &
-  watcher_pid=$!
-  trap 'true' USR1  # wake up the read; do nothing else
-  read -r _ || true
-  trap cleanup_edge EXIT INT TERM
-  kill "$watcher_pid" 2>/dev/null || true
+  # The earlier version backgrounded `( wait "$EDGE_PID" ... ) &`, but bash
+  # only lets `wait` block on children of the CURRENT shell - in that
+  # subshell Edge is not a child, so `wait` returned immediately and the
+  # reauth flow raced through before the user could sign in.
+  #
+  # Poll instead: read stdin with a 1-second timeout; each iteration also
+  # checks whether Edge is still alive via `kill -0`. Either signal breaks
+  # the loop.
+  while kill -0 "$EDGE_PID" 2>/dev/null; do
+    if read -r -t 1 _; then
+      break
+    fi
+  done
   cleanup_edge
 
   # Attempt 2: offscreen again now that cookies should be fresh.
