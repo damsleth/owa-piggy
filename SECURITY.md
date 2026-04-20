@@ -1,5 +1,12 @@
 # Security model for owa-piggy
 
+## TL;DR
+
+`owa-piggy` is a personal productivity hack that abuses a first-party
+client. Microsoft can kill it any Tuesday.  
+Don't deploy it for
+users who aren't you.
+
 ## What this actually is
 
 `owa-piggy` piggybacks on Outlook on the Web's first-party SPA client
@@ -46,11 +53,11 @@ changed something. Read the AADSTS code and plan accordingly.
 
 ## Threat model
 
-**In scope.** The tool assumes a single user, logged in to OWA in
+**In scope:**  The tool assumes a single user, logged in to OWA in
 Edge on their own machine, running the CLI under their own account.
 
 - The refresh token is stored at `~/.config/owa-piggy/config`,
-  mode `0600`, in plaintext. Any process running as that user can
+  mode `0600`. Any process running as that user can
   read it.
 - Access tokens are cached at `~/.config/owa-piggy/cache.json`,
   same mode, same rules - keyed by the scope string, valid until
@@ -60,7 +67,7 @@ Edge on their own machine, running the CLI under their own account.
 - Atomic writes (temp file + fsync + rename) protect the on-disk
   token from partial writes that would require a browser reseed.
 
-**Out of scope.**
+**Out of scope:**
 
 - Multi-tenant deployment. There is none.
 - Service accounts, daemons, or CI secret stores. Do not use this
@@ -71,23 +78,23 @@ Edge on their own machine, running the CLI under their own account.
   storage, they already have your session - `owa-piggy` adds no
   new attack surface on top of that.
 
-## What owa-piggy will never do
+## What `owa-piggy` does _not_ do
 
-- Register an application in anyone's tenant.
-- Ask for admin consent.
-- Issue tokens for anyone other than the user running it.
-- Automate credential theft from other users on the same machine.
+- Register an application in anyone's tenant
+- Ask for admin consent
+- Issue tokens for anyone other than the user running it
+- Automate credential theft from other users on the same machine
 - Bypass Conditional Access. If your tenant blocks the sign-in,
-  `--reseed` fails the same way Edge would.
+  `--reseed` fails the same way Edge would
 - Send telemetry, crash reports, or update checks. The only network
-  call is `POST login.microsoftonline.com`.
+  call is `POST login.microsoftonline.com`
 
 ## Don't deploy this for other people
 
-If you are thinking "I could wrap this in a service for my team,"
+If you are thinking _"I could wrap this in a service for my team"_, 
 don't. The refresh token is a user credential. Sharing it across
 users is credential sharing. Packaging the CLI so a teammate can
-install it on their own laptop, using their own OWA session, is
+install it on their own laptop, using their own OWA session is
 fine. Packaging it as a daemon that logs in on behalf of N people
 is not.
 
@@ -101,9 +108,3 @@ affects that user (local privilege escalation via the config file,
 token exfiltration through an error path, etc.), open a GitHub
 issue or email the address in the commit log. There is no embargoed
 disclosure process because there is no deployed service to embargo.
-
-## One-line summary
-
-owa-piggy is a personal productivity hack that abuses a first-party
-client. Microsoft can kill it any Tuesday. Don't deploy it for
-users who aren't you.
