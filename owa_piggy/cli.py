@@ -1,9 +1,11 @@
 """Argument parsing and dispatch for the `owa-piggy` command."""
 import json
 import sys
+import time
 
+from .cache import get_cached_exp, get_cached_token, store_token
 from .config import load_config, save_config
-from .jwt import decode_jwt, token_minutes_remaining
+from .jwt import decode_jwt, decode_jwt_segment, token_minutes_remaining
 from .oauth import CLIENT_ID, exchange_token
 from .reseed import do_reseed
 from .scopes import KNOWN_SCOPES, resolve_scope
@@ -128,6 +130,32 @@ def main():
         print(f'ERROR: {err}', file=sys.stderr)
         return 1
 
+    # Access-token cache short-circuit. Output modes that need only the AT
+    # (or something derivable from it locally) can be served from
+    # ~/.config/owa-piggy/cache.json without round-tripping AAD, avoiding
+    # 429s when callers shell out to `owa-piggy` in tight loops.
+    #
+    # Bypass for: --json (full response includes a fresh refresh_token we
+    # don't cache), --save-config/--setup (the whole point is to rotate),
+    # and anywhere earlier in main() that returns before this block
+    # (--status, --debug, --reseed all probe or mint on purpose).
+    cache_eligible = not want_json and not do_setup
+    if cache_eligible:
+        cached_at = get_cached_token(scope)
+        if cached_at:
+            if want_env:
+                exp = get_cached_exp(scope) or 0
+                print(f'ACCESS_TOKEN={cached_at}')
+                print(f'EXPIRES_IN={max(0, int(exp - time.time()))}')
+            elif want_decode:
+                print(decode_jwt(cached_at))
+            elif want_remaining:
+                remaining = token_minutes_remaining(cached_at)
+                print(f'{remaining}min' if remaining is not None else 'unknown')
+            else:
+                print(cached_at)
+            return 0
+
     config, persist = load_config()
 
     if do_setup:
@@ -169,6 +197,17 @@ def main():
     if not access_token:
         print(f'ERROR: no access_token in response: {list(result.keys())}', file=sys.stderr)
         return 1
+
+    # Cache the fresh AT keyed by the scope string we requested. Failures
+    # here (disk full, permission weirdness) must not fail the exchange -
+    # we already have the token in hand; caching is an optimisation.
+    try:
+        payload = decode_jwt_segment(access_token.split('.')[1])
+        exp = payload.get('exp')
+        if isinstance(exp, (int, float)):
+            store_token(scope, access_token, exp)
+    except Exception:
+        pass
 
     # Persist rotated refresh token only when the original came from the config
     # file. Env-only callers stay env-only; writing to disk would silently turn

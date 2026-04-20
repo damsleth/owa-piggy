@@ -146,3 +146,95 @@ def test_list_scopes_formatting(monkeypatch, capsys):
     for name, (url, _desc) in KNOWN_SCOPES.items():
         assert f'--{name} ' in out or f'--{name}\n' in out
         assert url in out
+
+
+def test_cache_short_circuits_exchange(monkeypatch, capsys, tmp_config,
+                                       clean_env, make_jwt):
+    """A cached AT with exp > now + 60s means no call to AAD for the
+    plain-token output path. exchange_token must not run."""
+    import time as _time
+    from owa_piggy.cache import store_token
+    from owa_piggy.scopes import resolve_scope
+
+    scope, _ = resolve_scope([])
+    token = make_jwt({'exp': int(_time.time()) + 3600})
+    store_token(scope, token, int(_time.time()) + 3600)
+
+    def _boom(*a, **k):
+        raise AssertionError('exchange_token must not be called on cache hit')
+    monkeypatch.setattr(cli_mod, 'exchange_token', _boom)
+
+    rc = _run(monkeypatch, [])
+    assert rc == 0
+    assert capsys.readouterr().out.strip() == token
+
+
+def test_cache_writes_on_exchange(monkeypatch, tmp_config, clean_env,
+                                  make_jwt):
+    """A successful exchange must populate the cache keyed by scope."""
+    import time as _time
+    from owa_piggy.cache import get_cached_token
+    from owa_piggy.config import save_config
+    from owa_piggy.scopes import resolve_scope
+
+    save_config({'OWA_REFRESH_TOKEN': '1.AQ_fake', 'OWA_TENANT_ID': 'tid'})
+    token = make_jwt({'exp': int(_time.time()) + 3600})
+    monkeypatch.setattr(cli_mod, 'exchange_token',
+                        lambda *a, **k: {'access_token': token,
+                                         'expires_in': 3600})
+    rc = _run(monkeypatch, [])
+    assert rc == 0
+    scope, _ = resolve_scope([])
+    assert get_cached_token(scope) == token
+
+
+def test_json_bypasses_cache(monkeypatch, capsys, tmp_config, clean_env,
+                             make_jwt):
+    """--json includes a fresh refresh_token we don't cache, so it must
+    always hit AAD even when a valid AT is cached."""
+    import time as _time
+    from owa_piggy.cache import store_token
+    from owa_piggy.config import save_config
+    from owa_piggy.scopes import resolve_scope
+
+    save_config({'OWA_REFRESH_TOKEN': '1.AQ_fake', 'OWA_TENANT_ID': 'tid'})
+    scope, _ = resolve_scope([])
+    cached_token = make_jwt({'exp': int(_time.time()) + 3600})
+    store_token(scope, cached_token, int(_time.time()) + 3600)
+
+    fresh_token = make_jwt({'exp': int(_time.time()) + 3600,
+                            'iss': 'fresh-from-aad'})
+    called = {'n': 0}
+
+    def _exchange(*a, **k):
+        called['n'] += 1
+        return {'access_token': fresh_token, 'refresh_token': '1.AQ_rotated',
+                'expires_in': 3600}
+    monkeypatch.setattr(cli_mod, 'exchange_token', _exchange)
+
+    rc = _run(monkeypatch, ['--json'])
+    assert rc == 0
+    assert called['n'] == 1
+    out = capsys.readouterr().out
+    assert fresh_token in out
+    assert '1.AQ_rotated' in out
+
+
+def test_expired_cache_falls_through_to_exchange(monkeypatch, tmp_config,
+                                                 clean_env, make_jwt):
+    import time as _time
+    from owa_piggy.cache import store_token
+    from owa_piggy.config import save_config
+    from owa_piggy.scopes import resolve_scope
+
+    save_config({'OWA_REFRESH_TOKEN': '1.AQ_fake', 'OWA_TENANT_ID': 'tid'})
+    scope, _ = resolve_scope([])
+    # Cache an already-expired token.
+    store_token(scope, 'stale-at', int(_time.time()) - 60)
+
+    fresh = make_jwt({'exp': int(_time.time()) + 3600})
+    monkeypatch.setattr(cli_mod, 'exchange_token',
+                        lambda *a, **k: {'access_token': fresh,
+                                         'expires_in': 3600})
+    rc = _run(monkeypatch, [])
+    assert rc == 0
