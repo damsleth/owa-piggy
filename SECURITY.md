@@ -52,6 +52,9 @@ Edge on their own machine, running the CLI under their own account.
 - The refresh token is stored at `~/.config/owa-piggy/config`,
   mode `0600`, in plaintext. Any process running as that user can
   read it.
+- Access tokens are cached at `~/.config/owa-piggy/cache.json`,
+  same mode, same rules - keyed by the scope string, valid until
+  each token's `exp`. Delete the file to force a fresh mint.
 - `--decode`, `--status`, and `--debug` print claims from the
   access token to stdout/stderr. Treat that output like credentials.
 - Atomic writes (temp file + fsync + rename) protect the on-disk
