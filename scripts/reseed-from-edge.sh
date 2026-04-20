@@ -145,5 +145,8 @@ fi
 if command -v owa-piggy >/dev/null 2>&1; then
   owa-piggy --save-config <<<"$scrape_output"
 else
-  python3 "$(dirname "$0")/../owa_piggy.py" --save-config <<<"$scrape_output"
+  # Repo-checkout fallback: run the package directly via `-m`. The flat
+  # owa_piggy.py at the repo root no longer exists after the package split.
+  repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+  PYTHONPATH="$repo_root" python3 -m owa_piggy --save-config <<<"$scrape_output"
 fi
