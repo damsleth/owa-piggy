@@ -113,6 +113,16 @@ def test_scope_without_value_errors_in_cli(monkeypatch, capsys, tmp_config,
     assert '--scope requires a value' in capsys.readouterr().err
 
 
+def test_debug_scope_without_value_errors(monkeypatch, capsys, tmp_config,
+                                          clean_env):
+    """Regression anchor for QA finding #4: --debug with an invalid
+    --scope must exit non-zero with the same error as the main path,
+    not probe AAD with a bogus scope."""
+    rc = _run(monkeypatch, ['--debug', '--scope'])
+    assert rc != 0
+    assert '--scope requires a value' in capsys.readouterr().err
+
+
 def test_raw_token_to_stdout(monkeypatch, capsys, tmp_config, clean_env,
                              make_jwt):
     """Default invocation: only the access token on stdout, nothing else."""

@@ -130,6 +130,15 @@ def do_debug():
     normal invocation), because that's the only honest way to prove the
     token is currently valid."""
 
+    # Resolve scope up front and bail on argument errors, matching the
+    # rest of the CLI. Previously --debug silently ignored resolve_scope's
+    # error and probed with a None scope, which masked what was actually
+    # a fatal arg error with misleading AAD output.
+    debug_scope, scope_err = resolve_scope(sys.argv[1:])
+    if scope_err:
+        print(f'ERROR: {scope_err}', file=sys.stderr)
+        return 1
+
     def row(status, label, detail=''):
         print(f'  [{status}] {label}' + (f': {detail}' if detail else ''))
 
@@ -168,7 +177,6 @@ def do_debug():
 
         if shape_ok and tid:
             print('  probing live exchange against AAD...')
-            debug_scope, _ = resolve_scope(sys.argv[1:])
             result = exchange_token(rt, tid, cid, debug_scope)
             if result and result.get('access_token'):
                 row('ok', 'exchange succeeded')
