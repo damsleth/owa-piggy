@@ -23,19 +23,30 @@ AGENTS_DIR="$HOME/Library/LaunchAgents"
 PLIST="$AGENTS_DIR/$LABEL.plist"
 
 # Resolve how to invoke the tool. Prefer an installed `owa-piggy` on PATH;
-# fall back to `python3 <repo>/owa_piggy.py` so this script works in a clean
-# checkout before add-to-path.sh or pipx install have run.
+# fall back to `python3 -m owa_piggy` with PYTHONPATH=<repo> so this script
+# works in a clean checkout before add-to-path.sh or pipx install have run.
+# (The package used to be a single owa_piggy.py at the repo root, hence the
+#  legacy fallback - that file no longer exists.)
 PROGRAM_ARGS=()
 if owa_piggy_bin="$(command -v owa-piggy 2>/dev/null)"; then
   PROGRAM_ARGS=("$owa_piggy_bin")
-elif [ -f "$REPO_DIR/owa_piggy.py" ]; then
+elif [ -d "$REPO_DIR/owa_piggy" ] && [ -f "$REPO_DIR/owa_piggy/__main__.py" ]; then
   if ! python3_bin="$(command -v python3 2>/dev/null)"; then
-    echo "ERROR: python3 not found on PATH; cannot run $REPO_DIR/owa_piggy.py"
+    echo "ERROR: python3 not found on PATH; cannot run owa_piggy from $REPO_DIR"
     exit 1
   fi
-  PROGRAM_ARGS=("$python3_bin" "$REPO_DIR/owa_piggy.py")
+  # `python3 -m owa_piggy` requires PYTHONPATH to include the repo dir so the
+  # package resolves. launchd's environment is minimal, so set it explicitly
+  # via env. One array element each so ProgramArguments XML stays correct.
+  PROGRAM_ARGS=(
+    "/usr/bin/env"
+    "PYTHONPATH=$REPO_DIR"
+    "$python3_bin"
+    "-m"
+    "owa_piggy"
+  )
 else
-  echo "ERROR: neither owa-piggy on PATH nor $REPO_DIR/owa_piggy.py found."
+  echo "ERROR: neither owa-piggy on PATH nor $REPO_DIR/owa_piggy package found."
   exit 1
 fi
 
