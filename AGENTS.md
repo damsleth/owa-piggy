@@ -4,12 +4,12 @@ Instructions for AI coding agents working in this repo.
 
 ## What this is
 
-`owa-piggy` is a single-file Python CLI (`owa_piggy.py`, ~1000 lines,
-stdlib-only) that exchanges a refresh token scraped from the user's
-own browser for a fresh Microsoft Graph/Outlook/Teams/etc. access
-token. It abuses OWA's first-party SPA client ID. No app
-registration, no server, no multi-user deployment. One user, one
-laptop, macOS-first.
+`owa-piggy` is a small stdlib-only Python CLI (package at `owa_piggy/`,
+~1000 lines split across a handful of modules) that exchanges a refresh
+token scraped from the user's own browser for a fresh Microsoft
+Graph/Outlook/Teams/etc. access token. It abuses OWA's first-party
+SPA client ID. No app registration, no server, no multi-user
+deployment. One user, one laptop, macOS-first.
 
 Read `SECURITY.md` before suggesting changes that touch the OAuth
 flow, the client ID, the `Origin` header, or refresh token storage.
@@ -31,11 +31,24 @@ The threat model is "just for me" - do not harden it into a service.
 ## Layout
 
 ```
-owa_piggy.py          # the whole CLI
+owa_piggy/
+  __init__.py        # re-exports `main` so `owa-piggy = "owa_piggy:main"` resolves
+  __main__.py        # `python -m owa_piggy`
+  cli.py             # arg parsing + dispatch
+  scopes.py          # KNOWN_SCOPES, resolve_scope
+  jwt.py             # decode_jwt_segment, decode_jwt, token_minutes_remaining
+  config.py          # CONFIG_PATH, load_config, save_config, parse_kv_stream
+  cache.py           # access-token cache keyed by (tenant, client, scope)
+  oauth.py           # CLIENT_ID, ORIGIN, exchange_token (the one HTTP call)
+  setup.py           # interactive_setup, read_input (raw-tty paste safety)
+  reseed.py          # find_reseed_script, do_reseed (shells out)
+  status.py          # do_status, do_debug
 scripts/
-  reseed-from-edge.sh # headless Edge sidecar to beat the 24h hard-cap
+  reseed-from-edge.sh  # headless Edge sidecar to beat the 24h hard-cap
   scrape_edge.py
-  setup-refresh.sh    # launchd agent installer
+  setup-refresh.sh     # launchd agent installer
+  add-to-path.sh       # pipx-based installer shim
+tests/                # pytest suite around pure functions + CLI smoke
 pyproject.toml
 .doc/                 # design + implementation plans - read before big changes
 README.md
@@ -53,19 +66,22 @@ exist with acceptance criteria.
 - **Preserve behavior** unless a commit explicitly changes it.
   Recent commits encode subtle decisions: default audience = graph
   (dc7662e), env-token does not flip persist (c07a9ec), packaged
-  installs ship reseed scripts (a4b8284). Do not regress those.
+  installs ship reseed scripts (a4b8284), cache keyed by
+  (tenant, client, scope) (QA fix #1). Do not regress those.
 - **Don't add abstractions.** A `class TokenClient` wrapping one
   `urlopen` call is noise. Flat functions are the norm.
 - **Test what matters.** Pure functions (`resolve_scope`,
   `parse_kv_stream`/`load_config`, `decode_jwt`,
-  `token_minutes_remaining`) are the test targets. Interactive
-  setup, network calls, and launchd plumbing are not.
+  `token_minutes_remaining`, `cache.*`) plus CLI dispatch are the
+  test targets. Interactive setup, network calls, and launchd
+  plumbing are not.
 
 ## Verification before claiming done
 
-- `python -m py_compile owa_piggy.py` passes.
-- `python owa_piggy.py --help` and `--list-scopes` run without
+- `python -m compileall -q owa_piggy` passes.
+- `python -m owa_piggy --help` and `--list-scopes` run without
   traceback on a machine with no config.
+- `pytest -q` is green.
 - If you touched token logic: `owa-piggy --decode` and `--status`
   still produce sane output against a real configured profile. If
   you cannot run against a real token, say so explicitly rather than
