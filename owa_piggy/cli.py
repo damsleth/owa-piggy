@@ -3,7 +3,12 @@ import json
 import sys
 import time
 
-from .cache import get_cached_exp, get_cached_token, store_token
+from .cache import (
+    clear_cache,
+    get_cached_exp,
+    get_cached_token,
+    store_token,
+)
 from .config import load_config, save_config
 from .jwt import decode_jwt, decode_jwt_segment, token_minutes_remaining
 from .oauth import CLIENT_ID, exchange_token
@@ -107,8 +112,11 @@ def main():
 
     # --reseed shells out to the Edge-headless reseed script and exits with
     # its status. Handled before load_config so an expired on-disk token
-    # cannot block recovery.
+    # cannot block recovery. Clear the AT cache first so we never serve a
+    # token minted for the pre-reseed identity/session after the user has
+    # explicitly asked for a fresh credential.
     if '--reseed' in args:
+        clear_cache()
         return do_reseed()
 
     if '--debug' in args:
@@ -130,6 +138,20 @@ def main():
         print(f'ERROR: {err}', file=sys.stderr)
         return 1
 
+    config, persist = load_config()
+
+    if do_setup:
+        # The user is explicitly re-identifying; any cached AT belongs to
+        # the pre-setup identity and must not leak past this point.
+        clear_cache()
+        if not interactive_setup(config):
+            return 1
+        config, persist = load_config()
+
+    refresh_token = config.get('OWA_REFRESH_TOKEN', '').strip()
+    tenant_id = config.get('OWA_TENANT_ID', '').strip()
+    client_id = config.get('OWA_CLIENT_ID', CLIENT_ID).strip()
+
     # Access-token cache short-circuit. Output modes that need only the AT
     # (or something derivable from it locally) can be served from
     # ~/.config/owa-piggy/cache.json without round-tripping AAD, avoiding
@@ -139,12 +161,15 @@ def main():
     # don't cache), --save-config/--setup (the whole point is to rotate),
     # and anywhere earlier in main() that returns before this block
     # (--status, --debug, --reseed all probe or mint on purpose).
-    cache_eligible = not want_json and not do_setup
+    #
+    # Cache is keyed by (tenant, client, scope) so a tenant/client switch
+    # in config or env naturally misses the old entries.
+    cache_eligible = not want_json and not do_setup and tenant_id
     if cache_eligible:
-        cached_at = get_cached_token(scope)
+        cached_at = get_cached_token(tenant_id, client_id, scope)
         if cached_at:
             if want_env:
-                exp = get_cached_exp(scope) or 0
+                exp = get_cached_exp(tenant_id, client_id, scope) or 0
                 print(f'ACCESS_TOKEN={cached_at}')
                 print(f'EXPIRES_IN={max(0, int(exp - time.time()))}')
             elif want_decode:
@@ -155,17 +180,6 @@ def main():
             else:
                 print(cached_at)
             return 0
-
-    config, persist = load_config()
-
-    if do_setup:
-        if not interactive_setup(config):
-            return 1
-        config, persist = load_config()
-
-    refresh_token = config.get('OWA_REFRESH_TOKEN', '').strip()
-    tenant_id = config.get('OWA_TENANT_ID', '').strip()
-    client_id = config.get('OWA_CLIENT_ID', CLIENT_ID).strip()
 
     # Sanity-check the token shape before we ship it to AAD. Real FOCI refresh
     # tokens are "{version}.{base64url payload}" with version 0 or 1. Plain
@@ -198,14 +212,14 @@ def main():
         print(f'ERROR: no access_token in response: {list(result.keys())}', file=sys.stderr)
         return 1
 
-    # Cache the fresh AT keyed by the scope string we requested. Failures
-    # here (disk full, permission weirdness) must not fail the exchange -
-    # we already have the token in hand; caching is an optimisation.
+    # Cache the fresh AT keyed by (tenant, client, scope). Failures here
+    # (disk full, permission weirdness) must not fail the exchange - we
+    # already have the token in hand; caching is an optimisation.
     try:
         payload = decode_jwt_segment(access_token.split('.')[1])
         exp = payload.get('exp')
         if isinstance(exp, (int, float)):
-            store_token(scope, access_token, exp)
+            store_token(tenant_id, client_id, scope, access_token, exp)
     except Exception:
         pass
 

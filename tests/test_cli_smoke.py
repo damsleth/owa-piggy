@@ -159,11 +159,14 @@ def test_cache_short_circuits_exchange(monkeypatch, capsys, tmp_config,
     plain-token output path. exchange_token must not run."""
     import time as _time
     from owa_piggy.cache import store_token
+    from owa_piggy.config import save_config
+    from owa_piggy.oauth import CLIENT_ID
     from owa_piggy.scopes import resolve_scope
 
+    save_config({'OWA_REFRESH_TOKEN': '1.AQ_fake', 'OWA_TENANT_ID': 'tid'})
     scope, _ = resolve_scope([])
     token = make_jwt({'exp': int(_time.time()) + 3600})
-    store_token(scope, token, int(_time.time()) + 3600)
+    store_token('tid', CLIENT_ID, scope, token, int(_time.time()) + 3600)
 
     def _boom(*a, **k):
         raise AssertionError('exchange_token must not be called on cache hit')
@@ -176,10 +179,12 @@ def test_cache_short_circuits_exchange(monkeypatch, capsys, tmp_config,
 
 def test_cache_writes_on_exchange(monkeypatch, tmp_config, clean_env,
                                   make_jwt):
-    """A successful exchange must populate the cache keyed by scope."""
+    """A successful exchange must populate the cache keyed by
+    (tenant, client, scope)."""
     import time as _time
     from owa_piggy.cache import get_cached_token
     from owa_piggy.config import save_config
+    from owa_piggy.oauth import CLIENT_ID
     from owa_piggy.scopes import resolve_scope
 
     save_config({'OWA_REFRESH_TOKEN': '1.AQ_fake', 'OWA_TENANT_ID': 'tid'})
@@ -190,7 +195,101 @@ def test_cache_writes_on_exchange(monkeypatch, tmp_config, clean_env,
     rc = _run(monkeypatch, [])
     assert rc == 0
     scope, _ = resolve_scope([])
-    assert get_cached_token(scope) == token
+    assert get_cached_token('tid', CLIENT_ID, scope) == token
+
+
+def test_cache_does_not_cross_tenant_boundary(monkeypatch, capsys, tmp_config,
+                                              clean_env, make_jwt):
+    """Regression anchor for QA finding #1: a cached AT for tenant A must
+    NOT be served when the active config has tenant B."""
+    import time as _time
+    from owa_piggy.cache import store_token
+    from owa_piggy.config import save_config
+    from owa_piggy.oauth import CLIENT_ID
+    from owa_piggy.scopes import resolve_scope
+
+    save_config({'OWA_REFRESH_TOKEN': '1.AQ_fake',
+                 'OWA_TENANT_ID': 'tenant-B'})
+    scope, _ = resolve_scope([])
+    # Cache an AT under tenant A while the active config is tenant B.
+    store_token('tenant-A', CLIENT_ID, scope, 'at-from-tenant-A',
+                int(_time.time()) + 3600)
+
+    fresh = make_jwt({'exp': int(_time.time()) + 3600, 'tid': 'tenant-B'})
+    called = {'n': 0}
+
+    def _exchange(*a, **k):
+        called['n'] += 1
+        return {'access_token': fresh, 'expires_in': 3600}
+    monkeypatch.setattr(cli_mod, 'exchange_token', _exchange)
+
+    rc = _run(monkeypatch, [])
+    assert rc == 0
+    assert called['n'] == 1
+    out = capsys.readouterr().out.strip()
+    assert out == fresh
+    assert 'at-from-tenant-A' not in out
+
+
+def test_setup_clears_cache(monkeypatch, tmp_config, clean_env, make_jwt):
+    """Running --setup wipes any pre-existing cache so entries from a
+    previous identity can't leak past the re-setup."""
+    import time as _time
+    from owa_piggy.cache import load_cache, store_token
+    from owa_piggy.config import save_config
+    from owa_piggy.oauth import CLIENT_ID
+    from owa_piggy.scopes import resolve_scope
+
+    save_config({'OWA_REFRESH_TOKEN': '1.AQ_fake', 'OWA_TENANT_ID': 'tid'})
+    scope, _ = resolve_scope([])
+    store_token('tid', CLIENT_ID, scope, 'stale',
+                int(_time.time()) + 3600)
+    assert load_cache() != {}
+
+    # Patch interactive_setup to a no-op that succeeds so the CLI doesn't
+    # try to read stdin. The cache must be gone by the time setup returns.
+    seen_cache_during_setup = {}
+
+    def _fake_setup(cfg):
+        seen_cache_during_setup['snapshot'] = load_cache()
+        cfg['OWA_REFRESH_TOKEN'] = '1.AQ_fake'
+        cfg['OWA_TENANT_ID'] = 'tid'
+        return True
+
+    monkeypatch.setattr(cli_mod, 'interactive_setup', _fake_setup)
+    monkeypatch.setattr(cli_mod, 'exchange_token',
+                        lambda *a, **k: {'access_token':
+                                         make_jwt({'exp': int(_time.time()) + 3600}),
+                                         'expires_in': 3600})
+
+    rc = _run(monkeypatch, ['--setup'])
+    assert rc == 0
+    assert seen_cache_during_setup['snapshot'] == {}
+
+
+def test_reseed_clears_cache(monkeypatch, tmp_config, clean_env):
+    """--reseed wipes the cache before shelling out so any AT minted for
+    the pre-reseed RT can't be served afterwards."""
+    import time as _time
+    from owa_piggy.cache import load_cache, store_token
+    from owa_piggy.oauth import CLIENT_ID
+    from owa_piggy.scopes import resolve_scope
+
+    scope, _ = resolve_scope([])
+    store_token('tid', CLIENT_ID, scope, 'pre-reseed-at',
+                int(_time.time()) + 3600)
+    assert load_cache() != {}
+
+    observed = {}
+
+    def _fake_reseed():
+        observed['cache'] = load_cache()
+        return 0
+
+    monkeypatch.setattr(cli_mod, 'do_reseed', _fake_reseed)
+    rc = _run(monkeypatch, ['--reseed'])
+    assert rc == 0
+    assert observed['cache'] == {}
 
 
 def test_json_bypasses_cache(monkeypatch, capsys, tmp_config, clean_env,
@@ -200,12 +299,14 @@ def test_json_bypasses_cache(monkeypatch, capsys, tmp_config, clean_env,
     import time as _time
     from owa_piggy.cache import store_token
     from owa_piggy.config import save_config
+    from owa_piggy.oauth import CLIENT_ID
     from owa_piggy.scopes import resolve_scope
 
     save_config({'OWA_REFRESH_TOKEN': '1.AQ_fake', 'OWA_TENANT_ID': 'tid'})
     scope, _ = resolve_scope([])
     cached_token = make_jwt({'exp': int(_time.time()) + 3600})
-    store_token(scope, cached_token, int(_time.time()) + 3600)
+    store_token('tid', CLIENT_ID, scope, cached_token,
+                int(_time.time()) + 3600)
 
     fresh_token = make_jwt({'exp': int(_time.time()) + 3600,
                             'iss': 'fresh-from-aad'})
@@ -233,11 +334,12 @@ def test_expired_cache_falls_through_to_exchange(monkeypatch, capsys,
     import time as _time
     from owa_piggy.cache import store_token
     from owa_piggy.config import save_config
+    from owa_piggy.oauth import CLIENT_ID
     from owa_piggy.scopes import resolve_scope
 
     save_config({'OWA_REFRESH_TOKEN': '1.AQ_fake', 'OWA_TENANT_ID': 'tid'})
     scope, _ = resolve_scope([])
-    store_token(scope, 'stale-at', int(_time.time()) - 60)
+    store_token('tid', CLIENT_ID, scope, 'stale-at', int(_time.time()) - 60)
 
     fresh = make_jwt({'exp': int(_time.time()) + 3600})
     called = {'n': 0}
@@ -265,12 +367,13 @@ def test_status_bypasses_cache(monkeypatch, tmp_config, clean_env, make_jwt):
     """--status prefers a live AAD probe over a cached AT - the whole
     point of --status is to prove the RT still works."""
     import time as _time
-    from owa_piggy import status as status_mod
     from owa_piggy.cache import store_token
+    from owa_piggy.oauth import CLIENT_ID
     from owa_piggy.scopes import resolve_scope
 
     scope, _ = resolve_scope([])
-    store_token(scope, make_jwt({'exp': int(_time.time()) + 3600}),
+    store_token('tid', CLIENT_ID, scope,
+                make_jwt({'exp': int(_time.time()) + 3600}),
                 int(_time.time()) + 3600)
 
     called = {'n': 0}
@@ -288,10 +391,12 @@ def test_status_bypasses_cache(monkeypatch, tmp_config, clean_env, make_jwt):
 def test_debug_bypasses_cache(monkeypatch, tmp_config, clean_env, make_jwt):
     import time as _time
     from owa_piggy.cache import store_token
+    from owa_piggy.oauth import CLIENT_ID
     from owa_piggy.scopes import resolve_scope
 
     scope, _ = resolve_scope([])
-    store_token(scope, make_jwt({'exp': int(_time.time()) + 3600}),
+    store_token('tid', CLIENT_ID, scope,
+                make_jwt({'exp': int(_time.time()) + 3600}),
                 int(_time.time()) + 3600)
 
     called = {'n': 0}
@@ -309,10 +414,12 @@ def test_debug_bypasses_cache(monkeypatch, tmp_config, clean_env, make_jwt):
 def test_reseed_bypasses_cache(monkeypatch, tmp_config, clean_env, make_jwt):
     import time as _time
     from owa_piggy.cache import store_token
+    from owa_piggy.oauth import CLIENT_ID
     from owa_piggy.scopes import resolve_scope
 
     scope, _ = resolve_scope([])
-    store_token(scope, make_jwt({'exp': int(_time.time()) + 3600}),
+    store_token('tid', CLIENT_ID, scope,
+                make_jwt({'exp': int(_time.time()) + 3600}),
                 int(_time.time()) + 3600)
 
     called = {'n': 0}
@@ -339,12 +446,15 @@ def test_cache_hit_env_mode(monkeypatch, capsys, tmp_config, clean_env,
     the original `expires_in` isn't stored in the cache."""
     import time as _time
     from owa_piggy.cache import store_token
+    from owa_piggy.config import save_config
+    from owa_piggy.oauth import CLIENT_ID
     from owa_piggy.scopes import resolve_scope
 
+    save_config({'OWA_REFRESH_TOKEN': '1.AQ_fake', 'OWA_TENANT_ID': 'tid'})
     scope, _ = resolve_scope([])
     future = int(_time.time()) + 1800
     token = make_jwt({'exp': future})
-    store_token(scope, token, future)
+    store_token('tid', CLIENT_ID, scope, token, future)
 
     monkeypatch.setattr(cli_mod, 'exchange_token',
                         lambda *a, **k: pytest.fail('cache should serve --env'))
@@ -352,8 +462,6 @@ def test_cache_hit_env_mode(monkeypatch, capsys, tmp_config, clean_env,
     assert rc == 0
     out = capsys.readouterr().out
     assert f'ACCESS_TOKEN={token}' in out
-    # EXPIRES_IN should be roughly 1800s, within a small window of the
-    # exact value (test machine clock drift between store and read).
     for line in out.splitlines():
         if line.startswith('EXPIRES_IN='):
             remaining = int(line.split('=', 1)[1])
@@ -368,13 +476,16 @@ def test_cache_hit_decode_mode(monkeypatch, capsys, tmp_config, clean_env,
     """--decode on a cache hit decodes the cached AT, doesn't re-mint."""
     import time as _time
     from owa_piggy.cache import store_token
+    from owa_piggy.config import save_config
+    from owa_piggy.oauth import CLIENT_ID
     from owa_piggy.scopes import resolve_scope
 
+    save_config({'OWA_REFRESH_TOKEN': '1.AQ_fake', 'OWA_TENANT_ID': 'tid'})
     scope, _ = resolve_scope([])
     token = make_jwt({'exp': int(_time.time()) + 3600,
                       'aud': 'https://graph.microsoft.com',
                       'scp': 'Mail.Read'})
-    store_token(scope, token, int(_time.time()) + 3600)
+    store_token('tid', CLIENT_ID, scope, token, int(_time.time()) + 3600)
 
     monkeypatch.setattr(cli_mod, 'exchange_token',
                         lambda *a, **k: pytest.fail('cache should serve --decode'))
@@ -391,12 +502,15 @@ def test_cache_hit_remaining_mode(monkeypatch, capsys, tmp_config, clean_env,
     """--remaining on a cache hit reports minutes on the cached AT."""
     import time as _time
     from owa_piggy.cache import store_token
+    from owa_piggy.config import save_config
+    from owa_piggy.oauth import CLIENT_ID
     from owa_piggy.scopes import resolve_scope
 
+    save_config({'OWA_REFRESH_TOKEN': '1.AQ_fake', 'OWA_TENANT_ID': 'tid'})
     scope, _ = resolve_scope([])
     future = int(_time.time()) + 3600
     token = make_jwt({'exp': future})
-    store_token(scope, token, future)
+    store_token('tid', CLIENT_ID, scope, token, future)
 
     monkeypatch.setattr(cli_mod, 'exchange_token',
                         lambda *a, **k: pytest.fail('cache should serve --remaining'))
@@ -405,6 +519,4 @@ def test_cache_hit_remaining_mode(monkeypatch, capsys, tmp_config, clean_env,
     out = capsys.readouterr().out.strip()
     assert out.endswith('min')
     minutes = int(out[:-3])
-    # Token has 3600s lifetime; minutes_remaining floors, so we expect
-    # either 59 or 60 depending on sub-second drift.
     assert 58 <= minutes <= 60
