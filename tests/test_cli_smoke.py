@@ -6,6 +6,8 @@ tokens, no config writes, no HTTP.
 """
 import sys
 
+import pytest
+
 from owa_piggy import cli as cli_mod
 from owa_piggy.scopes import KNOWN_SCOPES
 
@@ -102,8 +104,11 @@ def test_remaining_prints_minutes(monkeypatch, capsys, tmp_config, clean_env,
     assert capsys.readouterr().out.strip() == '60min'
 
 
-def test_env_rc_exits_nonzero(monkeypatch, capsys, tmp_config, clean_env):
-    rc = _run(monkeypatch, ['--scope'])  # --scope with no value
+def test_scope_without_value_errors_in_cli(monkeypatch, capsys, tmp_config,
+                                            clean_env):
+    """--scope with no value must exit non-zero with a clear message,
+    independently of config/env state."""
+    rc = _run(monkeypatch, ['--scope'])
     assert rc != 0
     assert '--scope requires a value' in capsys.readouterr().err
 
@@ -220,8 +225,11 @@ def test_json_bypasses_cache(monkeypatch, capsys, tmp_config, clean_env,
     assert '1.AQ_rotated' in out
 
 
-def test_expired_cache_falls_through_to_exchange(monkeypatch, tmp_config,
-                                                 clean_env, make_jwt):
+def test_expired_cache_falls_through_to_exchange(monkeypatch, capsys,
+                                                 tmp_config, clean_env,
+                                                 make_jwt):
+    """Expired cache entry must not short-circuit - exchange_token runs
+    and the fresh token is what lands on stdout, not the stale cached one."""
     import time as _time
     from owa_piggy.cache import store_token
     from owa_piggy.config import save_config
@@ -229,12 +237,174 @@ def test_expired_cache_falls_through_to_exchange(monkeypatch, tmp_config,
 
     save_config({'OWA_REFRESH_TOKEN': '1.AQ_fake', 'OWA_TENANT_ID': 'tid'})
     scope, _ = resolve_scope([])
-    # Cache an already-expired token.
     store_token(scope, 'stale-at', int(_time.time()) - 60)
 
     fresh = make_jwt({'exp': int(_time.time()) + 3600})
-    monkeypatch.setattr(cli_mod, 'exchange_token',
-                        lambda *a, **k: {'access_token': fresh,
-                                         'expires_in': 3600})
+    called = {'n': 0}
+
+    def _exchange(*a, **k):
+        called['n'] += 1
+        return {'access_token': fresh, 'expires_in': 3600}
+    monkeypatch.setattr(cli_mod, 'exchange_token', _exchange)
+
     rc = _run(monkeypatch, [])
     assert rc == 0
+    assert called['n'] == 1
+    out = capsys.readouterr().out
+    assert out.strip() == fresh
+    assert 'stale-at' not in out
+
+
+# --- Cache bypass paths -------------------------------------------------
+# --status, --debug, and --reseed exist to probe AAD or shell out; they
+# must NEVER serve from the cache even when a valid AT is present. Each
+# test prefills the cache, then verifies the bypass handler ran.
+
+
+def test_status_bypasses_cache(monkeypatch, tmp_config, clean_env, make_jwt):
+    """--status prefers a live AAD probe over a cached AT - the whole
+    point of --status is to prove the RT still works."""
+    import time as _time
+    from owa_piggy import status as status_mod
+    from owa_piggy.cache import store_token
+    from owa_piggy.scopes import resolve_scope
+
+    scope, _ = resolve_scope([])
+    store_token(scope, make_jwt({'exp': int(_time.time()) + 3600}),
+                int(_time.time()) + 3600)
+
+    called = {'n': 0}
+
+    def _fake_status():
+        called['n'] += 1
+        return 0
+    monkeypatch.setattr(cli_mod, 'do_status', _fake_status)
+
+    rc = _run(monkeypatch, ['--status'])
+    assert rc == 0
+    assert called['n'] == 1
+
+
+def test_debug_bypasses_cache(monkeypatch, tmp_config, clean_env, make_jwt):
+    import time as _time
+    from owa_piggy.cache import store_token
+    from owa_piggy.scopes import resolve_scope
+
+    scope, _ = resolve_scope([])
+    store_token(scope, make_jwt({'exp': int(_time.time()) + 3600}),
+                int(_time.time()) + 3600)
+
+    called = {'n': 0}
+
+    def _fake_debug():
+        called['n'] += 1
+        return 0
+    monkeypatch.setattr(cli_mod, 'do_debug', _fake_debug)
+
+    rc = _run(monkeypatch, ['--debug'])
+    assert rc == 0
+    assert called['n'] == 1
+
+
+def test_reseed_bypasses_cache(monkeypatch, tmp_config, clean_env, make_jwt):
+    import time as _time
+    from owa_piggy.cache import store_token
+    from owa_piggy.scopes import resolve_scope
+
+    scope, _ = resolve_scope([])
+    store_token(scope, make_jwt({'exp': int(_time.time()) + 3600}),
+                int(_time.time()) + 3600)
+
+    called = {'n': 0}
+
+    def _fake_reseed():
+        called['n'] += 1
+        return 0
+    monkeypatch.setattr(cli_mod, 'do_reseed', _fake_reseed)
+
+    rc = _run(monkeypatch, ['--reseed'])
+    assert rc == 0
+    assert called['n'] == 1
+
+
+# --- Cache-hit output branches -----------------------------------------
+# The cache short-circuit has branches for --env, --decode, --remaining,
+# and plain-token. test_cache_short_circuits_exchange covers plain-token;
+# these cover the other three and lock in the output shape.
+
+
+def test_cache_hit_env_mode(monkeypatch, capsys, tmp_config, clean_env,
+                            make_jwt):
+    """--env on a cache hit computes EXPIRES_IN from (exp - now), since
+    the original `expires_in` isn't stored in the cache."""
+    import time as _time
+    from owa_piggy.cache import store_token
+    from owa_piggy.scopes import resolve_scope
+
+    scope, _ = resolve_scope([])
+    future = int(_time.time()) + 1800
+    token = make_jwt({'exp': future})
+    store_token(scope, token, future)
+
+    monkeypatch.setattr(cli_mod, 'exchange_token',
+                        lambda *a, **k: pytest.fail('cache should serve --env'))
+    rc = _run(monkeypatch, ['--env'])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert f'ACCESS_TOKEN={token}' in out
+    # EXPIRES_IN should be roughly 1800s, within a small window of the
+    # exact value (test machine clock drift between store and read).
+    for line in out.splitlines():
+        if line.startswith('EXPIRES_IN='):
+            remaining = int(line.split('=', 1)[1])
+            assert 1700 <= remaining <= 1800
+            break
+    else:
+        pytest.fail('EXPIRES_IN line missing')
+
+
+def test_cache_hit_decode_mode(monkeypatch, capsys, tmp_config, clean_env,
+                               make_jwt):
+    """--decode on a cache hit decodes the cached AT, doesn't re-mint."""
+    import time as _time
+    from owa_piggy.cache import store_token
+    from owa_piggy.scopes import resolve_scope
+
+    scope, _ = resolve_scope([])
+    token = make_jwt({'exp': int(_time.time()) + 3600,
+                      'aud': 'https://graph.microsoft.com',
+                      'scp': 'Mail.Read'})
+    store_token(scope, token, int(_time.time()) + 3600)
+
+    monkeypatch.setattr(cli_mod, 'exchange_token',
+                        lambda *a, **k: pytest.fail('cache should serve --decode'))
+    rc = _run(monkeypatch, ['--decode'])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert '=== Header ===' in out
+    assert '=== Payload ===' in out
+    assert 'Mail.Read' in out
+
+
+def test_cache_hit_remaining_mode(monkeypatch, capsys, tmp_config, clean_env,
+                                  make_jwt):
+    """--remaining on a cache hit reports minutes on the cached AT."""
+    import time as _time
+    from owa_piggy.cache import store_token
+    from owa_piggy.scopes import resolve_scope
+
+    scope, _ = resolve_scope([])
+    future = int(_time.time()) + 3600
+    token = make_jwt({'exp': future})
+    store_token(scope, token, future)
+
+    monkeypatch.setattr(cli_mod, 'exchange_token',
+                        lambda *a, **k: pytest.fail('cache should serve --remaining'))
+    rc = _run(monkeypatch, ['--remaining'])
+    assert rc == 0
+    out = capsys.readouterr().out.strip()
+    assert out.endswith('min')
+    minutes = int(out[:-3])
+    # Token has 3600s lifetime; minutes_remaining floors, so we expect
+    # either 59 or 60 depending on sub-second drift.
+    assert 58 <= minutes <= 60

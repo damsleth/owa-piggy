@@ -50,8 +50,10 @@ def clean_env(monkeypatch):
 
 @pytest.fixture
 def frozen_time(monkeypatch):
-    """Pin time.time() to a fixed value so token_minutes_remaining is
-    deterministic."""
+    """Pin time.time() inside owa_piggy.jwt (used by token_minutes_remaining)
+    so remaining-minute assertions are deterministic. Does NOT freeze the
+    cache module's time - tests that care about cache-hit thresholds should
+    use real-time offsets (now + 3600, etc.)."""
     fixed = 1_700_000_000.0  # 2023-11-14T22:13:20Z
     import owa_piggy.jwt as jwt_mod
     monkeypatch.setattr(jwt_mod.time, 'time', lambda: fixed)
