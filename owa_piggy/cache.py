@@ -1,10 +1,14 @@
 """Access token cache.
 
 Lives alongside the main config at ~/.config/owa-piggy/cache.json, keyed
-by the exact scope string we send to AAD. Keeps ~1KB per cached token
-and cuts AAD round-trips to zero for back-to-back calls within a token's
-lifetime (~60-90 min) - which matters when callers shell out to
-`owa-piggy` many times in a loop and would otherwise risk 429s.
+by (tenant_id, client_id, scope). Keeping tenant+client in the key
+prevents one account's AT from being served after a config change to a
+different tenant or a client-ID override.
+
+~1KB per cached token; cuts AAD round-trips to zero for back-to-back
+calls within a token's lifetime (~60-90 min), which matters when
+callers shell out to `owa-piggy` many times in a loop and would
+otherwise risk 429s.
 
 Cache path is derived at call time from config.CONFIG_PATH so that
 test fixtures which monkeypatch the config path get the cache
@@ -25,6 +29,13 @@ def _cache_path():
     return _config.CONFIG_PATH.parent / CACHE_FILENAME
 
 
+def _key(tenant_id, client_id, scope):
+    """Compose the cache key. Pipe-separated because tenant_id and
+    client_id are UUIDs (no pipes) and scope strings only contain
+    URL/space characters."""
+    return f'{tenant_id}|{client_id}|{scope}'
+
+
 def load_cache():
     """Return the whole cache dict, or {} on any kind of corruption.
 
@@ -42,13 +53,14 @@ def load_cache():
         return {}
 
 
-def get_cached_token(scope, min_remaining_seconds=60):
-    """Return the cached access token for `scope` if it has at least
-    `min_remaining_seconds` left before `exp`, else None.
+def get_cached_token(tenant_id, client_id, scope, min_remaining_seconds=60):
+    """Return the cached access token for the (tenant, client, scope)
+    triple if it has at least `min_remaining_seconds` left before `exp`,
+    else None.
 
     The 60s floor avoids handing out a token that will expire between
     the check and the caller's subsequent HTTP request."""
-    entry = load_cache().get(scope)
+    entry = load_cache().get(_key(tenant_id, client_id, scope))
     if not entry:
         return None
     exp = entry.get('exp', 0)
@@ -58,17 +70,18 @@ def get_cached_token(scope, min_remaining_seconds=60):
     return token if isinstance(token, str) and token else None
 
 
-def get_cached_exp(scope):
-    """Return the cached `exp` (unix seconds) for `scope`, or None."""
-    entry = load_cache().get(scope)
+def get_cached_exp(tenant_id, client_id, scope):
+    """Return the cached `exp` (unix seconds) for the triple, or None."""
+    entry = load_cache().get(_key(tenant_id, client_id, scope))
     if not entry:
         return None
     exp = entry.get('exp')
     return exp if isinstance(exp, (int, float)) else None
 
 
-def store_token(scope, access_token, exp):
-    """Write an access token for `scope` to the cache, atomically.
+def store_token(tenant_id, client_id, scope, access_token, exp):
+    """Write an access token for the (tenant, client, scope) triple to the
+    cache, atomically.
 
     Corrupting this file is harmless - the tool will just refetch. But
     write atomically anyway so concurrent `owa-piggy` invocations (which
@@ -76,7 +89,10 @@ def store_token(scope, access_token, exp):
     path = _cache_path()
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     cache = load_cache()
-    cache[scope] = {'access_token': access_token, 'exp': int(exp)}
+    cache[_key(tenant_id, client_id, scope)] = {
+        'access_token': access_token,
+        'exp': int(exp),
+    }
     payload = json.dumps(cache, indent=2) + '\n'
 
     fd, tmp_path = tempfile.mkstemp(
@@ -99,9 +115,8 @@ def store_token(scope, access_token, exp):
 
 
 def clear_cache():
-    """Remove the cache file if present. Used by `--reseed` and any other
-    path that invalidates existing tokens (scope changes, RT rotation
-    that should flush stale audiences, etc.)."""
+    """Remove the cache file if present. Called by --setup and --reseed
+    so the cache never outlives an identity change."""
     path = _cache_path()
     try:
         path.unlink()
