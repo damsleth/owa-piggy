@@ -116,6 +116,40 @@ exist with acceptance criteria.
 - Do not push or open PRs without the user asking. Do not force-push
   `main`. Do not rewrite published tags (see `.doc/plan-06`).
 
+## Cutting a release (only when the user asks)
+
+Releases are pushed out through a Homebrew tap at
+`~/Code/homebrew-tap` (`damsleth/homebrew-tap` on GitHub). The
+formula pins a specific tag tarball and sha256, so a version bump
+here must be followed by a tap update or `brew upgrade` stays on
+the old version.
+
+When the user says "cut a release" / "new patch version" / "ship it":
+
+1. Pick the bump. Patch (`0.3.0 -> 0.3.1`) for bug fixes, doc
+   corrections, small UX polish. Minor (`0.3.1 -> 0.4.0`) for new
+   flags, new behaviors, anything a user might notice. Never bump
+   major without explicit instruction - this tool is 0.x by design.
+2. Commit the feature work separately from the version bump. Recent
+   history: one `Bump version to X.Y.Z` commit sitting on top of the
+   feature commit. Keep that pattern so `git log` reads cleanly.
+3. Update `pyproject.toml` `version = "X.Y.Z"`. No other file tracks
+   the version today.
+4. Push `main`, then `git tag vX.Y.Z && git push origin vX.Y.Z`.
+   Never retag a version that's already public - Homebrew users
+   cache the tarball by sha.
+5. Fetch the GitHub-generated tarball and compute its sha256:
+   `curl -sL https://github.com/damsleth/owa-piggy/archive/refs/tags/vX.Y.Z.tar.gz -o /tmp/owa-piggy-X.Y.Z.tar.gz && shasum -a 256 /tmp/owa-piggy-X.Y.Z.tar.gz`
+6. Edit `~/Code/homebrew-tap/Formula/owa-piggy.rb` - bump the `url`
+   tag and the `sha256`. Nothing else changes unless dependencies
+   did.
+7. Commit the tap with message `owa-piggy X.Y.Z` (matches the tap's
+   existing convention) and push.
+
+If any step fails midway (tag push rejected, sha mismatch, tap push
+rejected), stop and surface the error - do not try to "fix" a
+published tag by force-pushing.
+
 ## What NOT to do
 
 - Don't register an Azure AD app to "clean this up". That is the
