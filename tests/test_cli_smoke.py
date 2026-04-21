@@ -260,7 +260,7 @@ def test_setup_clears_cache(monkeypatch, tmp_config, clean_env, make_jwt):
     # try to read stdin. The cache must be gone by the time setup returns.
     seen_cache_during_setup = {}
 
-    def _fake_setup(cfg):
+    def _fake_setup(cfg, alias='default'):
         seen_cache_during_setup['snapshot'] = load_cache()
         cfg['OWA_REFRESH_TOKEN'] = '1.AQ_fake'
         cfg['OWA_TENANT_ID'] = 'tid'
@@ -292,7 +292,7 @@ def test_reseed_clears_cache(monkeypatch, tmp_config, clean_env):
 
     observed = {}
 
-    def _fake_reseed():
+    def _fake_reseed(alias):
         observed['cache'] = load_cache()
         return 0
 
@@ -388,7 +388,7 @@ def test_status_bypasses_cache(monkeypatch, tmp_config, clean_env, make_jwt):
 
     called = {'n': 0}
 
-    def _fake_status():
+    def _fake_status(alias):
         called['n'] += 1
         return 0
     monkeypatch.setattr(cli_mod, 'do_status', _fake_status)
@@ -411,7 +411,7 @@ def test_debug_bypasses_cache(monkeypatch, tmp_config, clean_env, make_jwt):
 
     called = {'n': 0}
 
-    def _fake_debug():
+    def _fake_debug(alias):
         called['n'] += 1
         return 0
     monkeypatch.setattr(cli_mod, 'do_debug', _fake_debug)
@@ -434,7 +434,7 @@ def test_reseed_bypasses_cache(monkeypatch, tmp_config, clean_env, make_jwt):
 
     called = {'n': 0}
 
-    def _fake_reseed():
+    def _fake_reseed(alias):
         called['n'] += 1
         return 0
     monkeypatch.setattr(cli_mod, 'do_reseed', _fake_reseed)
@@ -505,6 +505,104 @@ def test_cache_hit_decode_mode(monkeypatch, capsys, tmp_config, clean_env,
     assert '=== Header ===' in out
     assert '=== Payload ===' in out
     assert 'Mail.Read' in out
+
+
+def test_unknown_flag_is_rejected(monkeypatch, capsys, tmp_config, clean_env):
+    """An unrecognised --flag used to fall through to the main flow and
+    silently mint a token. It must now error out with a pointer at the
+    offending flag name."""
+    rc = _run(monkeypatch, ['--somewrongparam'])
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert 'parameter [--somewrongparam] not found' in err
+
+
+def test_unknown_short_flag_is_rejected(monkeypatch, capsys, tmp_config,
+                                        clean_env):
+    rc = _run(monkeypatch, ['-x'])
+    assert rc != 0
+    assert 'parameter [-x] not found' in capsys.readouterr().err
+
+
+def test_unknown_flag_mixed_with_known_is_rejected(monkeypatch, capsys,
+                                                    tmp_config, clean_env):
+    """Typo next to a valid flag must not be ignored just because the
+    valid flag would succeed on its own."""
+    rc = _run(monkeypatch, ['--graph', '--typo'])
+    assert rc != 0
+    assert 'parameter [--typo] not found' in capsys.readouterr().err
+
+
+def test_scope_value_not_treated_as_unknown_flag(monkeypatch, capsys,
+                                                  tmp_config, clean_env,
+                                                  make_jwt):
+    """`--scope <url>` must not trigger unknown-flag rejection on the URL
+    value."""
+    from owa_piggy.config import save_config
+    save_config({'OWA_REFRESH_TOKEN': '1.AQ_fake', 'OWA_TENANT_ID': 'tid'})
+    token = make_jwt({'exp': 9_999_999_999})
+    monkeypatch.setattr(cli_mod, 'exchange_token',
+                        lambda *a, **k: {'access_token': token,
+                                         'expires_in': 3600})
+    rc = _run(monkeypatch, ['--scope', 'https://graph.microsoft.com/.default'])
+    assert rc == 0
+
+
+def test_list_scopes_with_multiple_profiles_no_default(monkeypatch, capsys,
+                                                       tmp_config, clean_env):
+    """--list-scopes is purely informational and must work on installs with
+    multiple profile directories and no default set - the previous ordering
+    ran resolve_profile() first and tripped on the ambiguity error."""
+    from owa_piggy.config import profile_dir
+    profile_dir('work').mkdir(parents=True, exist_ok=True)
+    profile_dir('personal').mkdir(parents=True, exist_ok=True)
+    # profiles.conf intentionally not written: no default pointer.
+    rc = _run(monkeypatch, ['--list-scopes'])
+    assert rc == 0
+    out = capsys.readouterr().out
+    for name in KNOWN_SCOPES:
+        assert f'--{name}' in out
+
+
+def test_status_profile_label_on_stderr(monkeypatch, capsys, tmp_config,
+                                        clean_env):
+    """do_status() must keep its single-line 'no valid token' stdout contract.
+    The [profile=...] label goes to stderr so scripts parsing stdout are not
+    regressed."""
+    rc = _run(monkeypatch, ['--status'])
+    assert rc != 0
+    cap = capsys.readouterr()
+    assert cap.out.strip() == 'no valid token'
+    assert '[profile=' in cap.err
+
+
+def test_cli_rejects_traversal_profile(monkeypatch, capsys, tmp_config,
+                                        clean_env):
+    """--profile ../../outside must be rejected before any path is derived."""
+    rc = _run(monkeypatch, ['--profile', '../../outside', '--setup'])
+    assert rc != 0
+    assert 'invalid profile alias' in capsys.readouterr().err
+
+
+def test_cli_rejects_nested_profile(monkeypatch, capsys, tmp_config,
+                                    clean_env):
+    rc = _run(monkeypatch, ['--profile', 'work/sub', '--setup'])
+    assert rc != 0
+    assert 'invalid profile alias' in capsys.readouterr().err
+
+
+def test_set_default_rejects_bad_alias(monkeypatch, capsys, tmp_config,
+                                       clean_env):
+    rc = _run(monkeypatch, ['--set-default', '../escape'])
+    assert rc != 0
+    assert 'invalid profile alias' in capsys.readouterr().err
+
+
+def test_delete_profile_rejects_bad_alias(monkeypatch, capsys, tmp_config,
+                                          clean_env):
+    rc = _run(monkeypatch, ['--delete-profile', '../escape'])
+    assert rc != 0
+    assert 'invalid profile alias' in capsys.readouterr().err
 
 
 def test_cache_hit_remaining_mode(monkeypatch, capsys, tmp_config, clean_env,

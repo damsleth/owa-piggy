@@ -2,6 +2,9 @@
 
 Both do a live exchange probe against AAD, which rotates the refresh token
 as a side effect. That's fine - a normal invocation would do the same.
+
+Both take an `alias` parameter so output can be labeled with the active
+profile and the launchd plist we probe is the right one for that profile.
 """
 import io
 import os
@@ -11,20 +14,33 @@ import time as _time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from .config import CONFIG_PATH, load_config, save_config
+from . import config as _config
+from .config import (
+    list_profiles,
+    load_config,
+    load_profiles_conf,
+    profile_edge_dir,
+    save_config,
+)
 from .jwt import decode_jwt_segment
 from .oauth import CLIENT_ID, exchange_token
 from .reseed import find_reseed_script
 from .scopes import KNOWN_SCOPES, resolve_scope
 
-LAUNCHD_LABEL = 'com.damsleth.owa-piggy'
+LAUNCHD_LABEL_PREFIX = 'com.damsleth.owa-piggy'
 
 
-def do_status():
-    """Compact health summary. Does a live exchange probe to verify the RT
-    actually works (rotates it as a side effect, which is fine - the RT
-    rotates on every use anyway). Prints three ISO8601 lines or the single
-    line 'no valid token' if anything is missing or the probe fails.
+def _launchd_label(alias):
+    """Per-profile plist label used by `setup-refresh.sh --profile <alias>`."""
+    return f'{LAUNCHD_LABEL_PREFIX}.{alias}'
+
+
+def do_status(alias):
+    """Compact health summary for profile <alias>. Does a live exchange
+    probe to verify the RT actually works (rotates it as a side effect,
+    which is fine - the RT rotates on every use anyway). Prints three
+    ISO8601 lines or the single line 'no valid token' if anything is
+    missing or the probe fails.
 
     Refresh-token expiry uses OWA_RT_ISSUED_AT + 24h if it's in the config
     (set by --setup and --reseed). That's the SPA hard-cap, which is the
@@ -36,6 +52,11 @@ def do_status():
     tid = config.get('OWA_TENANT_ID', '').strip()
     cid = config.get('OWA_CLIENT_ID', CLIENT_ID).strip()
 
+    # Profile label goes to stderr so --status keeps its script-friendly
+    # single-line-on-failure / three-line-on-success contract on stdout.
+    # --debug (which is free-form human output) still prints the label
+    # inline on stdout.
+    print(f'[profile={alias}]', file=sys.stderr)
     if not rt or not tid or not (rt.startswith('1.') or rt.startswith('0.')):
         print('no valid token')
         return 1
@@ -122,10 +143,11 @@ def do_status():
     return 0
 
 
-def do_debug():
-    """Dump everything useful to diagnose a broken setup: config file,
-    refresh-token shape, live exchange probe, access-token claims, launchd
-    agent status, PATH install, sidecar profile. Read-mostly: the probe
+def do_debug(alias):
+    """Dump everything useful to diagnose a broken setup for profile <alias>:
+    config file, refresh-token shape, live exchange probe, access-token
+    claims, launchd agent status, PATH install, sidecar profile. Also
+    lists all configured profiles for context. Read-mostly: the probe
     exchange does rotate the refresh token as a side effect (same as a
     normal invocation), because that's the only honest way to prove the
     token is currently valid."""
@@ -142,12 +164,25 @@ def do_debug():
     def row(status, label, detail=''):
         print(f'  [{status}] {label}' + (f': {detail}' if detail else ''))
 
-    print('owa-piggy --debug\n')
+    print(f'owa-piggy --debug [profile={alias}]\n')
+
+    # --- Profile registry ---
+    reg = load_profiles_conf()
+    profiles = list_profiles()
+    print('Profiles:')
+    if profiles:
+        for p in profiles:
+            marker = '*' if p == reg['OWA_DEFAULT_PROFILE'] else ' '
+            active = '  (active)' if p == alias else ''
+            print(f'  {marker} {p}{active}')
+    else:
+        row('no', 'no profiles registered')
 
     # --- Config file ---
-    print(f'Config file ({CONFIG_PATH}):')
-    if CONFIG_PATH.exists():
-        st = CONFIG_PATH.stat()
+    cfg_path = _config.CONFIG_PATH
+    print(f'\nConfig file ({cfg_path}):')
+    if cfg_path.exists():
+        st = cfg_path.stat()
         mode = oct(st.st_mode & 0o777)
         age_min = int((_time.time() - st.st_mtime) / 60)
         row('ok', 'present', f'perms {mode}, modified {age_min}min ago')
@@ -168,7 +203,8 @@ def do_debug():
     # --- Refresh token shape + live probe ---
     print('\nRefresh token:')
     if not rt:
-        row('no', 'absent; run `owa-piggy --setup` or `owa-piggy --reseed`')
+        row('no', f'absent; run `owa-piggy --setup --profile {alias}` or '
+                  f'`owa-piggy --reseed --profile {alias}`')
     else:
         shape_ok = rt.startswith('1.') or rt.startswith('0.')
         row('ok' if shape_ok else 'no',
@@ -217,12 +253,13 @@ def do_debug():
                 row('no', 'exchange failed - see error above')
 
     # --- Launchd agent ---
-    print('\nLaunchd refresh agent:')
-    plist_path = Path.home() / 'Library' / 'LaunchAgents' / f'{LAUNCHD_LABEL}.plist'
+    label = _launchd_label(alias)
+    print(f'\nLaunchd refresh agent ({label}):')
+    plist_path = Path.home() / 'Library' / 'LaunchAgents' / f'{label}.plist'
     row('ok' if plist_path.exists() else 'no', 'plist file', str(plist_path))
 
     uid = os.getuid()
-    target = f'gui/{uid}/{LAUNCHD_LABEL}'
+    target = f'gui/{uid}/{label}'
     try:
         proc = subprocess.run(['launchctl', 'print', target],
                               capture_output=True, text=True, timeout=5)
@@ -251,6 +288,15 @@ def do_debug():
     except subprocess.TimeoutExpired:
         row('no', 'launchctl print timed out')
 
+    # Warn if the legacy suffix-less plist is still around; setup-refresh.sh
+    # cleans it up on first --all run, but --debug should surface it for
+    # anyone who hasn't re-run install yet.
+    legacy_label = LAUNCHD_LABEL_PREFIX
+    legacy_plist = Path.home() / 'Library' / 'LaunchAgents' / f'{legacy_label}.plist'
+    if legacy_plist.exists():
+        row('!!', 'legacy single-profile plist still present',
+            f'{legacy_plist} - run scripts/setup-refresh.sh --all to replace')
+
     try:
         proc = subprocess.run(['crontab', '-l'], capture_output=True,
                               text=True, timeout=5)
@@ -274,7 +320,7 @@ def do_debug():
         row('no', 'owa-piggy not on PATH',
             'run ./scripts/add-to-path.sh or pipx install .')
 
-    sidecar = Path.home() / '.config' / 'owa-piggy' / 'edge-profile'
+    sidecar = profile_edge_dir(alias)
     row('ok' if sidecar.is_dir() else 'no',
         'Edge sidecar profile', str(sidecar) if sidecar.is_dir() else
         f'{sidecar} (missing; --reseed needs this)')

@@ -8,7 +8,7 @@ No app registration, asking a tenant admin or managing client secrets.
 ```sh
 brew tap damsleth/tap
 brew install owa-piggy
-owa-piggy --setup
+owa-piggy --setup                       # creates the 'default' profile
 # or, to avoid terminal paste-corruption on long tokens:
 # copy the two lines the browser snippet prints, then
 pbpaste | owa-piggy --save-config
@@ -72,13 +72,14 @@ The token comes back with a broad set of delegated scopes: `Calendars.ReadWrite`
 
 The sliding window renews on every exchange. The hard-cap does not - after 24h AAD returns `AADSTS700084` and the token is unrecoverable via rotation. The launchd agent handles the sliding window; `--reseed` handles the hard-cap.
 
-The rotated refresh token is saved automatically to `~/.config/owa-piggy/config` after every exchange (only when the token originally came from the config file - env-only callers keep env-only semantics and get a rotation notice on stderr). Install a LaunchAgent to keep the sliding window fresh without thinking about it:
+The rotated refresh token is saved automatically to `~/.config/owa-piggy/profiles/<alias>/config` after every exchange (only when the token originally came from the config file - env-only callers keep env-only semantics and get a rotation notice on stderr). Install a LaunchAgent per profile to keep each sliding window fresh without thinking about it:
 
 ```sh
-./scripts/setup-refresh.sh
+./scripts/setup-refresh.sh --profile default     # one profile
+./scripts/setup-refresh.sh --all                 # every configured profile
 ```
 
-The agent runs hourly via `launchd`'s `StartCalendarInterval` and, unlike cron, fires on wake for any hour that was missed while the Mac was asleep - so an overnight-closed laptop still rotates the token before the 24h sliding window closes.
+The agents run hourly via `launchd`'s `StartCalendarInterval` and, unlike cron, fire on wake for any hour that was missed while the Mac was asleep - so an overnight-closed laptop still rotates each profile's token before the 24h sliding window closes.
 
 ---
 
@@ -86,12 +87,14 @@ The agent runs hourly via `launchd`'s `StartCalendarInterval` and, unlike cron, 
 
 Because hourly rotation only keeps the sliding window alive, you still hit `AADSTS700084` after 24h of continuous use. `--reseed` is the automated recovery path - it drives a sidecar Edge profile via the Chrome DevTools Protocol, extracts a fresh FOCI refresh token from MSAL's localStorage, and pipes it into `--save-config`.
 
-One-time setup of the sidecar profile:
+One-time setup of the sidecar profile (per alias):
 
 ```sh
-mkdir -p ~/.config/owa-piggy/edge-profile
+alias=default   # or work, personal, client-x ...
+dir="$HOME/.config/owa-piggy/profiles/$alias/edge-profile"
+mkdir -p "$dir"
 /Applications/Microsoft\ Edge.app/Contents/MacOS/Microsoft\ Edge \
-  --user-data-dir="$HOME/.config/owa-piggy/edge-profile" \
+  --user-data-dir="$dir" \
   https://outlook.cloud.microsoft
 # sign in, then close Edge
 ```
@@ -99,7 +102,7 @@ mkdir -p ~/.config/owa-piggy/edge-profile
 Thereafter:
 
 ```sh
-owa-piggy --reseed
+owa-piggy --reseed --profile $alias
 ```
 
 The scraper detects stale caches (ID token JWT `iat` > 23h old), forces a Page.reload if MSAL gets wedged, and if session cookies have also expired it reopens Edge visibly so you can sign in interactively and then scrapes again automatically. When things work the whole thing is silent and takes a second or two.
@@ -143,7 +146,7 @@ The token is scoped to your user identity. A password change or admin revocation
 
 See [SECURITY.md](SECURITY.md) for the full threat model and known failure modes.
 
-Config is stored at `~/.config/owa-piggy/config`, mode 0600:
+Per-profile config lives at `~/.config/owa-piggy/profiles/<alias>/config`, mode 0600:
 
 ```
 OWA_REFRESH_TOKEN="1.AQ..."
@@ -151,11 +154,36 @@ OWA_TENANT_ID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 OWA_RT_ISSUED_AT="2026-04-19T10:15:00Z"
 ```
 
+A small registry at `~/.config/owa-piggy/profiles.conf` tracks which profiles exist and which is the default.
+
 Writes are atomic (temp file + fsync + rename) so a crash mid-rotation cannot corrupt the only live token. Environment variables take precedence over the config file:
 
 - `OWA_REFRESH_TOKEN`, `OWA_TENANT_ID` - override the corresponding config values (when `OWA_REFRESH_TOKEN` is env-supplied, rotated tokens are kept env-only and not written back to disk)
 - `OWA_CLIENT_ID` - override the default OWA client ID
 - `OWA_DEFAULT_AUDIENCE` - change the default audience (a short name from `--list-scopes` like `outlook`, or a full https URL). Command-line `--<name>` / `--scope` still wins.
+
+---
+
+## Multiple profiles
+
+owa-piggy supports multiple independent tenants / identities via named profiles. Each profile gets its own config, access-token cache, Edge sidecar userdata dir, and launchd job, so a broken reseed on one profile does not knock out the others.
+
+```sh
+owa-piggy --setup --profile work             # create a new profile
+owa-piggy --setup --profile personal         # ...and another
+owa-piggy --profile work                     # raw token for 'work'
+OWA_PROFILE=work owa-piggy                   # same, via env
+owa-piggy --list-profiles                    # * marks the default
+owa-piggy --set-default work                 # change the default pointer
+owa-piggy --status --profile personal        # health check, per profile
+owa-piggy --reseed --profile work            # recover one profile after 24h
+owa-piggy --delete-profile personal          # remove a profile (config + Edge)
+./scripts/setup-refresh.sh --all             # install a plist for each profile
+```
+
+Selection precedence when `--profile` is omitted: `OWA_PROFILE` env var > `OWA_DEFAULT_PROFILE` in `profiles.conf` > lone profile on disk > `default` on fresh installs. If multiple profiles exist but none is marked default, the command errors out rather than guessing.
+
+Legacy single-config installs auto-migrate on first run: `~/.config/owa-piggy/{config,cache.json,edge-profile}` move into `profiles/default/` atomically and a `profiles.conf` is written that marks `default` as the active profile. The legacy launchd plist (`com.damsleth.owa-piggy`) keeps running until you re-install via `./scripts/setup-refresh.sh --all`, which replaces it with per-profile plists labelled `com.damsleth.owa-piggy.<alias>`.
 
 ---
 
