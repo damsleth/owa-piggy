@@ -1,5 +1,6 @@
 """Argument parsing and dispatch for the `owa-piggy` command."""
 import json
+import os
 import shutil
 import sys
 import time
@@ -29,7 +30,7 @@ from .oauth import CLIENT_ID, exchange_token
 from .reseed import do_reseed
 from .scopes import KNOWN_SCOPES, resolve_scope
 from .setup import interactive_setup
-from .status import do_debug, do_status
+from .status import do_debug, do_status, do_status_all
 
 
 def print_help():
@@ -54,7 +55,8 @@ options:
   --reseed            fetch a fresh refresh token headlessly from the Edge
                       sidecar profile (for when the 24h SPA hard-expiry hits)
   --status            compact health: authtoken/scope/refreshtoken expiries
-                      (ISO8601), or 'no valid token' if setup is broken
+                      (ISO8601), or 'no valid token' if setup is broken.
+                      Without --profile, shows every configured profile.
   --debug             dump setup diagnostics: config, token shape, live probe,
                       launchd agent, PATH install, sidecar profile
 
@@ -63,7 +65,9 @@ profile management:
                       honored via OWA_PROFILE env var). See `--list-profiles`
                       for what's configured. With --setup, creates the
                       profile if it does not yet exist.
-  --list-profiles     print configured profiles, marking the default with *
+  --list-profiles     list configured profiles (default marked with *). On
+  --profiles          an interactive TTY, shows an up/down picker so Enter
+                      sets the highlighted profile as the new default.
   --set-default <a>   make <alias> the default profile
   --delete-profile <a>  remove a profile's config and Edge sidecar dir.
                       Refuses to delete the default unless --force is given.
@@ -96,9 +100,8 @@ one-time setup:
        const find = s => Object.keys(localStorage).find(k => k.includes(s))
        const parse = s => JSON.parse(localStorage[find(s)])
        const rt = parse('|refreshtoken|'), it = parse('|idtoken|')
-       if (!rt.secret) console.warn('WARN: non-MSAL shape; seed from Edge.')
-       console.log('OWA_REFRESH_TOKEN=' + (rt.secret || rt.data))
-       console.log('OWA_TENANT_ID=' + (it.realm || find('|idtoken|').split('|')[5]))
+       if (!rt.secret) console.warn('WARN: non-MSAL shape.')
+       console.log(`OWA_REFRESH_TOKEN=${rt.secret || rt.data}\nOWA_TENANT_ID=${(it.realm || find('|idtoken|').split('|')[5])}`)
   4. Run: owa-piggy --save-config --profile <alias>
 
 examples:
@@ -137,7 +140,7 @@ _VALUE_FLAGS = {'--profile', '--set-default', '--delete-profile', '--scope'}
 
 _STATIC_FLAGS = {
     '--help', '-h',
-    '--list-profiles', '--list-scopes',
+    '--list-profiles', '--profiles', '--list-scopes',
     '--force',
     '--save-config', '--setup',
     '--reseed', '--debug', '--status',
@@ -195,16 +198,101 @@ def _extract_option(args, flag):
 
 
 def _do_list_profiles():
-    """Print configured profiles, marking the default with '*'."""
+    """Print configured profiles, marking the default with '*'.
+
+    On an interactive stdout+stdin we draw a simple up/down picker so the
+    user can change the default profile without memorising --set-default.
+    Non-TTY invocations (pipes, redirects, CI) fall through to the plain
+    printed list so scripts stay parseable."""
     profiles = list_profiles()
     if not profiles:
         print('no profiles configured. Run: owa-piggy --setup --profile <alias>')
         return 0
     reg = load_profiles_conf()
     default = reg['OWA_DEFAULT_PROFILE']
+    if sys.stdin.isatty() and sys.stdout.isatty():
+        return _interactive_profile_picker(profiles, default)
     for alias in profiles:
         marker = ' *' if alias == default else '  '
         print(f'{marker} {alias}')
+    return 0
+
+
+def _interactive_profile_picker(profiles, default):
+    """Draw an up/down picker. Enter sets the highlighted profile as
+    default; q/Esc quits without changing anything. '*' marks the current
+    registry default; '>' marks the cursor.
+
+    Falls back to the plain list if termios is unavailable (non-POSIX)
+    or any I/O step raises before the first key read."""
+    try:
+        import termios
+        import tty
+    except ImportError:
+        for alias in profiles:
+            marker = ' *' if alias == default else '  '
+            print(f'{marker} {alias}')
+        return 0
+
+    idx = profiles.index(default) if default in profiles else 0
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+
+    def draw(first=False):
+        # Rewind over the previous frame (header + one line per profile +
+        # footer). On first draw there is nothing to clear.
+        if not first:
+            sys.stdout.write(f'\x1b[{len(profiles) + 2}A')
+        sys.stdout.write('profiles (enter = set default, q = quit):\r\n')
+        for i, alias in enumerate(profiles):
+            star = '*' if alias == default else ' '
+            cursor = '>' if i == idx else ' '
+            # \x1b[K clears to end-of-line so the previous frame's trailing
+            # characters do not bleed through when lines differ in length.
+            sys.stdout.write(f'{cursor} {star} {alias}\x1b[K\r\n')
+        sys.stdout.write('\x1b[K\r\n')
+        sys.stdout.flush()
+
+    try:
+        tty.setraw(fd)
+        draw(first=True)
+        while True:
+            ch = sys.stdin.read(1)
+            if ch == '\x1b':
+                seq = sys.stdin.read(1)
+                if seq == '[':
+                    arrow = sys.stdin.read(1)
+                    if arrow == 'A' and idx > 0:
+                        idx -= 1
+                    elif arrow == 'B' and idx < len(profiles) - 1:
+                        idx += 1
+                    draw()
+                    continue
+                # Bare ESC = quit.
+                return 0
+            if ch in ('q', 'Q', '\x03'):  # q / ctrl-C
+                return 0
+            if ch in ('\r', '\n'):
+                break
+            if ch == 'k' and idx > 0:
+                idx -= 1
+                draw()
+            elif ch == 'j' and idx < len(profiles) - 1:
+                idx += 1
+                draw()
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+    chosen = profiles[idx]
+    if chosen == default:
+        print(f'{chosen!r} is already the default; no change.')
+        return 0
+    reg = load_profiles_conf()
+    reg['OWA_DEFAULT_PROFILE'] = chosen
+    if chosen not in reg['OWA_PROFILES']:
+        reg['OWA_PROFILES'].append(chosen)
+    save_profiles_conf(reg)
+    print(f'default profile set to {chosen!r}')
     return 0
 
 
@@ -290,7 +378,7 @@ def main():
 
     migrate_if_needed()  # idempotent; no-op on fresh or already-migrated installs
 
-    if '--list-profiles' in args:
+    if '--list-profiles' in args or '--profiles' in args:
         return _do_list_profiles()
 
     # --list-scopes is purely informational (prints the KNOWN_SCOPES table).
@@ -329,6 +417,14 @@ def main():
     if err:
         print(f'ERROR: {err}', file=sys.stderr)
         return 1
+
+    # --status with no explicit profile shows every configured profile.
+    # This bypasses resolve_profile()'s ambiguity error (multiple profiles
+    # / no default) which would otherwise make the informational path
+    # unusable on the very installs where it is most useful.
+    if '--status' in args and not cli_profile \
+            and not os.environ.get('OWA_PROFILE', '').strip():
+        return do_status_all()
 
     do_setup = '--save-config' in args or '--setup' in args
     alias, perr = resolve_profile(cli_profile, allow_missing=do_setup)

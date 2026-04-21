@@ -48,10 +48,15 @@ if [ ! -x "$EDGE" ]; then
   log "ERROR: Edge not found at $EDGE"
   exit 1
 fi
+# Each profile gets its own Edge userdata dir. Auto-create it so a fresh
+# profile can reseed without a separate manual bootstrap step - the
+# first run will still land in the visible-signin branch (scrape exits 2
+# because there are no session cookies), after which subsequent reseeds
+# are headless. `owa-piggy --setup` also does this eagerly.
 if [ ! -d "$PROFILE_DIR" ]; then
-  log "ERROR: sidecar profile not found at $PROFILE_DIR"
-  log "  Run the one-time setup from this script's header first."
-  exit 1
+  log "creating sidecar profile at $PROFILE_DIR"
+  mkdir -p "$PROFILE_DIR"
+  chmod 700 "$PROFILE_DIR" 2>/dev/null || true
 fi
 if lsof -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
   log "ERROR: port $PORT is busy. Kill the occupant or set CDP_PORT."

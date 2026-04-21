@@ -375,7 +375,8 @@ def test_expired_cache_falls_through_to_exchange(monkeypatch, capsys,
 
 def test_status_bypasses_cache(monkeypatch, tmp_config, clean_env, make_jwt):
     """--status prefers a live AAD probe over a cached AT - the whole
-    point of --status is to prove the RT still works."""
+    point of --status is to prove the RT still works. With no explicit
+    --profile, dispatch lands in do_status_all rather than do_status."""
     import time as _time
     from owa_piggy.cache import store_token
     from owa_piggy.oauth import CLIENT_ID
@@ -388,10 +389,10 @@ def test_status_bypasses_cache(monkeypatch, tmp_config, clean_env, make_jwt):
 
     called = {'n': 0}
 
-    def _fake_status(alias):
+    def _fake_status_all():
         called['n'] += 1
         return 0
-    monkeypatch.setattr(cli_mod, 'do_status', _fake_status)
+    monkeypatch.setattr(cli_mod, 'do_status_all', _fake_status_all)
 
     rc = _run(monkeypatch, ['--status'])
     assert rc == 0
@@ -548,6 +549,24 @@ def test_scope_value_not_treated_as_unknown_flag(monkeypatch, capsys,
     assert rc == 0
 
 
+def test_profiles_alias_invokes_list_profiles(monkeypatch, capsys, tmp_config,
+                                               clean_env):
+    """--profiles is an alias for --list-profiles. Non-TTY stdin falls
+    through to the plain list so the test doesn't need terminal raw
+    mode."""
+    from owa_piggy.config import ensure_profile_registered, profile_dir
+    profile_dir('work').mkdir(parents=True, exist_ok=True)
+    profile_dir('personal').mkdir(parents=True, exist_ok=True)
+    ensure_profile_registered('work')
+    ensure_profile_registered('personal')
+    rc = _run(monkeypatch, ['--profiles'])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert 'work' in out
+    assert 'personal' in out
+    assert '*' in out  # default marker
+
+
 def test_list_scopes_with_multiple_profiles_no_default(monkeypatch, capsys,
                                                        tmp_config, clean_env):
     """--list-scopes is purely informational and must work on installs with
@@ -566,14 +585,42 @@ def test_list_scopes_with_multiple_profiles_no_default(monkeypatch, capsys,
 
 def test_status_profile_label_on_stderr(monkeypatch, capsys, tmp_config,
                                         clean_env):
-    """do_status() must keep its single-line 'no valid token' stdout contract.
-    The [profile=...] label goes to stderr so scripts parsing stdout are not
-    regressed."""
-    rc = _run(monkeypatch, ['--status'])
+    """Single-profile --status must keep its 'no valid token' stdout
+    contract. The [profile=...] label goes to stderr so scripts parsing
+    stdout are not regressed. --profile is required to stay in
+    single-profile mode (the no-flag form iterates all profiles)."""
+    rc = _run(monkeypatch, ['--status', '--profile', 'default'])
     assert rc != 0
     cap = capsys.readouterr()
     assert cap.out.strip() == 'no valid token'
     assert '[profile=' in cap.err
+
+
+def test_status_without_profile_iterates_all(monkeypatch, capsys, tmp_config,
+                                              clean_env):
+    """--status with no --profile prints a labeled block per configured
+    profile. The [profile=...] label moves to stdout so the output is
+    self-describing when scanning several profiles."""
+    from owa_piggy.config import ensure_profile_registered, profile_dir
+    profile_dir('work').mkdir(parents=True, exist_ok=True)
+    profile_dir('personal').mkdir(parents=True, exist_ok=True)
+    ensure_profile_registered('work')
+    ensure_profile_registered('personal')
+    rc = _run(monkeypatch, ['--status'])
+    assert rc != 0
+    out = capsys.readouterr().out
+    assert '[profile=work]' in out
+    assert '[profile=personal]' in out
+
+
+def test_status_no_profiles_configured(monkeypatch, capsys, tmp_config,
+                                        clean_env):
+    """--status with no profiles configured anywhere must produce a
+    helpful pointer, not a traceback."""
+    rc = _run(monkeypatch, ['--status'])
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert 'no profiles configured' in err
 
 
 def test_cli_rejects_traversal_profile(monkeypatch, capsys, tmp_config,
