@@ -35,7 +35,7 @@ def _launchd_label(alias):
     return f'{LAUNCHD_LABEL_PREFIX}.{alias}'
 
 
-def do_status(alias):
+def do_status(alias, multi=False):
     """Compact health summary for profile <alias>. Does a live exchange
     probe to verify the RT actually works (rotates it as a side effect,
     which is fine - the RT rotates on every use anyway). Prints three
@@ -46,17 +46,25 @@ def do_status(alias):
     (set by --setup and --reseed). That's the SPA hard-cap, which is the
     binding constraint since hourly rotation keeps the sliding window
     permanently fresh. If the field is missing (pre-existing setups from
-    before this flag landed) we fall back to 'unknown'."""
+    before this flag landed) we fall back to 'unknown'.
+
+    `multi=True` is set by do_status_all() when iterating every profile.
+    In that mode the [profile=...] label is written to stdout so the
+    output is self-describing when scanning several profiles at once;
+    single-profile mode keeps the label on stderr to preserve the
+    script-friendly stdout contract."""
+    # set_active_profile rebinds CONFIG_PATH so load_config / save_config
+    # and the access-token cache all target the right profile. The
+    # single-profile path goes through cli.py which already calls this,
+    # but do_status_all() calls us directly per alias so we own it here.
+    _config.set_active_profile(alias)
     config, persist = load_config()
     rt = config.get('OWA_REFRESH_TOKEN', '').strip()
     tid = config.get('OWA_TENANT_ID', '').strip()
     cid = config.get('OWA_CLIENT_ID', CLIENT_ID).strip()
 
-    # Profile label goes to stderr so --status keeps its script-friendly
-    # single-line-on-failure / three-line-on-success contract on stdout.
-    # --debug (which is free-form human output) still prints the label
-    # inline on stdout.
-    print(f'[profile={alias}]', file=sys.stderr)
+    label_stream = sys.stdout if multi else sys.stderr
+    print(f'[profile={alias}]', file=label_stream)
     if not rt or not tid or not (rt.startswith('1.') or rt.startswith('0.')):
         print('no valid token')
         return 1
@@ -141,6 +149,27 @@ def do_status(alias):
     print(f'scope(s):     {scopes_line}')
     print(f'refreshtoken: expires {rt_expires}')
     return 0
+
+
+def do_status_all():
+    """Run do_status() against every configured profile.
+
+    Used when `--status` is invoked with no explicit --profile / no
+    OWA_PROFILE env var. Each profile gets its own labeled block,
+    separated by a blank line. Exit code is the max of the per-profile
+    return codes so any unhealthy profile is still surfaced to scripts.
+    """
+    profiles = list_profiles()
+    if not profiles:
+        print('no profiles configured. Run: owa-piggy --setup --profile <alias>',
+              file=sys.stderr)
+        return 1
+    rc = 0
+    for i, alias in enumerate(profiles):
+        if i:
+            print()
+        rc = max(rc, do_status(alias, multi=True))
+    return rc
 
 
 def do_debug(alias):

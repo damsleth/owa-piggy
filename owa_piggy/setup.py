@@ -120,6 +120,7 @@ def interactive_setup(config, alias='default'):
         # does not reset the SPA hard-cap timer).
         config['OWA_RT_ISSUED_AT'] = iso_utc_now()
         save_config(config)
+        _ensure_edge_profile_dir(alias)
         print(f'Config saved to {_config.CONFIG_PATH} [profile={alias}]', file=sys.stderr)
         return True
 
@@ -132,9 +133,11 @@ def interactive_setup(config, alias='default'):
     print('   const find = s => Object.keys(localStorage).find(k => k.includes(s))')
     print('   const parse = s => JSON.parse(localStorage[find(s)])')
     print('   const rt = parse(\'|refreshtoken|\'), it = parse(\'|idtoken|\')')
-    print('   if (!rt.secret) console.warn(\'WARN: non-MSAL shape; seed from Edge.\')')
-    print('   console.log(\'OWA_REFRESH_TOKEN=\' + (rt.secret || rt.data))')
-    print('   console.log(\'OWA_TENANT_ID=\' + (it.realm || find(\'|idtoken|\').split(\'|\')[5]))\n')
+    print('   if (!rt.secret) console.warn(\'WARN: non-MSAL shape.\')')
+    # Single console.log so the "VMXXX:X" line that the devtools console
+    # appends after the first call does not end up copied into the paste.
+    print('   console.log(`OWA_REFRESH_TOKEN=${rt.secret || rt.data}\\n'
+          'OWA_TENANT_ID=${(it.realm || find(\'|idtoken|\').split(\'|\')[5])}`)\n')
     print('   Tip: to avoid terminal paste-corruption on very long tokens,')
     print('   copy the two output lines and pipe them in instead:')
     print(f'     pbpaste | owa-piggy --save-config --profile {alias}\n')
@@ -152,5 +155,17 @@ def interactive_setup(config, alias='default'):
     config['OWA_TENANT_ID'] = tid
     config['OWA_RT_ISSUED_AT'] = iso_utc_now()
     save_config(config)
+    _ensure_edge_profile_dir(alias)
     print(f'\nConfig saved to {_config.CONFIG_PATH} [profile={alias}]')
     return True
+
+
+def _ensure_edge_profile_dir(alias):
+    """Create the per-profile Edge sidecar userdata dir if missing.
+
+    Each profile needs its own dir so `--reseed --profile <alias>` can
+    drive Edge headlessly without clobbering another profile's cookies.
+    First-ever reseed will still trigger an interactive sign-in because
+    the dir starts empty; thereafter the existing session is reused."""
+    d = _config.profile_edge_dir(alias)
+    d.mkdir(parents=True, exist_ok=True, mode=0o700)
