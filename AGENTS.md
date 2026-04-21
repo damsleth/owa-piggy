@@ -34,26 +34,45 @@ The threat model is "just for me" - do not harden it into a service.
 owa_piggy/
   __init__.py        # re-exports `main` so `owa-piggy = "owa_piggy:main"` resolves
   __main__.py        # `python -m owa_piggy`
-  cli.py             # arg parsing + dispatch
+  cli.py             # arg parsing + dispatch (--profile, --list-profiles, ...)
   scopes.py          # KNOWN_SCOPES, resolve_scope
   jwt.py             # decode_jwt_segment, decode_jwt, token_minutes_remaining
-  config.py          # CONFIG_PATH, load_config, save_config, parse_kv_stream
-  cache.py           # access-token cache keyed by (tenant, client, scope)
+  config.py          # ROOT_DIR, CONFIG_PATH, profile path helpers,
+                     # resolve_profile, profiles.conf I/O, load/save_config
+  migration.py       # one-shot legacy single-config -> profiles/default/ rescue
+  cache.py           # access-token cache keyed by (tenant, client, scope),
+                     # scoped per-profile via CONFIG_PATH.parent
   oauth.py           # CLIENT_ID, ORIGIN, exchange_token (the one HTTP call)
-  setup.py           # interactive_setup, read_input (raw-tty paste safety)
-  reseed.py          # find_reseed_script, do_reseed (shells out)
-  status.py          # do_status, do_debug
+  setup.py           # interactive_setup(alias), read_input (raw-tty paste safety)
+  reseed.py          # find_reseed_script, do_reseed(alias) (shells out)
+  status.py          # do_status(alias), do_debug(alias)
 scripts/
-  reseed-from-edge.sh  # headless Edge sidecar to beat the 24h hard-cap
+  reseed-from-edge.sh  # headless Edge sidecar; reads OWA_PIGGY_EDGE_PROFILE_DIR
   scrape_edge.py
-  setup-refresh.sh     # launchd agent installer
+  setup-refresh.sh     # launchd agent installer, one plist per profile
   add-to-path.sh       # pipx-based installer shim
-tests/                # pytest suite around pure functions + CLI smoke
+tests/                # pytest suite: pure functions + CLI smoke + profile suite
 pyproject.toml
 .doc/                 # design + implementation plans - read before big changes
 README.md
 SECURITY.md
 ```
+
+On-disk layout at `~/.config/owa-piggy/`:
+
+```
+profiles.conf                     OWA_DEFAULT_PROFILE + OWA_PROFILES
+profiles/
+  <alias>/
+    config                        per-profile KV (OWA_REFRESH_TOKEN, ...)
+    cache.json                    access-token cache for this profile
+    edge-profile/                 Edge sidecar userdata dir for this profile
+    refresh.log                   per-profile launchd stderr
+```
+
+The single-file layout (`~/.config/owa-piggy/config`) is auto-migrated into
+`profiles/default/` the first time any profile-aware code path runs; see
+`owa_piggy/migration.py`.
 
 Planning docs live in `.doc/`. If you are about to do something
 non-trivial, check `.doc/plan-*.md` first - the plan may already

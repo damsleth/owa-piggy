@@ -26,15 +26,21 @@ def make_jwt():
 
 @pytest.fixture
 def tmp_config(tmp_path, monkeypatch):
-    """Redirect owa_piggy.config.CONFIG_PATH to a path under tmp_path.
+    """Redirect the owa-piggy config tree to a path under tmp_path.
 
-    Patches every module that imported CONFIG_PATH by name so references
-    stay consistent across the package.
+    Patches both `ROOT_DIR` (profiles/profiles.conf resolve through it)
+    and `CONFIG_PATH` (active-profile legacy-compat path). Returns the
+    legacy-style config path so tests that call `save_config(...)`
+    directly still write to the expected location - migration then
+    relocates it under `profiles/default/` when main() is invoked,
+    matching production behavior.
     """
-    fake_path = tmp_path / 'owa-piggy' / 'config'
+    fake_root = tmp_path / 'owa-piggy'
+    fake_path = fake_root / 'config'
     from owa_piggy import config as config_mod
+    monkeypatch.setattr(config_mod, 'ROOT_DIR', fake_root)
     monkeypatch.setattr(config_mod, 'CONFIG_PATH', fake_path)
-    # setup.py re-imports CONFIG_PATH at module load time, so patch there too.
+    # setup.py re-exports CONFIG_PATH at module load time, so patch there too.
     from owa_piggy import setup as setup_mod
     monkeypatch.setattr(setup_mod, 'CONFIG_PATH', fake_path, raising=False)
     return fake_path

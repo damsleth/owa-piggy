@@ -1,5 +1,7 @@
 # temporary docs
 .doc/
+# claude specifics
+.claude/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

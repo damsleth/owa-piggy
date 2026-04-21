@@ -7,7 +7,14 @@ is the --save-config flow; it also parses piped stdin so
 """
 import sys
 
-from .config import CONFIG_PATH, iso_utc_now, parse_kv_stream, save_config
+from . import config as _config
+from .config import iso_utc_now, parse_kv_stream, save_config
+
+# Some tests monkeypatch setup.CONFIG_PATH directly (legacy fixture behavior).
+# Expose it as a module attribute so those patches keep working, but read
+# `_config.CONFIG_PATH` at call time everywhere it matters so the active
+# profile's path is always current.
+CONFIG_PATH = _config.CONFIG_PATH
 
 
 def read_input(prompt, secret=False):
@@ -88,7 +95,14 @@ def read_input(prompt, secret=False):
         return input().strip()
 
 
-def interactive_setup(config):
+def interactive_setup(config, alias='default'):
+    """Run the setup flow for profile <alias>. `CONFIG_PATH` must already
+    be pointing at that profile's config file (caller's job, typically
+    via `config.set_active_profile(alias)`).
+
+    The alias is used only for user-facing labeling so whoever is
+    setting up multiple tenants can tell which one they're typing into.
+    """
     # Non-interactive path: if stdin is piped, parse KEY=value lines from it.
     # This avoids the bracketed-paste corruption that raw-tty input is prone
     # to with very long secrets, and pairs directly with the JS snippet's
@@ -106,10 +120,10 @@ def interactive_setup(config):
         # does not reset the SPA hard-cap timer).
         config['OWA_RT_ISSUED_AT'] = iso_utc_now()
         save_config(config)
-        print(f'Config saved to {CONFIG_PATH}', file=sys.stderr)
+        print(f'Config saved to {_config.CONFIG_PATH} [profile={alias}]', file=sys.stderr)
         return True
 
-    print('owa-piggy setup\n')
+    print(f'owa-piggy setup [profile={alias}]\n')
     print('1. Open https://outlook.cloud.microsoft in Microsoft Edge')
     print('   (plain Chromium browsers store a session-bound token that')
     print('    AAD rejects as malformed - seed from Edge only.)')
@@ -123,13 +137,13 @@ def interactive_setup(config):
     print('   console.log(\'OWA_TENANT_ID=\' + (it.realm || find(\'|idtoken|\').split(\'|\')[5]))\n')
     print('   Tip: to avoid terminal paste-corruption on very long tokens,')
     print('   copy the two output lines and pipe them in instead:')
-    print('     pbpaste | owa-piggy --save-config\n')
-    rt = read_input('Refresh token (starts with "1.AQ..."), then press Enter (input hidden):', secret=True)
+    print(f'     pbpaste | owa-piggy --save-config --profile {alias}\n')
+    rt = read_input(f'[{alias}] Refresh token (starts with "1.AQ..."), then Enter (input hidden):', secret=True)
     if not rt:
         print('ERROR: no refresh token provided', file=sys.stderr)
         return False
 
-    tid = read_input('Tenant ID (a UUID), then press Enter:')
+    tid = read_input(f'[{alias}] Tenant ID (a UUID), then Enter:')
     if not tid:
         print('ERROR: no tenant ID provided', file=sys.stderr)
         return False
@@ -138,5 +152,5 @@ def interactive_setup(config):
     config['OWA_TENANT_ID'] = tid
     config['OWA_RT_ISSUED_AT'] = iso_utc_now()
     save_config(config)
-    print(f'\nConfig saved to {CONFIG_PATH}')
+    print(f'\nConfig saved to {_config.CONFIG_PATH} [profile={alias}]')
     return True
