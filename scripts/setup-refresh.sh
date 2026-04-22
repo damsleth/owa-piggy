@@ -111,6 +111,13 @@ list_all_profiles() {
   fi
 }
 
+profile_cdp_port() {
+  local alias="$1"
+  local sum
+  sum="$(printf '%s' "$alias" | cksum | awk '{print $1}')"
+  echo $((9222 + (sum % 10000)))
+}
+
 uninstall_plist() {
   local alias="$1"
   local label="$LABEL_PREFIX.$alias"
@@ -186,6 +193,8 @@ install_plist_for_profile() {
   # + `--profile <alias>` so the agent runs against this profile
   # specifically.
   local full_args=("${PROGRAM_ARGS[@]}" "reseed" "--profile" "$alias")
+  local cdp_port
+  cdp_port="$(profile_cdp_port "$alias")"
 
   # Emit one <string> per ProgramArguments element (handles python3 + script path)
   local program_args_xml="" arg escaped
@@ -208,6 +217,11 @@ install_plist_for_profile() {
   <key>ProgramArguments</key>
   <array>
 ${program_args_xml}  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>CDP_PORT</key>
+    <string>$cdp_port</string>
+  </dict>
   <key>StartCalendarInterval</key>
   <dict>
     <key>Minute</key>
@@ -234,6 +248,7 @@ EOF
   echo "LaunchAgent installed: $label"
   echo "  plist:    $plist"
   echo "  command:  ${full_args[*]}"
+  echo "  cdp port: $cdp_port"
   echo "  schedule: hourly (top of each hour, catches up on wake)"
   echo "  logs:     $log"
   echo "  verify:   launchctl print $target"
