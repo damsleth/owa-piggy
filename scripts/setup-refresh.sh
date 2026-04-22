@@ -158,7 +158,7 @@ install_plist_for_profile() {
   # aren't on disk.
   if [ ! -f "$config" ]; then
     echo "ERROR: profile $alias has no config at $config"
-    echo "  Run: owa-piggy --save-config --profile $alias"
+    echo "  Run: owa-piggy setup --profile $alias"
     return 1
   fi
   local has_token=false has_tenant=false
@@ -166,7 +166,7 @@ install_plist_for_profile() {
   grep -q '^OWA_TENANT_ID=' "$config" && has_tenant=true
   if ! $has_token || ! $has_tenant; then
     echo "ERROR: profile $alias is missing OWA_REFRESH_TOKEN and/or OWA_TENANT_ID in $config"
-    echo "  Re-run: owa-piggy --save-config --profile $alias"
+    echo "  Re-run: owa-piggy setup --profile $alias"
     return 1
   fi
 
@@ -182,9 +182,10 @@ install_plist_for_profile() {
     launchctl bootout "$target" 2>/dev/null || true
   fi
 
-  # Build the ProgramArguments list, appending `--profile <alias>` so the
-  # agent runs against this profile specifically.
-  local full_args=("${PROGRAM_ARGS[@]}" "--reseed" "--profile" "$alias")
+  # Build the ProgramArguments list, appending the `reseed` subcommand
+  # + `--profile <alias>` so the agent runs against this profile
+  # specifically.
+  local full_args=("${PROGRAM_ARGS[@]}" "reseed" "--profile" "$alias")
 
   # Emit one <string> per ProgramArguments element (handles python3 + script path)
   local program_args_xml="" arg escaped
@@ -276,7 +277,7 @@ fi
 if [ "$ALL_MODE" = true ]; then
   profiles="$(list_all_profiles)"
   if [ -z "$profiles" ]; then
-    echo "ERROR: no profiles registered. Run: owa-piggy --setup --profile <alias>"
+    echo "ERROR: no profiles registered. Run: owa-piggy setup --profile <alias>"
     exit 1
   fi
   rc=0

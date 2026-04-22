@@ -1,73 +1,76 @@
-"""Tests for scope resolution.
+"""Tests for audience resolution.
 
-Exercises the precedence chain: --scope > --<known> > OWA_DEFAULT_AUDIENCE
-> DEFAULT_AUDIENCE (graph).
+Exercises the precedence chain: scope override > named audience >
+OWA_DEFAULT_AUDIENCE > DEFAULT_AUDIENCE (graph).
 """
-import pytest
-
-from owa_piggy.scopes import DEFAULT_AUDIENCE, KNOWN_AUDIENCES, resolve_scope
+from owa_piggy.scopes import DEFAULT_AUDIENCE, KNOWN_AUDIENCES, resolve_audience
 
 
 def test_default_audience_is_graph(clean_env):
     """Regression anchor for commit dc7662e: no flags, no env = graph."""
-    scope, err = resolve_scope([])
-    assert err is None
+    scope, err = resolve_audience()
+    assert err == ''
     assert DEFAULT_AUDIENCE == 'https://graph.microsoft.com'
     assert scope.startswith('https://graph.microsoft.com/.default ')
     assert 'offline_access' in scope
 
 
-@pytest.mark.parametrize('flag,expected_prefix', [
-    ('--graph', 'https://graph.microsoft.com'),
-    ('--outlook', 'https://outlook.office.com'),
-    ('--teams', 'https://api.spaces.skype.com'),
-    ('--azure', 'https://management.azure.com'),
-    ('--keyvault', 'https://vault.azure.net'),
-    ('--devops', 'https://app.vssps.visualstudio.com'),
-])
-def test_known_flag(clean_env, flag, expected_prefix):
-    scope, err = resolve_scope([flag])
-    assert err is None
-    assert scope.startswith(f'{expected_prefix}/.default ')
+def test_named_audience_graph(clean_env):
+    scope, err = resolve_audience(audience='graph')
+    assert err == ''
+    assert scope.startswith('https://graph.microsoft.com/.default ')
 
 
-def test_scope_override_wins_over_flags(clean_env):
-    scope, err = resolve_scope(['--graph', '--scope', 'custom-scope-value'])
-    assert err is None
+def test_named_audience_outlook(clean_env):
+    scope, err = resolve_audience(audience='outlook')
+    assert err == ''
+    assert scope.startswith('https://outlook.office.com/.default ')
+
+
+def test_named_audience_teams(clean_env):
+    scope, err = resolve_audience(audience='teams')
+    assert err == ''
+    assert scope.startswith('https://api.spaces.skype.com/.default ')
+
+
+def test_unknown_audience_errors(clean_env):
+    scope, err = resolve_audience(audience='nonesuch')
+    assert scope == ''
+    assert 'unknown audience' in err
+    assert 'nonesuch' in err
+
+
+def test_scope_override_wins_over_audience(clean_env):
+    scope, err = resolve_audience(audience='graph', scope='custom-scope-value')
+    assert err == ''
     assert scope == 'custom-scope-value'
-
-
-def test_scope_without_value_errors(clean_env):
-    scope, err = resolve_scope(['--scope'])
-    assert err == '--scope requires a value'
-    assert scope is None
 
 
 def test_env_default_audience_short_name(monkeypatch, clean_env):
     monkeypatch.setenv('OWA_DEFAULT_AUDIENCE', 'teams')
-    scope, err = resolve_scope([])
-    assert err is None
+    scope, err = resolve_audience()
+    assert err == ''
     assert scope.startswith('https://api.spaces.skype.com/.default ')
 
 
 def test_env_default_audience_full_url(monkeypatch, clean_env):
     monkeypatch.setenv('OWA_DEFAULT_AUDIENCE', 'https://example.invalid/')
-    scope, err = resolve_scope([])
-    assert err is None
+    scope, err = resolve_audience()
+    assert err == ''
     assert scope.startswith('https://example.invalid/.default ')
 
 
-def test_cli_flag_beats_env(monkeypatch, clean_env):
+def test_audience_arg_beats_env(monkeypatch, clean_env):
     monkeypatch.setenv('OWA_DEFAULT_AUDIENCE', 'teams')
-    scope, err = resolve_scope(['--graph'])
-    assert err is None
+    scope, err = resolve_audience(audience='graph')
+    assert err == ''
     assert scope.startswith('https://graph.microsoft.com/.default ')
 
 
 def test_malformed_env_falls_back_to_default(monkeypatch, clean_env, capsys):
     monkeypatch.setenv('OWA_DEFAULT_AUDIENCE', 'not-a-url-not-a-name')
-    scope, err = resolve_scope([])
-    assert err is None
+    scope, err = resolve_audience()
+    assert err == ''
     assert scope.startswith(f'{DEFAULT_AUDIENCE}/.default ')
     captured = capsys.readouterr()
     assert 'WARNING' in captured.err

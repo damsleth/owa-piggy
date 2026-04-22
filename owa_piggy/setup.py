@@ -2,8 +2,8 @@
 
 read_input() bypasses cooked-mode line-length limits so pasted refresh
 tokens (which can exceed 4KB) don't get truncated. interactive_setup()
-is the --save-config flow; it also parses piped stdin so
-`pbpaste | owa-piggy --save-config` works.
+is the `setup` subcommand's flow; it also parses piped stdin so
+`pbpaste | owa-piggy setup` works.
 """
 import sys
 
@@ -106,7 +106,7 @@ def interactive_setup(config, alias='default'):
     # Non-interactive path: if stdin is piped, parse KEY=value lines from it.
     # This avoids the bracketed-paste corruption that raw-tty input is prone
     # to with very long secrets, and pairs directly with the JS snippet's
-    # KEY=value output (e.g. `pbpaste | owa-piggy --save-config`).
+    # KEY=value output (e.g. `pbpaste | owa-piggy setup`).
     if not sys.stdin.isatty():
         parsed = parse_kv_stream(sys.stdin.read())
         if not parsed.get('OWA_REFRESH_TOKEN') or not parsed.get('OWA_TENANT_ID'):
@@ -115,7 +115,7 @@ def interactive_setup(config, alias='default'):
                   file=sys.stderr)
             return False
         config.update(parsed)
-        # Stamp issuance time so --status can show the 24h hard-cap. This is
+        # Stamp issuance time so `status` can show the 24h hard-cap. This is
         # set on setup/reseed paths only, never on ordinary rotation (which
         # does not reset the SPA hard-cap timer).
         config['OWA_RT_ISSUED_AT'] = iso_utc_now()
@@ -140,7 +140,7 @@ def interactive_setup(config, alias='default'):
           'OWA_TENANT_ID=${(it.realm || find(\'|idtoken|\').split(\'|\')[5])}`)\n')
     print('   Tip: to avoid terminal paste-corruption on very long tokens,')
     print('   copy the two output lines and pipe them in instead:')
-    print(f'     pbpaste | owa-piggy --save-config --profile {alias}\n')
+    print(f'     pbpaste | owa-piggy setup --profile {alias}\n')
     rt = read_input(f'[{alias}] Refresh token (starts with "1.AQ..."), then Enter (input hidden):', secret=True)
     if not rt:
         print('ERROR: no refresh token provided', file=sys.stderr)
@@ -163,7 +163,7 @@ def interactive_setup(config, alias='default'):
 def _ensure_edge_profile_dir(alias):
     """Create the per-profile Edge sidecar userdata dir if missing.
 
-    Each profile needs its own dir so `--reseed --profile <alias>` can
+    Each profile needs its own dir so `reseed --profile <alias>` can
     drive Edge headlessly without clobbering another profile's cookies.
     First-ever reseed will still trigger an interactive sign-in because
     the dir starts empty; thereafter the existing session is reused."""

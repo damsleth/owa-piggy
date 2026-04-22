@@ -4,7 +4,7 @@ The heavy lifting lives in scripts/reseed-from-edge.sh (shipped as a
 data-file to share/owa-piggy/scripts/). This module just finds the
 script and invokes it with the right per-profile environment so the
 sidecar Edge launches against the correct userdata dir and the nested
-`owa-piggy --save-config` writes into the right profile.
+`owa-piggy setup` writes into the right profile.
 """
 import os
 import subprocess
@@ -54,14 +54,14 @@ def do_reseed(alias):
 
     Boots a sidecar Edge rooted at `profiles/<alias>/edge-profile/`,
     scrapes a fresh FOCI refresh token via CDP, and pipes it into
-    `owa-piggy --save-config --profile <alias>`. On success the new
-    token is on disk and a fresh access token has been printed - we just
-    return the script's exit code and let it own the user feedback.
+    `owa-piggy setup --profile <alias>`. On success the new token is
+    on disk and a fresh access token has been printed - we just return
+    the script's exit code and let it own the user feedback.
 
     The alias is handed to the shell script via environment variables
     (OWA_PIGGY_PROFILE, OWA_PIGGY_EDGE_PROFILE_DIR) so the script can
     stay argv-free and cleanly forward --profile into the nested
-    `owa-piggy --save-config` call.
+    `owa-piggy setup` call.
     """
     script = find_reseed_script()
     if not script:

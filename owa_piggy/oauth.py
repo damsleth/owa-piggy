@@ -50,7 +50,7 @@ def exchange_token(refresh_token, tenant_id, client_id, scope):
             # AAD error codes to figure out what to do next.
             if 'AADSTS700084' in err_body:
                 print('hint: refresh token has hit its 24h SPA hard-expiry. '
-                      'Run `owa-piggy --reseed` to fetch a fresh token '
+                      'Run `owa-piggy reseed` to fetch a fresh token '
                       'headlessly from the Edge sidecar profile.',
                       file=sys.stderr)
         except Exception:

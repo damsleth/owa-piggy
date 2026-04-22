@@ -1,4 +1,4 @@
-"""--status (compact ISO8601 health summary) and --debug (full diagnostics).
+"""`status` (compact ISO8601 health summary) and `debug` (full diagnostics).
 
 Both do a live exchange probe against AAD, which rotates the refresh token
 as a side effect. That's fine - a normal invocation would do the same.
@@ -25,7 +25,7 @@ from .config import (
 from .jwt import decode_jwt_segment
 from .oauth import CLIENT_ID, exchange_token
 from .reseed import find_reseed_script
-from .scopes import KNOWN_AUDIENCES, resolve_scope
+from .scopes import KNOWN_AUDIENCES, resolve_audience
 
 LAUNCHD_LABEL_PREFIX = 'com.damsleth.owa-piggy'
 
@@ -35,7 +35,7 @@ def _launchd_label(alias):
     return f'{LAUNCHD_LABEL_PREFIX}.{alias}'
 
 
-def do_status(alias, multi=False):
+def do_status(alias, audience=None, scope=None, multi=False):
     """Compact health summary for profile <alias>. Does a live exchange
     probe to verify the RT actually works (rotates it as a side effect,
     which is fine - the RT rotates on every use anyway). Prints three
@@ -43,7 +43,7 @@ def do_status(alias, multi=False):
     missing or the probe fails.
 
     Refresh-token expiry uses OWA_RT_ISSUED_AT + 24h if it's in the config
-    (set by --setup and --reseed). That's the SPA hard-cap, which is the
+    (set by `setup` and `reseed`). That's the SPA hard-cap, which is the
     binding constraint since hourly rotation keeps the sliding window
     permanently fresh. If the field is missing (pre-existing setups from
     before this flag landed) we fall back to 'unknown'.
@@ -70,19 +70,19 @@ def do_status(alias, multi=False):
         return 1
 
     # Resolve scope BEFORE capturing stderr so any OWA_DEFAULT_AUDIENCE
-    # misconfiguration warning still reaches the user. --status honors the
-    # same flags as the main path, so `owa-piggy --outlook --status`
-    # probes the outlook audience.
-    scope, err = resolve_scope(sys.argv[1:])
+    # misconfiguration warning still reaches the user. status honors the
+    # same options as the main token path, so
+    # `owa-piggy status --audience outlook` probes the outlook audience.
+    probe_scope, err = resolve_audience(audience, scope)
     if err:
         print(f'ERROR: {err}', file=sys.stderr)
         return 1
-    # Silence exchange_token's own stderr prints for --status; we surface a
+    # Silence exchange_token's own stderr prints for status; we surface a
     # single-line status on failure instead of a multi-line AAD dump.
     stderr_fd = sys.stderr
     try:
         sys.stderr = io.StringIO()
-        result = exchange_token(rt, tid, cid, scope)
+        result = exchange_token(rt, tid, cid, probe_scope)
     finally:
         sys.stderr = stderr_fd
 
@@ -128,7 +128,7 @@ def do_status(alias, multi=False):
         return datetime.fromtimestamp(ts, tz=timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
     # Refresh token hard-cap: issued_at + 24h. Parse OWA_RT_ISSUED_AT if set.
-    rt_expires = 'unknown (run `owa-piggy --reseed` to establish)'
+    rt_expires = 'unknown (run `owa-piggy reseed` to establish)'
     issued_at = config.get('OWA_RT_ISSUED_AT', '').strip()
     if issued_at:
         try:
@@ -151,28 +151,28 @@ def do_status(alias, multi=False):
     return 0
 
 
-def do_status_all():
+def do_status_all(audience=None, scope=None):
     """Run do_status() against every configured profile.
 
-    Used when `--status` is invoked with no explicit --profile / no
+    Used when `status` is invoked with no explicit --profile / no
     OWA_PROFILE env var. Each profile gets its own labeled block,
     separated by a blank line. Exit code is the max of the per-profile
     return codes so any unhealthy profile is still surfaced to scripts.
     """
     profiles = list_profiles()
     if not profiles:
-        print('no profiles configured. Run: owa-piggy --setup --profile <alias>',
+        print('no profiles configured. Run: owa-piggy setup --profile <alias>',
               file=sys.stderr)
         return 1
     rc = 0
     for i, alias in enumerate(profiles):
         if i:
             print()
-        rc = max(rc, do_status(alias, multi=True))
+        rc = max(rc, do_status(alias, audience=audience, scope=scope, multi=True))
     return rc
 
 
-def do_debug(alias):
+def do_debug(alias, audience=None, scope=None):
     """Dump everything useful to diagnose a broken setup for profile <alias>:
     config file, refresh-token shape, live exchange probe, access-token
     claims, launchd agent status, PATH install, sidecar profile. Also
@@ -182,10 +182,10 @@ def do_debug(alias):
     token is currently valid."""
 
     # Resolve scope up front and bail on argument errors, matching the
-    # rest of the CLI. Previously --debug silently ignored resolve_scope's
-    # error and probed with a None scope, which masked what was actually
-    # a fatal arg error with misleading AAD output.
-    debug_scope, scope_err = resolve_scope(sys.argv[1:])
+    # rest of the CLI. Previously debug silently ignored resolve's error
+    # and probed with a None scope, which masked what was actually a fatal
+    # arg error with misleading AAD output.
+    debug_scope, scope_err = resolve_audience(audience, scope)
     if scope_err:
         print(f'ERROR: {scope_err}', file=sys.stderr)
         return 1
@@ -193,7 +193,7 @@ def do_debug(alias):
     def row(status, label, detail=''):
         print(f'  [{status}] {label}' + (f': {detail}' if detail else ''))
 
-    print(f'owa-piggy --debug [profile={alias}]\n')
+    print(f'owa-piggy debug [profile={alias}]\n')
 
     # --- Profile registry ---
     reg = load_profiles_conf()
@@ -232,8 +232,8 @@ def do_debug(alias):
     # --- Refresh token shape + live probe ---
     print('\nRefresh token:')
     if not rt:
-        row('no', f'absent; run `owa-piggy --setup --profile {alias}` or '
-                  f'`owa-piggy --reseed --profile {alias}`')
+        row('no', f'absent; run `owa-piggy setup --profile {alias}` or '
+                  f'`owa-piggy reseed --profile {alias}`')
     else:
         shape_ok = rt.startswith('1.') or rt.startswith('0.')
         row('ok' if shape_ok else 'no',
@@ -256,7 +256,7 @@ def do_debug(alias):
                     row('..', 'access token aud', str(aud))
                     if isinstance(scp, str) and len(scp) > 80:
                         # OWA scopes are legion (~100 space-separated entries).
-                        # Show count and the first few so --debug stays useful.
+                        # Show count and the first few so `debug` stays useful.
                         parts = scp.split()
                         preview = ', '.join(parts[:3])
                         row('..', 'access token scp',
@@ -318,7 +318,7 @@ def do_debug(alias):
         row('no', 'launchctl print timed out')
 
     # Warn if the legacy suffix-less plist is still around; setup-refresh.sh
-    # cleans it up on first --all run, but --debug should surface it for
+    # cleans it up on first --all run, but `debug` should surface it for
     # anyone who hasn't re-run install yet.
     legacy_label = LAUNCHD_LABEL_PREFIX
     legacy_plist = Path.home() / 'Library' / 'LaunchAgents' / f'{legacy_label}.plist'
@@ -352,7 +352,7 @@ def do_debug(alias):
     sidecar = profile_edge_dir(alias)
     row('ok' if sidecar.is_dir() else 'no',
         'Edge sidecar profile', str(sidecar) if sidecar.is_dir() else
-        f'{sidecar} (missing; --reseed needs this)')
+        f'{sidecar} (missing; `reseed` needs this)')
 
     reseed = find_reseed_script()
     row('ok' if reseed else 'no', 'reseed script',

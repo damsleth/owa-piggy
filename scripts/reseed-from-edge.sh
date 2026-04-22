@@ -1,9 +1,9 @@
 #!/bin/bash
 # reseed-from-edge.sh - acquire a fresh FOCI refresh token by driving Edge
 # against the owa-piggy sidecar profile, then hand the values to
-# `owa-piggy --save-config`.
+# `owa-piggy setup`.
 #
-# Invoked via `owa-piggy --reseed [--profile <alias>]`, which sets:
+# Invoked via `owa-piggy reseed [--profile <alias>]`, which sets:
 #   OWA_PIGGY_PROFILE            the alias (default: "default")
 #   OWA_PIGGY_EDGE_PROFILE_DIR   per-profile Edge userdata dir
 # Both have sensible fallbacks so the script is still runnable by hand.
@@ -16,7 +16,7 @@
 #     --user-data-dir="$dir" https://outlook.cloud.microsoft
 #   # log in, close Edge.
 #
-# Thereafter, `owa-piggy --reseed --profile $alias` drives the rest.
+# Thereafter, `owa-piggy reseed --profile $alias` drives the rest.
 # Defaults to --headless=new so scheduled reseeds don't flash Edge
 # onscreen. Tested working against multiple tenants (first-party SPA
 # auth, not brokered SSO). If a tenant ever needs the full profile
@@ -29,7 +29,7 @@
 #      expired - kill the offscreen Edge, relaunch visibly onscreen so the
 #      user can sign in, then scrape again.
 #   3. Pipe the successful scrape output into
-#      `owa-piggy --save-config --profile <alias>`.
+#      `owa-piggy setup --profile <alias>`.
 
 set -e
 
@@ -52,7 +52,7 @@ fi
 # profile can reseed without a separate manual bootstrap step - the
 # first run will still land in the visible-signin branch (scrape exits 2
 # because there are no session cookies), after which subsequent reseeds
-# are headless. `owa-piggy --setup` also does this eagerly.
+# are headless. `owa-piggy setup` also does this eagerly.
 if [ ! -d "$PROFILE_DIR" ]; then
   log "creating sidecar profile at $PROFILE_DIR"
   mkdir -p "$PROFILE_DIR"
@@ -163,14 +163,14 @@ if [ "$scrape_status" -ne 0 ] || [ -z "$scrape_output" ]; then
   exit 1
 fi
 
-# Feed the scraped KEY=value lines into --save-config for this profile.
+# Feed the scraped KEY=value lines into setup for this profile.
 # Using a here-string instead of a pipe so the token doesn't transit a
 # new subshell's stderr.
 if command -v owa-piggy >/dev/null 2>&1; then
-  owa-piggy --save-config --profile "$PROFILE_ALIAS" <<<"$scrape_output"
+  owa-piggy setup --profile "$PROFILE_ALIAS" <<<"$scrape_output"
 else
   # Repo-checkout fallback: run the package directly via `-m`. The flat
   # owa_piggy.py at the repo root no longer exists after the package split.
   repo_root="$(cd "$(dirname "$0")/.." && pwd)"
-  PYTHONPATH="$repo_root" python3 -m owa_piggy --save-config --profile "$PROFILE_ALIAS" <<<"$scrape_output"
+  PYTHONPATH="$repo_root" python3 -m owa_piggy setup --profile "$PROFILE_ALIAS" <<<"$scrape_output"
 fi

@@ -138,7 +138,7 @@ def test_unregister_profile_clears_default(tmp_config, clean_env):
     ensure_profile_registered('personal')
     unregister_profile('work')
     out = load_profiles_conf()
-    # work was default; default is now empty so the next --set-default or
+    # work was default; default is now empty so the next `profiles set-default` or
     # setup call has to pick an explicit replacement.
     assert out['OWA_DEFAULT_PROFILE'] == ''
     assert out['OWA_PROFILES'] == ['personal']

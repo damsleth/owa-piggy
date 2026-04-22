@@ -14,7 +14,7 @@ After migration:
 
 Runs idempotently at the top of `main()` before any profile is resolved.
 If `profiles/` already exists, nothing happens - this means users who
-ran `owa-piggy --setup --profile work` first (without ever having had a
+ran `owa-piggy setup --profile work` first (without ever having had a
 legacy layout) never see the migration.
 
 The move is done with `os.replace` for atomicity where possible, falling

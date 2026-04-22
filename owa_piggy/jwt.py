@@ -1,7 +1,7 @@
 """JWT decode helpers.
 
 owa-piggy never validates token signatures - it only parses the claims
-locally for --decode/--status/--remaining. These are stdlib base64 +
+locally for the `decode`/`status`/`remaining` subcommands. These are stdlib base64 +
 JSON, nothing more.
 """
 import base64

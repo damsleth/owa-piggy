@@ -115,7 +115,7 @@ def store_token(tenant_id, client_id, scope, access_token, exp):
 
 
 def clear_cache():
-    """Remove the cache file if present. Called by --setup and --reseed
+    """Remove the cache file if present. Called by `setup` and `reseed`
     so the cache never outlives an identity change."""
     path = _cache_path()
     try:
