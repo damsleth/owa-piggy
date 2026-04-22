@@ -24,12 +24,20 @@
 # back to an offscreen-but-non-headless window.
 #
 # Flow:
-#   1. Attempt 1: launch Edge offscreen, scrape MSAL localStorage.
+#   1. Attempt 1: launch Edge (headless or offscreen), scrape MSAL
+#      localStorage.
 #   2. If the scraper exits 2 (REAUTH) the sidecar session cookies have
-#      expired - kill the offscreen Edge, relaunch visibly onscreen so the
-#      user can sign in, then scrape again.
+#      expired - kill Edge, relaunch visibly onscreen so the user can sign
+#      in, then scrape again.
 #   3. Pipe the successful scrape output into
 #      `owa-piggy setup --profile <alias>`.
+#   4. Verify the scraped refresh token by probing AAD via
+#      `owa-piggy status --profile <alias>`. This closes a real hole: the
+#      scraper's staleness check is an ID-token-iat heuristic that can let
+#      through an RT past the 24h SPA hard-cap (AADSTS700084) when MSAL
+#      silently refreshed only the ID token. On verify failure, fall back
+#      to visible sign-in once more and re-scrape. This is the core reseed
+#      loop - if it does not produce a working token, the tool is broken.
 
 set -e
 
@@ -109,37 +117,49 @@ launch_edge() {
   EDGE_PID=$!
 }
 
-# Attempt 1: headless by default, offscreen if OWA_RESEED_HEADLESS=0.
-if [ "$HEADLESS" = "0" ]; then
-  launch_edge offscreen
-else
-  launch_edge headless
-fi
+# Preferred attempt mode: headless by default, offscreen if the user has
+# forced non-headless via OWA_RESEED_HEADLESS=0.
+ATTEMPT_MODE="headless"
+[ "$HEADLESS" = "0" ] && ATTEMPT_MODE="offscreen"
+
+# Repo-checkout fallback path for owa-piggy (setup + status). When the
+# package is not installed on PATH we invoke `python3 -m owa_piggy` with
+# PYTHONPATH pointing at the repo so the scripts keep working in dev.
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 scrape_output=""
 scrape_status=0
-scrape_output=$(python3 "$SCRAPE") || scrape_status=$?
-cleanup_edge
 
-# Exit 2 = interactive sign-in required. Relaunch visibly, wait for the user,
-# then scrape again.
-if [ "$scrape_status" -eq 2 ]; then
-  log ""
-  log ">> Sidecar profile session has expired."
-  log ">> Opening Edge so you can sign in to Outlook."
-  log ">> Once the inbox has loaded, close Edge (or press Enter here) to continue."
-  log ""
+# Run nested owa-piggy commands against the just-saved profile config, not
+# any credential overrides inherited from the parent shell. OWA_PROFILE and
+# OWA_PIGGY_PROFILE stay intact; --profile remains explicit below.
+owa_piggy_clean_env() {
+  (
+    unset OWA_REFRESH_TOKEN OWA_TENANT_ID OWA_CLIENT_ID
+    if command -v owa-piggy >/dev/null 2>&1; then
+      owa-piggy "$@"
+    else
+      PYTHONPATH="$REPO_ROOT" python3 -m owa_piggy "$@"
+    fi
+  )
+}
 
-  launch_edge visible
-  # Wait for either Edge to exit on its own or the user to press Enter.
-  # The earlier version backgrounded `( wait "$EDGE_PID" ... ) &`, but bash
-  # only lets `wait` block on children of the CURRENT shell - in that
-  # subshell Edge is not a child, so `wait` returned immediately and the
-  # reauth flow raced through before the user could sign in.
-  #
-  # Poll instead: when stdin is a terminal, read with a 1-second timeout;
-  # otherwise sleep between Edge liveness checks. launchd runs without an
-  # interactive stdin, and `read -t` returns immediately on EOF there.
+# Run a single scrape against a freshly launched Edge. Writes to the
+# globals scrape_output / scrape_status so the main flow can branch on
+# them without capturing through another subshell.
+scrape_attempt() {
+  scrape_output=""
+  scrape_status=0
+  launch_edge "$ATTEMPT_MODE"
+  scrape_output=$(python3 "$SCRAPE") || scrape_status=$?
+  cleanup_edge
+}
+
+# Block until the visible-signin Edge closes or the user hits Enter.
+# bash's `wait` only sees direct children; we ran Edge in the background
+# of this shell so kill-check polling is the portable option. On launchd
+# (no tty) `read -t` returns immediately on EOF, so we sleep instead.
+wait_for_signin() {
   while kill -0 "$EDGE_PID" 2>/dev/null; do
     if [ -t 0 ]; then
       if read -r -t 1 _; then
@@ -150,16 +170,42 @@ if [ "$scrape_status" -eq 2 ]; then
     fi
   done
   cleanup_edge
+}
 
-  # Attempt 2: re-run the same mode as attempt 1 now that cookies are fresh.
-  if [ "$HEADLESS" = "0" ]; then
-    launch_edge offscreen
-  else
-    launch_edge headless
-  fi
-  scrape_status=0
-  scrape_output=$(python3 "$SCRAPE") || scrape_status=$?
-  cleanup_edge
+# Open Edge visibly so the user can sign in, then wait for them to finish.
+# $1 is the headline reason shown to the user so the two callsites
+# (cookies-gone vs AAD-rejected-scraped-token) give different context.
+visible_signin() {
+  log ""
+  log ">> $1"
+  log ">> Opening Edge so you can sign in to Outlook."
+  log ">> Once the inbox has loaded, close Edge (or press Enter here) to continue."
+  log ""
+  launch_edge visible
+  wait_for_signin
+}
+
+# Pipe the last scrape into `owa-piggy setup --profile <alias>`. Here-string
+# (not a pipe) so the token doesn't transit a new subshell's stderr.
+save_token() {
+  owa_piggy_clean_env setup --profile "$PROFILE_ALIAS" <<<"$scrape_output"
+}
+
+# Probe the saved RT against AAD. Exit 0 = AAD accepted it, non-zero =
+# rejected (stale past 24h SPA cap, tenant mismatch, etc.). Output is
+# discarded - we use the exit code and own the messaging here.
+verify_token() {
+  owa_piggy_clean_env status --profile "$PROFILE_ALIAS" >/dev/null 2>&1
+}
+
+# --- Attempt 1: scrape from the current sidecar session. ----------------
+scrape_attempt
+
+# Exit 2 = scraper detected a login-host redirect: sidecar cookies gone.
+# Fall straight through to visible signin before ever touching setup.
+if [ "$scrape_status" -eq 2 ]; then
+  visible_signin "Sidecar profile session has expired."
+  scrape_attempt
 fi
 
 if [ "$scrape_status" -ne 0 ] || [ -z "$scrape_output" ]; then
@@ -167,14 +213,34 @@ if [ "$scrape_status" -ne 0 ] || [ -z "$scrape_output" ]; then
   exit 1
 fi
 
-# Feed the scraped KEY=value lines into setup for this profile.
-# Using a here-string instead of a pipe so the token doesn't transit a
-# new subshell's stderr.
-if command -v owa-piggy >/dev/null 2>&1; then
-  owa-piggy setup --profile "$PROFILE_ALIAS" <<<"$scrape_output"
-else
-  # Repo-checkout fallback: run the package directly via `-m`. The flat
-  # owa_piggy.py at the repo root no longer exists after the package split.
-  repo_root="$(cd "$(dirname "$0")/.." && pwd)"
-  PYTHONPATH="$repo_root" python3 -m owa_piggy setup --profile "$PROFILE_ALIAS" <<<"$scrape_output"
+save_token
+
+if verify_token; then
+  exit 0
 fi
+
+# --- Attempt 2: AAD rejected the scraped RT despite a successful scrape.
+# Most likely cause: MSAL silent-refreshed the ID token via iframe
+# auth-code against the SSO cookie, updating iat but leaving the RT past
+# its 24h SPA hard-cap (AADSTS700084). Visible signin forces MSAL to
+# mint a truly fresh RT.
+log ""
+log ">> Scraped refresh token was rejected by AAD (likely past the 24h SPA"
+log ">> hard-cap). Falling back to visible sign-in to refresh the session."
+visible_signin "Refreshing the sidecar session."
+scrape_attempt
+
+if [ "$scrape_status" -ne 0 ] || [ -z "$scrape_output" ]; then
+  log "ERROR: scrape after sign-in failed (exit $scrape_status)."
+  exit 1
+fi
+
+save_token
+
+if verify_token; then
+  exit 0
+fi
+
+log "ERROR: refresh token still rejected by AAD after visible sign-in."
+log "       Run \`owa-piggy debug --profile $PROFILE_ALIAS\` for details."
+exit 1

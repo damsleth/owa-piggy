@@ -77,17 +77,29 @@ def do_status(alias, audience=None, scope=None, multi=False):
     if err:
         print(f'ERROR: {err}', file=sys.stderr)
         return 1
-    # Silence exchange_token's own stderr prints for status; we surface a
-    # single-line status on failure instead of a multi-line AAD dump.
+    # Capture exchange_token's stderr so we can surface the AAD error
+    # code alongside 'no valid token' instead of dropping it silently.
+    # Silent drops made AADSTS700084 look like a mystery - the user would
+    # see 'no valid token' in status and then the real reason only when
+    # running `owa-piggy` bare.
+    captured = io.StringIO()
     stderr_fd = sys.stderr
     try:
-        sys.stderr = io.StringIO()
+        sys.stderr = captured
         result = exchange_token(rt, tid, cid, probe_scope)
     finally:
         sys.stderr = stderr_fd
 
     if not result or not result.get('access_token'):
         print('no valid token')
+        # Send the AAD error to the same stream as the [profile=...] label
+        # so single-profile mode keeps its strict stdout contract
+        # (stdout == 'no valid token') while multi-profile output stays
+        # self-describing when scanning several profiles at once.
+        err_line = next((l for l in captured.getvalue().splitlines()
+                         if l.startswith('ERROR: ')), '')
+        if err_line:
+            print(err_line, file=label_stream)
         return 1
 
     at = result['access_token']
