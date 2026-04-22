@@ -137,12 +137,16 @@ if [ "$scrape_status" -eq 2 ]; then
   # subshell Edge is not a child, so `wait` returned immediately and the
   # reauth flow raced through before the user could sign in.
   #
-  # Poll instead: read stdin with a 1-second timeout; each iteration also
-  # checks whether Edge is still alive via `kill -0`. Either signal breaks
-  # the loop.
+  # Poll instead: when stdin is a terminal, read with a 1-second timeout;
+  # otherwise sleep between Edge liveness checks. launchd runs without an
+  # interactive stdin, and `read -t` returns immediately on EOF there.
   while kill -0 "$EDGE_PID" 2>/dev/null; do
-    if read -r -t 1 _; then
-      break
+    if [ -t 0 ]; then
+      if read -r -t 1 _; then
+        break
+      fi
+    else
+      sleep 1
     fi
   done
   cleanup_edge
