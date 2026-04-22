@@ -17,11 +17,11 @@
 #   # log in, close Edge.
 #
 # Thereafter, `owa-piggy --reseed --profile $alias` drives the rest.
-# Edge flashes visible for a couple of seconds by default because
-# --headless=new refuses localStorage on the OWA origin (MS broker-SSO
-# will not complete without the full profile runtime, so localStorage
-# returns SecurityError). Opt into headless with OWA_RESEED_HEADLESS=1
-# if you have verified it works for your tenant.
+# Defaults to --headless=new so scheduled reseeds don't flash Edge
+# onscreen. Tested working against multiple tenants (first-party SPA
+# auth, not brokered SSO). If a tenant ever needs the full profile
+# runtime for MSAL to initialize, set OWA_RESEED_HEADLESS=0 to fall
+# back to an offscreen-but-non-headless window.
 #
 # Flow:
 #   1. Attempt 1: launch Edge offscreen, scrape MSAL localStorage.
@@ -39,7 +39,7 @@ EDGE="/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"
 PROFILE_DIR="${OWA_PIGGY_EDGE_PROFILE_DIR:-$DEFAULT_DIR}"
 PORT="${CDP_PORT:-9222}"
 SCRAPE="$(cd "$(dirname "$0")" && pwd)/scrape_edge.py"
-HEADLESS="${OWA_RESEED_HEADLESS:-0}"
+HEADLESS="${OWA_RESEED_HEADLESS:-1}"
 URL="https://outlook.cloud.microsoft"
 
 log() { echo "[$PROFILE_ALIAS] $*" >&2; }
@@ -78,9 +78,11 @@ cleanup_edge() {
 trap cleanup_edge EXIT INT TERM
 
 # Launch Edge with the given mode. Modes:
-#   offscreen - normal runtime but window parked at -32000,-32000 (default)
+#   headless  - --headless=new (default; no window, no dock icon)
+#   offscreen - normal runtime but window parked at -32000,-32000
+#               (fallback via OWA_RESEED_HEADLESS=0 if a tenant ever
+#               refuses localStorage under headless)
 #   visible   - normal window onscreen (for interactive sign-in)
-#   headless  - --headless=new (opt-in via OWA_RESEED_HEADLESS=1)
 launch_edge() {
   local mode="$1"
   local -a args=(
@@ -107,11 +109,11 @@ launch_edge() {
   EDGE_PID=$!
 }
 
-# Attempt 1: offscreen (or headless if opted in).
-if [ "$HEADLESS" = "1" ]; then
-  launch_edge headless
-else
+# Attempt 1: headless by default, offscreen if OWA_RESEED_HEADLESS=0.
+if [ "$HEADLESS" = "0" ]; then
   launch_edge offscreen
+else
+  launch_edge headless
 fi
 
 scrape_output=""
@@ -145,8 +147,12 @@ if [ "$scrape_status" -eq 2 ]; then
   done
   cleanup_edge
 
-  # Attempt 2: offscreen again now that cookies should be fresh.
-  launch_edge offscreen
+  # Attempt 2: re-run the same mode as attempt 1 now that cookies are fresh.
+  if [ "$HEADLESS" = "0" ]; then
+    launch_edge offscreen
+  else
+    launch_edge headless
+  fi
   scrape_status=0
   scrape_output=$(python3 "$SCRAPE") || scrape_status=$?
   cleanup_edge
