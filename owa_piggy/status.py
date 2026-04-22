@@ -25,7 +25,7 @@ from .config import (
 from .jwt import decode_jwt_segment
 from .oauth import CLIENT_ID, exchange_token
 from .reseed import find_reseed_script
-from .scopes import KNOWN_SCOPES, resolve_scope
+from .scopes import KNOWN_AUDIENCES, resolve_scope
 
 LAUNCHD_LABEL_PREFIX = 'com.damsleth.owa-piggy'
 
@@ -104,14 +104,14 @@ def do_status(alias, multi=False):
     aud = raw_aud[0] if isinstance(raw_aud, list) and raw_aud else raw_aud
     aud = aud if isinstance(aud, str) else str(aud)
 
-    # Map the aud claim back to a KNOWN_SCOPES short name (reverse lookup).
-    # Graph uses a GUID audience in some flows, so accept either the URL or
-    # the well-known Graph GUID.
+    # Map the aud claim back to a KNOWN_AUDIENCES short name (reverse
+    # lookup). Graph uses a GUID audience in some flows, so accept either
+    # the URL or the well-known Graph GUID.
     aud_name = None
     if aud == '00000003-0000-0000-c000-000000000000':
         aud_name = 'graph'
     else:
-        for name, entry in KNOWN_SCOPES.items():
+        for name, entry in KNOWN_AUDIENCES.items():
             url = entry[0]
             if aud == url or aud.rstrip('/') == url.rstrip('/'):
                 aud_name = name

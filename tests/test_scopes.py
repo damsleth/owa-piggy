@@ -5,7 +5,7 @@ Exercises the precedence chain: --scope > --<known> > OWA_DEFAULT_AUDIENCE
 """
 import pytest
 
-from owa_piggy.scopes import DEFAULT_AUDIENCE, KNOWN_SCOPES, resolve_scope
+from owa_piggy.scopes import DEFAULT_AUDIENCE, KNOWN_AUDIENCES, resolve_scope
 
 
 def test_default_audience_is_graph(clean_env):
@@ -74,8 +74,8 @@ def test_malformed_env_falls_back_to_default(monkeypatch, clean_env, capsys):
     assert 'OWA_DEFAULT_AUDIENCE' in captured.err
 
 
-def test_known_scopes_has_graph_default():
-    assert 'graph' in KNOWN_SCOPES
-    url, desc = KNOWN_SCOPES['graph']
+def test_known_audiences_has_graph_default():
+    assert 'graph' in KNOWN_AUDIENCES
+    url, desc = KNOWN_AUDIENCES['graph']
     assert url == DEFAULT_AUDIENCE
     assert 'default' in desc.lower()
