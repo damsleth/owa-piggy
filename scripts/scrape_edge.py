@@ -4,10 +4,10 @@ running Edge (headless or not) via Chrome DevTools Protocol.
 
 Assumes Edge is running with --remote-debugging-port=9222 and has an OWA
 tab loaded. Prints KEY=value lines on stdout in the same format that
-`owa-piggy --save-config` consumes on stdin.
+`owa-piggy setup` consumes on stdin.
 
 Usage:
-    python3 scrape_edge.py | owa-piggy --save-config
+    python3 scrape_edge.py | owa-piggy setup
 
 Or with a different port:
     CDP_PORT=9333 python3 scrape_edge.py

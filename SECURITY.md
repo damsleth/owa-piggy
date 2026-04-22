@@ -43,7 +43,7 @@ All of these are normal, expected, and unannounced:
 - FOCI membership changes; a sibling audience is removed or fenced.
 - The 24h absolute hard-cap (`AADSTS700084`) already bounds usable
   token lifetime to one day without an Edge session. If that cap
-  shortens, `--reseed` becomes the steady state instead of the
+  shortens, `owa-piggy reseed` becomes the steady state instead of the
   exception.
 - MSAL's cache format or storage location changes. The browser
   snippet in the README stops finding the token.
@@ -62,7 +62,7 @@ Edge on their own machine, running the CLI under their own account.
 - Access tokens are cached at `~/.config/owa-piggy/cache.json`,
   same mode, same rules - keyed by the scope string, valid until
   each token's `exp`. Delete the file to force a fresh mint.
-- `--decode`, `--status`, and `--debug` print claims from the
+- The `decode`, `status`, and `debug` subcommands print claims from the
   access token to stdout/stderr. Treat that output like credentials.
 - Atomic writes (temp file + fsync + rename) protect the on-disk
   token from partial writes that would require a browser reseed.
@@ -85,7 +85,7 @@ Edge on their own machine, running the CLI under their own account.
 - Issue tokens for anyone other than the user running it
 - Automate credential theft from other users on the same machine
 - Bypass Conditional Access. If your tenant blocks the sign-in,
-  `--reseed` fails the same way Edge would
+  `owa-piggy reseed` fails the same way Edge would
 - Send telemetry, crash reports, or update checks. The only network
   call is `POST login.microsoftonline.com`
 

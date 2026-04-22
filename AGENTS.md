@@ -34,8 +34,8 @@ The threat model is "just for me" - do not harden it into a service.
 owa_piggy/
   __init__.py        # re-exports `main` so `owa-piggy = "owa_piggy:main"` resolves
   __main__.py        # `python -m owa_piggy`
-  cli.py             # arg parsing + dispatch (--profile, --list-profiles, ...)
-  scopes.py          # KNOWN_AUDIENCES, resolve_scope
+  cli.py             # arg parsing + dispatch (argparse subparsers: token, status, ...)
+  scopes.py          # KNOWN_AUDIENCES, resolve_audience
   jwt.py             # decode_jwt_segment, decode_jwt, token_minutes_remaining
   config.py          # ROOT_DIR, CONFIG_PATH, profile path helpers,
                      # resolve_profile, profiles.conf I/O, load/save_config
@@ -89,7 +89,7 @@ exist with acceptance criteria.
   (tenant, client, scope) (QA fix #1). Do not regress those.
 - **Don't add abstractions.** A `class TokenClient` wrapping one
   `urlopen` call is noise. Flat functions are the norm.
-- **Test what matters.** Pure functions (`resolve_scope`,
+- **Test what matters.** Pure functions (`resolve_audience`,
   `parse_kv_stream`/`load_config`, `decode_jwt`,
   `token_minutes_remaining`, `cache.*`) plus CLI dispatch are the
   test targets. Interactive setup, network calls, and launchd
@@ -98,10 +98,10 @@ exist with acceptance criteria.
 ## Verification before claiming done
 
 - `python -m compileall -q owa_piggy` passes.
-- `python -m owa_piggy --help` and `--list-audiences` run without
-  traceback on a machine with no config.
+- `python -m owa_piggy --help` and `python -m owa_piggy audiences` run
+  without traceback on a machine with no config.
 - `pytest -q` is green.
-- If you touched token logic: `owa-piggy --decode` and `--status`
+- If you touched token logic: `owa-piggy decode` and `owa-piggy status`
   still produce sane output against a real configured profile. If
   you cannot run against a real token, say so explicitly rather than
   claiming it works.

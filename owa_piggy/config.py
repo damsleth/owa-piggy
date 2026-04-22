@@ -62,7 +62,7 @@ def validate_alias(alias):
 
 def iso_utc_now():
     """UTC ISO8601 with trailing Z. Used to stamp OWA_RT_ISSUED_AT on fresh
-    setup/reseed so --status can compute the 24h SPA hard-cap."""
+    setup/reseed so `status` can compute the 24h SPA hard-cap."""
     return time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
 
 
@@ -233,7 +233,7 @@ def resolve_profile(cli_profile=None, allow_missing=False):
       3. profiles.conf's OWA_DEFAULT_PROFILE pointer.
       4. If exactly one profile exists on disk, use it.
       5. Fresh install (no profiles at all) - return 'default' and let the
-         first --setup create it.
+         first `setup` create it.
       6. Multiple profiles exist but none is marked default and none was
          requested - return an ambiguity error so we never silently pick
          the wrong tenant.
@@ -242,7 +242,7 @@ def resolve_profile(cli_profile=None, allow_missing=False):
     and err is a human-readable message listing available aliases.
 
     `allow_missing=True` skips the "profile must already exist" validation
-    for step 1 (used by --setup, which is the path that creates it).
+    for step 1 (used by `setup`, which is the path that creates it).
     """
     available = list_profiles()
 
@@ -256,7 +256,7 @@ def resolve_profile(cli_profile=None, allow_missing=False):
         return '', (
             f'profile {cli_profile!r} not found. Available: '
             f'{", ".join(available) if available else "(none)"}. '
-            f'Create it with: owa-piggy --setup --profile {cli_profile}'
+            f'Create it with: owa-piggy setup --profile {cli_profile}'
         )
 
     # 2. Env var.
@@ -291,7 +291,7 @@ def resolve_profile(cli_profile=None, allow_missing=False):
         'multiple profiles configured and no default set. '
         f'Available: {", ".join(available)}. '
         'Pass --profile <alias>, export OWA_PROFILE=<alias>, or run '
-        'owa-piggy --set-default <alias>.'
+        'owa-piggy profiles set-default <alias>.'
     )
 
 

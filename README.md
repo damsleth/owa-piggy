@@ -8,10 +8,10 @@ No app registration, asking a tenant admin or managing client secrets.
 ```sh
 brew tap damsleth/tap
 brew install owa-piggy
-owa-piggy --setup                       # creates the 'default' profile
+owa-piggy setup                       # creates the 'default' profile
 # or, to avoid terminal paste-corruption on long tokens:
 # copy the two lines the browser snippet prints, then
-pbpaste | owa-piggy --save-config
+pbpaste | owa-piggy setup
 ```
 
 Bleeding edge (main): `brew install --HEAD damsleth/tap/owa-piggy`
@@ -25,22 +25,47 @@ curl -H "Authorization: Bearer $(owa-piggy)" https://graph.microsoft.com/v1.0/me
 Or, for the Outlook REST audience:
 
 ```sh
-curl -s -H "Authorization: Bearer $(owa-piggy --outlook)" \
+curl -s -H "Authorization: Bearer $(owa-piggy --audience outlook)" \
   "https://outlook.office.com/api/v2.0/me/messages?\$top=1" | jq -r '.value[0].Subject'
 ```
 
 ---
 
+## CLI surface
+
+```
+owa-piggy <command> [options]
+```
+
+Bare `owa-piggy` is shorthand for `owa-piggy token` - the access token goes to stdout, nothing else.
+
+| command                  | what it does                                                          |
+| ------------------------ | --------------------------------------------------------------------- |
+| `token` (default)        | print access token to stdout (default audience: Microsoft Graph)      |
+| `status`                 | compact ISO8601 health summary; all profiles if `--profile` omitted    |
+| `debug`                  | full setup diagnostics for one profile                                 |
+| `setup`                  | interactive first-time setup; creates the profile if new              |
+| `reseed`                 | fetch a fresh refresh token headlessly from the Edge sidecar           |
+| `decode`                 | print JWT header and payload of the current access token              |
+| `remaining`              | print minutes remaining on the current access token                   |
+| `audiences`              | list all known FOCI-accessible audiences                              |
+| `profiles`               | list profiles (TTY: interactive picker)                               |
+| `profiles set-default A` | make `A` the default profile                                          |
+| `profiles delete A`      | remove profile `A`'s config + Edge sidecar dir (`--force` to override) |
+
+Global options: `--profile <alias>`, `--audience <name>`, `--scope <explicit>`, `--version`, `--help`. Per-command help: `owa-piggy <command> --help`.
+
 ## Examples
 
 ```sh
-owa-piggy                         # Graph token (default audience)
-owa-piggy --outlook               # Outlook REST audience
-owa-piggy --teams                 # Teams audience
-owa-piggy --remaining             # minutes left on current token
-owa-piggy --json | jq .scope      # inspect granted scopes
-owa-piggy --status                # compact ISO8601 health summary
-owa-piggy --debug                 # full setup diagnostics
+owa-piggy                              # Graph token (default audience)
+owa-piggy --audience outlook           # Outlook REST audience
+owa-piggy --audience teams             # Teams audience
+owa-piggy remaining                    # minutes left on current token
+owa-piggy token --json | jq .scope     # inspect granted scopes
+owa-piggy status                       # compact ISO8601 health summary
+owa-piggy debug                        # full setup diagnostics
+owa-piggy --version                    # print version
 ```
 
 Pipe-friendly - raw token goes to stdout, everything else to stderr:
@@ -55,7 +80,7 @@ TOKEN=$(owa-piggy)
 az rest --headers "Authorization=Bearer $TOKEN" --url "https://graph.microsoft.com/v1.0/me"
 ```
 
-Default audience is **Microsoft Graph**, which covers everything Outlook REST exposes plus OneDrive, Teams, SharePoint, directory, and more. Override persistently with `OWA_DEFAULT_AUDIENCE=<short-name-or-https-url>`, or per-call with `--outlook`/`--teams`/`--azure`/... or `--scope <explicit>`.
+Default audience is **Microsoft Graph**, which covers everything Outlook REST exposes plus OneDrive, Teams, SharePoint, directory, and more. Override persistently with `OWA_DEFAULT_AUDIENCE=<short-name-or-https-url>`, or per-call with `--audience <name>` (see `owa-piggy audiences`) or `--scope <explicit>`.
 
 ---
 
@@ -70,7 +95,7 @@ The token comes back with a broad set of delegated scopes: `Calendars.ReadWrite`
 | Access token  | ~60-90 min from issue                                              |
 | Refresh token | 24h sliding window (rotates on use) AND 24h absolute hard-cap from original sign-in |
 
-The sliding window renews on every exchange. The hard-cap does not - after 24h AAD returns `AADSTS700084` and the token is unrecoverable via rotation. The launchd agent handles the sliding window; `--reseed` handles the hard-cap.
+The sliding window renews on every exchange. The hard-cap does not - after 24h AAD returns `AADSTS700084` and the token is unrecoverable via rotation. The launchd agent handles the sliding window; `owa-piggy reseed` handles the hard-cap.
 
 The rotated refresh token is saved automatically to `~/.config/owa-piggy/profiles/<alias>/config` after every exchange (only when the token originally came from the config file - env-only callers keep env-only semantics and get a rotation notice on stderr). Install a LaunchAgent per profile to keep each sliding window fresh without thinking about it:
 
@@ -85,7 +110,7 @@ The agents run hourly via `launchd`'s `StartCalendarInterval` and, unlike cron, 
 
 ## Automated reseed (24h hard-cap recovery)
 
-Because hourly rotation only keeps the sliding window alive, you still hit `AADSTS700084` after 24h of continuous use. `--reseed` is the automated recovery path - it drives a sidecar Edge profile via the Chrome DevTools Protocol, extracts a fresh FOCI refresh token from MSAL's localStorage, and pipes it into `--save-config`.
+Because hourly rotation only keeps the sliding window alive, you still hit `AADSTS700084` after 24h of continuous use. `owa-piggy reseed` is the automated recovery path - it drives a sidecar Edge profile via the Chrome DevTools Protocol, extracts a fresh FOCI refresh token from MSAL's localStorage, and pipes it into `owa-piggy setup`.
 
 One-time setup of the sidecar profile (per alias):
 
@@ -102,19 +127,19 @@ mkdir -p "$dir"
 Thereafter:
 
 ```sh
-owa-piggy --reseed --profile $alias
+owa-piggy reseed --profile $alias
 ```
 
 The scraper detects stale caches (ID token JWT `iat` > 23h old), forces a Page.reload if MSAL gets wedged, and if session cookies have also expired it reopens Edge visibly so you can sign in interactively and then scrapes again automatically. When things work the whole thing is silent and takes a second or two.
 
-The `AADSTS700084` error message from the normal flow also prints `hint: run owa-piggy --reseed` so you don't need to remember the recipe.
+The `AADSTS700084` error message from the normal flow also prints `hint: run owa-piggy reseed` so you don't need to remember the recipe.
 
 ---
 
 ## Diagnostics
 
 ```sh
-owa-piggy --status
+owa-piggy status
 ```
 ```
 authtoken:    expires 2026-04-20T11:46:51Z
@@ -123,10 +148,10 @@ scope(s):     Calendars.ReadWrite, Mail.ReadWrite, Files.ReadWrite, ... (74 scop
 refreshtoken: expires 2026-04-21T09:30:00Z
 ```
 
-Prints `no valid token` (exit 1) if setup is missing or the live probe fails. The refresh-token expiry is the 24h hard-cap, computed from `OWA_RT_ISSUED_AT` which is stamped on `--setup` and `--reseed` (setups from before this field landed will show `unknown` until the next reseed).
+Prints `no valid token` (exit 1) if setup is missing or the live probe fails. The refresh-token expiry is the 24h hard-cap, computed from `OWA_RT_ISSUED_AT` which is stamped on `setup` and `reseed` (setups from before this field landed will show `unknown` until the next reseed).
 
 ```sh
-owa-piggy --debug
+owa-piggy debug
 ```
 
 Full triage dump: config file state, RT shape, live exchange probe, access-token claims (aud/scp/exp/iat), launchd agent status (`gui/<uid>/<label>` bootstrap, runs, last exit code), PATH install, Edge sidecar profile presence, reseed script discoverability. Also warns about leftover legacy cron entries.
@@ -160,7 +185,7 @@ Writes are atomic (temp file + fsync + rename) so a crash mid-rotation cannot co
 
 - `OWA_REFRESH_TOKEN`, `OWA_TENANT_ID` - override the corresponding config values (when `OWA_REFRESH_TOKEN` is env-supplied, rotated tokens are kept env-only and not written back to disk)
 - `OWA_CLIENT_ID` - override the default OWA client ID
-- `OWA_DEFAULT_AUDIENCE` - change the default audience (a short name from `--list-audiences` like `outlook`, or a full https URL). Command-line `--<name>` / `--scope` still wins.
+- `OWA_DEFAULT_AUDIENCE` - change the default audience (a short name from `owa-piggy audiences` like `outlook`, or a full https URL). Command-line `--audience` / `--scope` still wins.
 
 ---
 
@@ -169,16 +194,16 @@ Writes are atomic (temp file + fsync + rename) so a crash mid-rotation cannot co
 owa-piggy supports multiple independent tenants / identities via named profiles. Each profile gets its own config, access-token cache, Edge sidecar userdata dir, and launchd job, so a broken reseed on one profile does not knock out the others.
 
 ```sh
-owa-piggy --setup --profile work             # create a new profile
-owa-piggy --setup --profile personal         # ...and another
-owa-piggy --profile work                     # raw token for 'work'
-OWA_PROFILE=work owa-piggy                   # same, via env
-owa-piggy --list-profiles                    # * marks the default
-owa-piggy --set-default work                 # change the default pointer
-owa-piggy --status --profile personal        # health check, per profile
-owa-piggy --reseed --profile work            # recover one profile after 24h
-owa-piggy --delete-profile personal          # remove a profile (config + Edge)
-./scripts/setup-refresh.sh --all             # install a plist for each profile
+owa-piggy setup --profile work                # create a new profile
+owa-piggy setup --profile personal            # ...and another
+owa-piggy --profile work                      # raw token for 'work'
+OWA_PROFILE=work owa-piggy                    # same, via env
+owa-piggy profiles                            # list (TTY: interactive picker)
+owa-piggy profiles set-default work           # change the default pointer
+owa-piggy status --profile personal           # health check, per profile
+owa-piggy reseed --profile work               # recover one profile after 24h
+owa-piggy profiles delete personal            # remove a profile (config + Edge)
+./scripts/setup-refresh.sh --all              # install a plist for each profile
 ```
 
 Selection precedence when `--profile` is omitted: `OWA_PROFILE` env var > `OWA_DEFAULT_PROFILE` in `profiles.conf` > lone profile on disk > `default` on fresh installs. If multiple profiles exist but none is marked default, the command errors out rather than guessing.
@@ -193,7 +218,7 @@ Legacy single-config installs auto-migrate on first run: `~/.config/owa-piggy/{c
 - Requires an account with OWA access (Microsoft 365 / Exchange Online)
 - Uses a Microsoft first-party client ID - fine for personal tooling, not for production services or anything you'd ship to other users
 - Refresh tokens are bound to your session; admin revocation or a password change will invalidate them
-- `--reseed` is macOS + Edge specific (uses `--user-data-dir` profile isolation and Chrome DevTools Protocol). The manual `--setup` flow works everywhere.
+- `owa-piggy reseed` is macOS + Edge specific (uses `--user-data-dir` profile isolation and Chrome DevTools Protocol). The manual `setup` flow works everywhere.
 
 ## Disclaimer
 
