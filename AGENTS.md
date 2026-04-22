@@ -135,9 +135,25 @@ When the user says "cut a release" / "new patch version" / "ship it":
    feature commit. Keep that pattern so `git log` reads cleanly.
 3. Update `pyproject.toml` `version = "X.Y.Z"`. No other file tracks
    the version today.
-4. Push `main`, then `git tag vX.Y.Z && git push origin vX.Y.Z`.
-   Never retag a version that's already public - Homebrew users
-   cache the tarball by sha.
+4. Push `main`, then create an **annotated** tag whose message is the
+   release notes (a short prose summary + bullet list of changes
+   since the previous tag - this is the canonical place for them,
+   since there's no CHANGELOG.md):
+   ```
+   git tag -a vX.Y.Z -m "vX.Y.Z - <one-line headline>
+
+   <optional prose paragraph>
+
+   - bullet: user-visible change
+   - bullet: breaking change (call out explicitly)
+   - bullet: internal refactor worth noting
+   "
+   git push origin vX.Y.Z
+   ```
+   Render with `git show vX.Y.Z` or `git tag -n99 vX.Y.Z`. Lightweight
+   tags (`git tag vX.Y.Z`) are what the old v0.2.2-v0.3.2 tags did
+   and should not be used going forward. Never retag a version that's
+   already public - Homebrew users cache the tarball by sha.
 5. Fetch the GitHub-generated tarball and compute its sha256:
    `curl -sL https://github.com/damsleth/owa-piggy/archive/refs/tags/vX.Y.Z.tar.gz -o /tmp/owa-piggy-X.Y.Z.tar.gz && shasum -a 256 /tmp/owa-piggy-X.Y.Z.tar.gz`
 6. Edit `~/Code/homebrew-tap/Formula/owa-piggy.rb` - bump the `url`
