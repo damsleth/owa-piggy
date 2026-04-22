@@ -41,21 +41,31 @@ EXIT_NEEDS_REAUTH = 2
 
 
 # The JS returns one of four shapes so the Python caller can act on each:
-#   { rt, tid, age }  -> success, token extracted (age in seconds of cache)
-#   { err: str }      -> hard failure, stop and report (exit 1)
-#   { reauth: str }   -> session cookies gone, interactive sign-in required
-#                        (exit 2 so the shell wrapper can reopen Edge)
-#   { retry: str }    -> transient: page loading, MSAL cache not populated,
-#                        cached RT stale and waiting for the SPA's silent
-#                        refresh. Python keeps polling until deadline.
+#   { rt, tid, age, hid } -> success, token extracted (age in seconds,
+#                            hid = homeAccountId for diagnostics)
+#   { err: str }          -> hard failure, stop and report (exit 1)
+#   { reauth: str }       -> session cookies gone, interactive sign-in
+#                            required (exit 2 so the shell wrapper reopens
+#                            Edge visibly)
+#   { retry: str }        -> transient: page loading, MSAL cache not
+#                            populated, cached RT looks stale and waiting
+#                            for the SPA's silent refresh. Python keeps
+#                            polling until deadline.
 #
-# Staleness check: MSAL.js rotates the ID token and refresh token together on
-# every successful exchange, so the ID token's JWT `iat` is a reliable proxy
-# for RT freshness. The SPA refresh-token hard-expiry is 24h absolute
-# (AADSTS700084) - if `iat` is older than ~23h the cached RT will reproduce
-# that error downstream. Report {retry} and let MSAL's silent-refresh take a
-# swing; if cookies are also gone the SPA redirects to login and we catch it
-# via {reauth}.
+# Staleness check (heuristic, not ground truth): MSAL.js stores refresh
+# tokens opaquely with no timestamp in the cache entry, so we use the
+# paired ID token's JWT `iat` as a proxy - in most rotations MSAL refreshes
+# both together. It is *not* reliable in every case: MSAL's silent refresh
+# can acquire a fresh id_token via an iframe authorization-code flow
+# against the SSO cookie without issuing a new refresh_token. In that
+# scenario the ID token looks fresh while the RT is past the 24h SPA
+# hard-cap (AADSTS700084). The reseed shell wrapper closes that gap by
+# probing the scraped RT via `owa-piggy status` and falling back to visible
+# sign-in when AAD rejects it - do not rely on this check alone.
+#
+# We deliberately pick the ID token whose `homeAccountId` matches the
+# scraped RT so the `iat` describes *this* account, not a stale entry from
+# a previously signed-in user that Edge's sidecar may still have cached.
 #
 # Login redirect: when silent refresh fails MSAL navigates to
 # login.microsoftonline.com (different origin, no MSAL cache). Detect the
@@ -82,12 +92,30 @@ EXPR_TEMPLATE = r"""(() => {
                '. Edge --headless=new cannot complete MS broker-SSO; ' +
                're-run with OWA_RESEED_HEADLESS=0 (visible Edge window).' };
     }
-    const find = s => keys.find(k => k.includes(s));
-    const rtKey = find('|refreshtoken|'), idKey = find('|idtoken|');
-    if (!rtKey || !idKey) return { retry: 'MSAL cache not populated yet' };
-
-    const idEntry = JSON.parse(localStorage[idKey]);
+    const rtKey = keys.find(k => k.includes('|refreshtoken|'));
+    if (!rtKey) return { retry: 'MSAL cache not populated yet (no refreshtoken entry)' };
     const rtEntry = JSON.parse(localStorage[rtKey]);
+    const homeId = rtEntry.homeAccountId || '';
+
+    // Prefer the idToken for the SAME homeAccountId so the iat-based
+    // freshness proxy describes the RT we are about to scrape. MSAL's
+    // sidecar cache can hold entries from a prior signed-in user that
+    // would otherwise skew the check. Fall back to the first idToken if
+    // nothing matches so an older MSAL layout does not wedge us here -
+    // the reseed wrapper's post-scrape verify is the final authority.
+    let idKey = null;
+    if (homeId) {
+      for (const k of keys) {
+        if (!k.includes('|idtoken|')) continue;
+        try {
+          const e = JSON.parse(localStorage[k]);
+          if (e.homeAccountId === homeId) { idKey = k; break; }
+        } catch (_) { /* ignore */ }
+      }
+    }
+    if (!idKey) idKey = keys.find(k => k.includes('|idtoken|'));
+    if (!idKey) return { retry: 'MSAL cache not populated yet (no idtoken entry)' };
+    const idEntry = JSON.parse(localStorage[idKey]);
 
     // Decode the ID token JWT payload to read iat. If decode fails fall
     // through - worst case the downstream exchange surfaces the real error.
@@ -114,7 +142,12 @@ EXPR_TEMPLATE = r"""(() => {
       return { err: 'refresh token not in FOCI shape; log into the sidecar ' +
                'profile manually once so the broker writes a real MSAL entry' };
     }
-    return { rt: token, tid: idEntry.realm || idKey.split('|')[5], age: ageSec };
+    return {
+      rt: token,
+      tid: idEntry.realm || idKey.split('|')[5],
+      age: ageSec,
+      hid: homeId,
+    };
   } catch (e) {
     return { err: 'scrape threw: ' + (e && e.message || e) };
   }
@@ -321,8 +354,14 @@ def main():
                 age_min = int(age_raw) // 60 if age_raw is not None else None
             except (TypeError, ValueError):
                 age_min = None
-            age_hint = f' (cache age ~{age_min}min)' if age_min is not None else ''
-            print(f'# scraped fresh token{age_hint}', file=sys.stderr)
+            # "cache age" is ID-token iat age, not RT age - see the comment
+            # on the EXPR_TEMPLATE staleness check for why these can drift.
+            age_hint = (f' (ID-token age ~{age_min}min; not a guarantee of '
+                        f'RT freshness)' if age_min is not None else '')
+            print(f'# scraped token{age_hint}', file=sys.stderr)
+            if os.environ.get('OWA_RESEED_DEBUG'):
+                hid = v.get('hid', '')
+                print(f'# homeAccountId={hid}', file=sys.stderr)
             print(f'OWA_REFRESH_TOKEN={v["rt"]}')
             print(f'OWA_TENANT_ID={v["tid"]}')
             return EXIT_OK
