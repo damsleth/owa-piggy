@@ -10,13 +10,13 @@ import sys
 # SharePoint, directory, and the rest of the Microsoft first-party surface,
 # so it's the more useful default. Override with `--outlook` (or any other
 # --<name> flag), with --scope, or persistently via OWA_DEFAULT_AUDIENCE
-# which accepts either a KNOWN_SCOPES short name or a full https URL.
+# which accepts either a KNOWN_AUDIENCES short name or a full https URL.
 DEFAULT_AUDIENCE = 'https://graph.microsoft.com'
 
 # Well-known FOCI-accessible audiences (same refresh token works for all).
-# Named SCOPES for historical reasons - the dict actually maps short names
-# to audience URLs. The .default scope is what we actually ask AAD for.
-KNOWN_SCOPES = {
+# Short names map to audience URLs; `{audience}/.default` is the scope we
+# actually ask AAD for.
+KNOWN_AUDIENCES = {
     'outlook':    ('https://outlook.office.com',                   'Outlook REST'),
     'graph':      ('https://graph.microsoft.com',                  'Microsoft Graph (default)'),
     'teams':      ('https://api.spaces.skype.com',                 'Microsoft Teams'),
@@ -55,7 +55,7 @@ def resolve_scope(args):
         return None, '--scope requires a value'
 
     # Known-name flag.
-    for name, entry in KNOWN_SCOPES.items():
+    for name, entry in KNOWN_AUDIENCES.items():
         if f'--{name}' in args:
             return f'{entry[0]}/.default openid profile offline_access', None
 
@@ -63,8 +63,8 @@ def resolve_scope(args):
     env = os.environ.get('OWA_DEFAULT_AUDIENCE', '').strip()
     aud_url = None
     if env:
-        if env in KNOWN_SCOPES:
-            aud_url = KNOWN_SCOPES[env][0]
+        if env in KNOWN_AUDIENCES:
+            aud_url = KNOWN_AUDIENCES[env][0]
         elif env.startswith('https://'):
             aud_url = env.rstrip('/')
         else:

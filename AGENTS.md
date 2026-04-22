@@ -35,7 +35,7 @@ owa_piggy/
   __init__.py        # re-exports `main` so `owa-piggy = "owa_piggy:main"` resolves
   __main__.py        # `python -m owa_piggy`
   cli.py             # arg parsing + dispatch (--profile, --list-profiles, ...)
-  scopes.py          # KNOWN_SCOPES, resolve_scope
+  scopes.py          # KNOWN_AUDIENCES, resolve_scope
   jwt.py             # decode_jwt_segment, decode_jwt, token_minutes_remaining
   config.py          # ROOT_DIR, CONFIG_PATH, profile path helpers,
                      # resolve_profile, profiles.conf I/O, load/save_config
@@ -98,7 +98,7 @@ exist with acceptance criteria.
 ## Verification before claiming done
 
 - `python -m compileall -q owa_piggy` passes.
-- `python -m owa_piggy --help` and `--list-scopes` run without
+- `python -m owa_piggy --help` and `--list-audiences` run without
   traceback on a machine with no config.
 - `pytest -q` is green.
 - If you touched token logic: `owa-piggy --decode` and `--status`

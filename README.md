@@ -160,7 +160,7 @@ Writes are atomic (temp file + fsync + rename) so a crash mid-rotation cannot co
 
 - `OWA_REFRESH_TOKEN`, `OWA_TENANT_ID` - override the corresponding config values (when `OWA_REFRESH_TOKEN` is env-supplied, rotated tokens are kept env-only and not written back to disk)
 - `OWA_CLIENT_ID` - override the default OWA client ID
-- `OWA_DEFAULT_AUDIENCE` - change the default audience (a short name from `--list-scopes` like `outlook`, or a full https URL). Command-line `--<name>` / `--scope` still wins.
+- `OWA_DEFAULT_AUDIENCE` - change the default audience (a short name from `--list-audiences` like `outlook`, or a full https URL). Command-line `--<name>` / `--scope` still wins.
 
 ---
 

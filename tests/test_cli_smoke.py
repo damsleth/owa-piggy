@@ -9,7 +9,7 @@ import sys
 import pytest
 
 from owa_piggy import cli as cli_mod
-from owa_piggy.scopes import KNOWN_SCOPES
+from owa_piggy.scopes import KNOWN_AUDIENCES
 
 
 def _run(monkeypatch, argv):
@@ -24,18 +24,18 @@ def test_help_exits_zero(monkeypatch, capsys):
     assert 'usage: owa-piggy' in out
     # Spot-check documented flags are all in --help output.
     for flag in ('--json', '--env', '--decode', '--remaining', '--graph',
-                 '--teams', '--list-scopes', '--scope', '--save-config',
+                 '--teams', '--list-audiences', '--scope', '--save-config',
                  '--setup', '--reseed', '--status', '--debug'):
         assert flag in out, f'{flag} missing from --help'
 
 
-def test_list_scopes_exits_zero(monkeypatch, capsys):
-    rc = _run(monkeypatch, ['--list-scopes'])
+def test_list_audiences_exits_zero(monkeypatch, capsys):
+    rc = _run(monkeypatch, ['--list-audiences'])
     assert rc == 0
     out = capsys.readouterr().out
-    for name in KNOWN_SCOPES:
+    for name in KNOWN_AUDIENCES:
         assert f'--{name}' in out
-        assert KNOWN_SCOPES[name][0] in out
+        assert KNOWN_AUDIENCES[name][0] in out
 
 
 def test_short_help_alias(monkeypatch, capsys):
@@ -152,13 +152,13 @@ def test_env_mode_emits_shell_vars(monkeypatch, capsys, tmp_config, clean_env,
     assert 'EXPIRES_IN=3600' in out
 
 
-def test_list_scopes_formatting(monkeypatch, capsys):
-    """Every KNOWN_SCOPES entry appears in --list-scopes with its URL."""
-    _run(monkeypatch, ['--list-scopes'])
+def test_list_audiences_formatting(monkeypatch, capsys):
+    """Every KNOWN_AUDIENCES entry appears in --list-audiences with its URL."""
+    _run(monkeypatch, ['--list-audiences'])
     out = capsys.readouterr().out
     # Match on the formatted flag column (trailing whitespace) to avoid
     # --outlook as a substring of --outlook365.
-    for name, (url, _desc) in KNOWN_SCOPES.items():
+    for name, (url, _desc) in KNOWN_AUDIENCES.items():
         assert f'--{name} ' in out or f'--{name}\n' in out
         assert url in out
 
@@ -567,19 +567,20 @@ def test_profiles_alias_invokes_list_profiles(monkeypatch, capsys, tmp_config,
     assert '*' in out  # default marker
 
 
-def test_list_scopes_with_multiple_profiles_no_default(monkeypatch, capsys,
-                                                       tmp_config, clean_env):
-    """--list-scopes is purely informational and must work on installs with
-    multiple profile directories and no default set - the previous ordering
-    ran resolve_profile() first and tripped on the ambiguity error."""
+def test_list_audiences_with_multiple_profiles_no_default(monkeypatch, capsys,
+                                                          tmp_config, clean_env):
+    """--list-audiences is purely informational and must work on installs
+    with multiple profile directories and no default set - the previous
+    ordering ran resolve_profile() first and tripped on the ambiguity
+    error."""
     from owa_piggy.config import profile_dir
     profile_dir('work').mkdir(parents=True, exist_ok=True)
     profile_dir('personal').mkdir(parents=True, exist_ok=True)
     # profiles.conf intentionally not written: no default pointer.
-    rc = _run(monkeypatch, ['--list-scopes'])
+    rc = _run(monkeypatch, ['--list-audiences'])
     assert rc == 0
     out = capsys.readouterr().out
-    for name in KNOWN_SCOPES:
+    for name in KNOWN_AUDIENCES:
         assert f'--{name}' in out
 
 

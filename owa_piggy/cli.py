@@ -28,7 +28,7 @@ from .jwt import decode_jwt, decode_jwt_segment, token_minutes_remaining
 from .migration import migrate_if_needed
 from .oauth import CLIENT_ID, exchange_token
 from .reseed import do_reseed
-from .scopes import KNOWN_SCOPES, resolve_scope
+from .scopes import KNOWN_AUDIENCES, resolve_scope
 from .setup import interactive_setup
 from .status import do_debug, do_status, do_status_all
 
@@ -45,10 +45,10 @@ options:
   --env               print ACCESS_TOKEN and EXPIRES_IN as KEY=value lines
   --decode            decode and print the JWT header and payload
   --remaining         print minutes remaining on the current token
-  --graph             use Microsoft Graph scope
-  --teams             use Microsoft Teams scope
-  --<name>            use any known FOCI scope (see --list-scopes)
-  --list-scopes       list all known FOCI-accessible audiences
+  --graph             use Microsoft Graph audience
+  --teams             use Microsoft Teams audience
+  --<name>            use any known FOCI audience (see --list-audiences)
+  --list-audiences    list all known FOCI-accessible audiences
   --scope <scope>     override scope explicitly (takes precedence)
   --save-config       interactive first-time setup, saves to config file
   --setup             alias for --save-config
@@ -86,8 +86,9 @@ config:
     OWA_TENANT_ID          your Azure AD tenant ID
     OWA_CLIENT_ID          override client ID (default: OWA's public client)
     OWA_DEFAULT_AUDIENCE   override default audience (short name from
-                           --list-scopes, e.g. 'outlook', or a full https URL).
-                           --<name> / --scope on the command line still win.
+                           --list-audiences, e.g. 'outlook', or a full https
+                           URL). --<name> / --scope on the command line still
+                           win.
 
   Environment variables take precedence over the config file.
   OWA_PROFILE selects which profile to load.
@@ -114,7 +115,7 @@ examples:
   token=$(owa-piggy)                                # use in scripts
   owa-piggy --graph                                 # Microsoft Graph token
   owa-piggy --teams                                 # Teams token
-  owa-piggy --list-scopes                           # show all FOCI audiences
+  owa-piggy --list-audiences                        # show all FOCI audiences
   owa-piggy --scope 'https://graph.microsoft.com/.default'
   owa-piggy --json | jq .scope
   eval $(owa-piggy --env)                           # export into shell
@@ -140,7 +141,7 @@ _VALUE_FLAGS = {'--profile', '--set-default', '--delete-profile', '--scope'}
 
 _STATIC_FLAGS = {
     '--help', '-h',
-    '--list-profiles', '--profiles', '--list-scopes',
+    '--list-profiles', '--profiles', '--list-audiences',
     '--force',
     '--save-config', '--setup',
     '--reseed', '--debug', '--status',
@@ -158,7 +159,7 @@ def _validate_known_flags(args):
     `--scope https://...` doesn't get flagged as unknown.
     """
     known = set(_STATIC_FLAGS) | _VALUE_FLAGS
-    known.update(f'--{n}' for n in KNOWN_SCOPES)
+    known.update(f'--{n}' for n in KNOWN_AUDIENCES)
     skip_next = False
     for a in args:
         if skip_next:
@@ -381,14 +382,14 @@ def main():
     if '--list-profiles' in args or '--profiles' in args:
         return _do_list_profiles()
 
-    # --list-scopes is purely informational (prints the KNOWN_SCOPES table).
-    # Handle it before profile resolution so it works on installs with
-    # multiple profiles and no default, where resolve_profile() would
+    # --list-audiences is purely informational (prints the KNOWN_AUDIENCES
+    # table). Handle it before profile resolution so it works on installs
+    # with multiple profiles and no default, where resolve_profile() would
     # otherwise error out on ambiguity.
-    if '--list-scopes' in args:
-        max_name = max(len(n) for n in KNOWN_SCOPES)
-        max_aud = max(len(aud) for aud, _ in KNOWN_SCOPES.values())
-        for name, (aud, desc) in KNOWN_SCOPES.items():
+    if '--list-audiences' in args:
+        max_name = max(len(n) for n in KNOWN_AUDIENCES)
+        max_aud = max(len(aud) for aud, _ in KNOWN_AUDIENCES.values())
+        for name, (aud, desc) in KNOWN_AUDIENCES.items():
             flag = f'--{name}'
             print(f'  {flag:<{max_name + 3}} {aud:<{max_aud + 2}} {desc}')
         return 0
