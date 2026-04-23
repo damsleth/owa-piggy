@@ -172,9 +172,26 @@ wait_for_signin() {
   cleanup_edge
 }
 
+# Bail out cleanly when interactive sign-in is needed but we have no tty
+# (launchd, cron, CI). Without this guard the hourly refresh agent would
+# pop a visible Edge window on the user's screen with nobody at the
+# keyboard - a visible regression from the pre-v0.5.2 "silent failure".
+# The user can re-run `owa-piggy reseed` interactively to recover; the
+# error reason lands in the per-profile refresh.log.
+require_tty_or_exit() {
+  if [ ! -t 0 ]; then
+    log "ERROR: $1"
+    log "       Re-run interactively: owa-piggy reseed --profile $PROFILE_ALIAS"
+    exit 1
+  fi
+}
+
 # Open Edge visibly so the user can sign in, then wait for them to finish.
 # $1 is the headline reason shown to the user so the two callsites
 # (cookies-gone vs AAD-rejected-scraped-token) give different context.
+# Callers must gate this with `require_tty_or_exit` - we do not redundantly
+# check here so the error message at the callsite can describe which
+# failure mode triggered the need for sign-in.
 visible_signin() {
   log ""
   log ">> $1"
@@ -204,6 +221,7 @@ scrape_attempt
 # Exit 2 = scraper detected a login-host redirect: sidecar cookies gone.
 # Fall straight through to visible signin before ever touching setup.
 if [ "$scrape_status" -eq 2 ]; then
+  require_tty_or_exit "Sidecar profile session has expired; interactive sign-in needed."
   visible_signin "Sidecar profile session has expired."
   scrape_attempt
 fi
@@ -223,7 +241,9 @@ fi
 # Most likely cause: MSAL silent-refreshed the ID token via iframe
 # auth-code against the SSO cookie, updating iat but leaving the RT past
 # its 24h SPA hard-cap (AADSTS700084). Visible signin forces MSAL to
-# mint a truly fresh RT.
+# mint a truly fresh RT - but only when a human is around to sign in.
+# Under launchd we exit 1 and let the error land in refresh.log.
+require_tty_or_exit "Scraped refresh token rejected by AAD (likely AADSTS700084, past the 24h SPA hard-cap); interactive sign-in needed."
 log ""
 log ">> Scraped refresh token was rejected by AAD (likely past the 24h SPA"
 log ">> hard-cap). Falling back to visible sign-in to refresh the session."
