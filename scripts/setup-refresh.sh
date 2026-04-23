@@ -199,10 +199,16 @@ install_plist_for_profile() {
   # Emit one <string> per ProgramArguments element (handles python3 + script path)
   local program_args_xml="" arg escaped
   for arg in "${full_args[@]}"; do
-    # Escape XML-special chars in case a path contains them
+    # Escape all five XML-predefined entities. `&` must go first so we do
+    # not double-escape the ampersands introduced by the other replacements.
+    # Content position inside <string> only strictly requires `&<>` but we
+    # also escape `"` and `'` so the emitted XML stays well-formed if a
+    # refactor ever moves these values into an attribute.
     escaped="${arg//&/&amp;}"
     escaped="${escaped//</&lt;}"
     escaped="${escaped//>/&gt;}"
+    escaped="${escaped//\"/&quot;}"
+    escaped="${escaped//\'/&apos;}"
     program_args_xml+="    <string>$escaped</string>
 "
   done
