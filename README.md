@@ -16,6 +16,10 @@ pbpaste | owa-piggy setup
 
 Bleeding edge (main): `brew install --HEAD damsleth/tap/owa-piggy`
 
+Companion tool: [`owa-cal`](https://github.com/damsleth/owa-cal) is a
+calendar CLI that calls owa-piggy for tokens. The two version
+independently - any owa-cal >= 0.6 works with any owa-piggy >= 0.6.
+
 Then
 
 ```sh
