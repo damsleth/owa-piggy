@@ -4,9 +4,25 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "owa-piggy"
-version = "0.5.3"
+version = "0.6.0"
 description = "Get an Outlook/Graph access token without registering an app in Azure AD"
+readme = "README.md"
 requires-python = ">=3.8"
+license = { file = "LICENSE" }
+authors = [{ name = "damsleth" }]
+keywords = ["outlook", "microsoft-graph", "oauth", "cli"]
+classifiers = [
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Environment :: Console",
+  "Development Status :: 4 - Beta",
+]
+
+[project.urls]
+Homepage = "https://github.com/damsleth/owa-piggy"
+Source = "https://github.com/damsleth/owa-piggy"
 
 [project.scripts]
 owa-piggy = "owa_piggy:main"
