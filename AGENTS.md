@@ -53,7 +53,7 @@ scripts/
   add-to-path.sh       # pipx-based installer shim
 tests/                # pytest suite: pure functions + CLI smoke + profile suite
 pyproject.toml
-.doc/                 # design + implementation plans - read before big changes
+.plans/               # design + implementation plans - read before big changes
 README.md
 SECURITY.md
 ```
@@ -74,8 +74,8 @@ The single-file layout (`~/.config/owa-piggy/config`) is auto-migrated into
 `profiles/default/` the first time any profile-aware code path runs; see
 `owa_piggy/migration.py`.
 
-Planning docs live in `.doc/`. If you are about to do something
-non-trivial, check `.doc/plan-*.md` first - the plan may already
+Planning docs live in `.plans/`. If you are about to do something
+non-trivial, check `.plans/plan-*.md` first - the plan may already
 exist with acceptance criteria.
 
 ## Working on this repo
@@ -114,7 +114,7 @@ exist with acceptance criteria.
   obvious from the diff.
 - One logical change per commit.
 - Do not push or open PRs without the user asking. Do not force-push
-  `main`. Do not rewrite published tags (see `.doc/plan-06`).
+  `main`. Do not rewrite published tags (see `.plans/plan-06`).
 
 ## Cutting a release (only when the user asks)
 
