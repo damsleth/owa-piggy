@@ -41,7 +41,7 @@ from .config import (
 from .jwt import decode_jwt, decode_jwt_segment, token_minutes_remaining
 from .migration import migrate_if_needed
 from .oauth import CLIENT_ID, exchange_token
-from .reseed import do_reseed
+from .reseed import do_reseed, do_reseed_all
 from .scopes import KNOWN_AUDIENCES, resolve_audience
 from .setup import interactive_setup
 from .status import do_debug, do_status, do_status_all
@@ -78,6 +78,7 @@ examples:
   owa-piggy status --profile work                  # one profile
   owa-piggy debug                                  # full diagnostics
   owa-piggy reseed --profile work                  # recover from 24h hard-expiry
+  owa-piggy reseed --all                           # reseed every configured profile
   owa-piggy setup --profile new                    # create a new profile
   pbpaste | owa-piggy setup --profile new          # pipe token from clipboard
   owa-piggy profiles                               # list (TTY: interactive picker)
@@ -169,6 +170,8 @@ def _build_parser():
     p_reseed = sub.add_parser(
         'reseed', help='fetch a fresh refresh token headlessly from the Edge sidecar')
     _add_common_options(p_reseed, audience_scope=False)
+    p_reseed.add_argument('--all', action='store_true', dest='all_profiles',
+                          help='reseed every configured profile sequentially')
 
     sub.add_parser(
         'audiences', help='list all known FOCI-accessible audiences')
@@ -388,6 +391,15 @@ def _cmd_setup(args):
 
 
 def _cmd_reseed(args):
+    if getattr(args, 'all_profiles', False):
+        if args.profile:
+            print('ERROR: --all and --profile are mutually exclusive',
+                  file=sys.stderr)
+            return 1
+        # Per-profile cache clearing happens inside do_reseed_all via
+        # set_active_profile + the nested `owa-piggy setup` call's own
+        # clear_cache, so we do not pre-clear here.
+        return do_reseed_all()
     alias, rc = _resolve_and_activate(args)
     if rc:
         return rc
