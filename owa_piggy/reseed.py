@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 from . import config as _config
+from .config import list_profiles, set_active_profile
 
 RESEED_SCRIPT_NAME = 'reseed-from-edge.sh'
 
@@ -86,3 +87,41 @@ def do_reseed(alias):
     except OSError as e:
         print(f'ERROR: failed to run {script}: {e}', file=sys.stderr)
         return 1
+
+
+def do_reseed_all():
+    """Run the headless reseed flow for every configured profile, in order.
+
+    Sequential rather than parallel: each profile drives its own Edge
+    instance with a unique CDP port, but spinning up multiple Edge
+    processes against shared OS resources (Keychain prompts, login.live
+    cookie jar, port allocation) is the kind of complexity this tool
+    has consistently chosen to avoid. The wallclock cost is ~15s per
+    profile, which is fine for a hand-run command.
+
+    Returns the max exit code across profiles so a partial failure is
+    still surfaced to scripts (`if owa-piggy reseed --all; then ...`).
+    Each profile's stderr is prefixed with [alias] by the shell script
+    so output stays attributable.
+    """
+    profiles = list_profiles()
+    if not profiles:
+        print('no profiles configured. Run: owa-piggy setup --profile <alias>',
+              file=sys.stderr)
+        return 1
+    rc = 0
+    for i, alias in enumerate(profiles):
+        if i:
+            print(file=sys.stderr)
+        print(f'=== reseed [profile={alias}] ({i + 1}/{len(profiles)}) ===',
+              file=sys.stderr)
+        # set_active_profile rebinds CONFIG_PATH so the nested setup writes
+        # land in the right per-profile config. do_reseed shells out to a
+        # script that calls owa-piggy setup --profile <alias>, which sets
+        # the active profile itself - but the parent caller (cli.py
+        # _cmd_reseed) clears the cache for the explicit alias, and we do
+        # not have that hook here, so re-bind explicitly per profile to
+        # keep the cache layer coherent.
+        set_active_profile(alias)
+        rc = max(rc, do_reseed(alias))
+    return rc
