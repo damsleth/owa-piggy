@@ -24,15 +24,18 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-latest
-    environment: pypi
-    permissions:
-      id-token: write
-      contents: read
     steps:
       - uses: actions/download-artifact@v4
         with:
           name: dist
           path: dist/
+      # Token-based publish via repo secret UV_PUBLISH_TOKEN. Mirrors the
+      # local .env workflow (`uv publish` reads the same env var name) so
+      # the credential lineage stays in one place. Trusted publishing was
+      # tried first but the matching pending-publisher never got wired up
+      # on PyPI's side, so v0.6.2's tag run failed with invalid-publisher.
+      # Attestations require OIDC and are dropped along with the OIDC
+      # plumbing.
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          attestations: true
+          password: ${{ secrets.UV_PUBLISH_TOKEN }}
