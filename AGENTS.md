@@ -161,6 +161,18 @@ When the user says "cut a release" / "new patch version" / "ship it":
    did.
 7. Commit the tap with message `owa-piggy X.Y.Z` (matches the tap's
    existing convention) and push.
+8. `brew upgrade owa-piggy owa-cal` on the dev machine to actually
+   pull the new formula locally - the tap push only updates the
+   metadata; nothing on disk changes until brew refetches. Skipping
+   this leaves the dev machine on the previous version even though
+   `git log` and PyPI both say the new one shipped.
+
+   Note: the launchd reseed agent invokes `~/.local/bin/owa-piggy`,
+   which on this machine is a *pipx editable* install pointing at
+   the repo (see `pipx list`). Code changes here are live in
+   launchd the moment they hit disk - you do not need to reinstall
+   pipx after editing `scripts/scrape_edge.py` or any Python
+   module. The brew copy is what end users get.
 
 If any step fails midway (tag push rejected, sha mismatch, tap push
 rejected), stop and surface the error - do not try to "fix" a
