@@ -29,11 +29,22 @@ PORT = int(os.environ.get('CDP_PORT', '9222'))
 # Match either the OWA tab or a login redirect so we notice when the SPA
 # gives up and hands off to AAD.
 TAB_URL_SUBSTRING = os.environ.get('CDP_TAB_MATCH', '')
-WAIT_SECONDS = int(os.environ.get('CDP_WAIT', '45'))
-# Freshness threshold for the cached ID token. The SPA refresh-token hard
-# expiry is 24h from issue; returning anything older is guaranteed to fail
-# downstream with AADSTS700084. Subtract a 1h safety margin.
-STALE_AFTER_SECONDS = 23 * 3600
+WAIT_SECONDS = int(os.environ.get('CDP_WAIT', '90'))
+# Freshness threshold for the cached ID token. The 23h heuristic this
+# replaced was a trap: it let the scrape exit success on its first poll
+# (~0.5s) whenever the iat looked younger than 23h, so cleanup_edge
+# killed Edge before MSAL had any chance to do its silent refresh. The
+# launchd agent then re-saved the original RT every hour for 24h until
+# AADSTS700084 fired - the rotation never actually happened.
+#
+# 30 min forces stale on every hourly cron tick (prior run was 60 min
+# ago, iat is therefore at least 60 min old), which makes the JS sit in
+# the retry loop long enough for MSAL to complete acquireTokenSilent +
+# rotate the RT. Past the 24h SPA hard-cap the same retry loop gives
+# MSAL room to fall back to ssoSilent (iframe authorize against ESTSAUTH
+# cookies, mints a fresh RT with a reset 24h cap). Both empirically
+# need ~10-30s of patient polling to actually complete.
+STALE_AFTER_SECONDS = int(os.environ.get('OWA_RESEED_STALE_AFTER', str(30 * 60)))
 # Exit codes used by the shell wrapper to decide what to do next.
 EXIT_OK = 0
 EXIT_ERROR = 1
