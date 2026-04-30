@@ -35,6 +35,21 @@ def _launchd_label(alias):
     return f'{LAUNCHD_LABEL_PREFIX}.{alias}'
 
 
+def _launchd_plist_path(alias):
+    """Path to the per-profile launchd plist on macOS. Always returns a
+    Path even on non-mac systems - the caller checks .exists() for the
+    truthy answer."""
+    return Path.home() / 'Library' / 'LaunchAgents' / f'{_launchd_label(alias)}.plist'
+
+
+def _launchd_is_installed(alias):
+    """True iff the per-profile launchd plist is on disk. Cheap check;
+    we treat plist presence as 'installed' for the status summary because
+    runtime state (loaded / not loaded) is a transient detail that
+    `debug` already surfaces in full. status stays one-line-per-fact."""
+    return _launchd_plist_path(alias).exists()
+
+
 def do_status(alias, audience=None, scope=None, multi=False):
     """Compact health summary for profile <alias>. Does a live exchange
     probe to verify the RT actually works (rotates it as a side effect,
@@ -63,8 +78,13 @@ def do_status(alias, audience=None, scope=None, multi=False):
     tid = config.get('OWA_TENANT_ID', '').strip()
     cid = config.get('OWA_CLIENT_ID', CLIENT_ID).strip()
 
+    # The per-profile header (`profile: <alias>`) goes to stdout in
+    # multi-profile mode so concatenated output is self-describing, and
+    # to stderr in single-profile mode so scripts that only consume
+    # stdout don't have to filter it out (the `no valid token` /
+    # ISO8601 lines remain the script-friendly stdout payload).
     label_stream = sys.stdout if multi else sys.stderr
-    print(f'[profile={alias}]', file=label_stream)
+    print(f'profile:      {alias}', file=label_stream)
     if not rt or not tid or not (rt.startswith('1.') or rt.startswith('0.')):
         print('no valid token')
         return 1
@@ -156,10 +176,12 @@ def do_status(alias, audience=None, scope=None, multi=False):
     else:
         scopes_line = str(scp)
 
+    launchd_state = 'true' if _launchd_is_installed(alias) else 'false'
     print(f'authtoken:    expires {iso(exp_ts)}')
+    print(f'refreshtoken: expires {rt_expires}')
     print(f'audience:     {audience_line}')
     print(f'scope(s):     {scopes_line}')
-    print(f'refreshtoken: expires {rt_expires}')
+    print(f'launchd:      {launchd_state}')
     return 0
 
 

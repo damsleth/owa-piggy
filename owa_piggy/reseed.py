@@ -22,6 +22,7 @@ import sys
 from pathlib import Path
 
 from . import config as _config
+from .cache import clear_cache
 from .config import (
     iso_utc_now,
     list_profiles,
@@ -94,6 +95,12 @@ def _do_reseed_capture(alias, config):
     the rotated refresh token. No window appears under any condition;
     if the sidecar session has expired we exit non-zero and ask the
     user to re-run `setup --email` interactively."""
+    # Capture-mode reseed can be reached either through the single-profile
+    # CLI path (which already cleared the cache) or via do_reseed_all(),
+    # which calls us directly per profile. Clear again here so both call
+    # paths guarantee the pre-reseed AT cannot survive the identity change.
+    clear_cache()
+
     # Local import: keeps the CDP/capture machinery off the import path
     # for the legacy reseed users that don't need it.
     from . import capture

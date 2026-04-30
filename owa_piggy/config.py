@@ -334,7 +334,7 @@ def load_config():
             if line and not line.startswith('#') and '=' in line:
                 k, _, v = line.partition('=')
                 k = k.strip()
-                config[k] = v.strip().strip('"')
+                config[k] = v.strip().strip('"').strip("'")
                 file_keys.add(k)
     # Environment overrides file
     for key in ('OWA_REFRESH_TOKEN', 'OWA_TENANT_ID', 'OWA_CLIENT_ID'):

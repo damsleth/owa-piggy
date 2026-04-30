@@ -545,8 +545,10 @@ def _interactive_profile_picker(profiles, default):
                     continue
                 # Bare ESC = quit.
                 return 0
-            if ch in ('q', 'Q', '\x03'):  # q / ctrl-C
+            if ch in ('q', 'Q'):
                 return 0
+            if ch == '\x03':
+                raise KeyboardInterrupt
             if ch in ('\r', '\n'):
                 break
             if ch == 'k' and idx > 0:
@@ -617,13 +619,20 @@ def _do_profiles_delete(alias, force=False):
             file=sys.stderr,
         )
         return 1
+    try:
+        unregister_profile(alias)
+    except OSError as e:
+        print(f'ERROR: failed to update profile registry for {alias!r}: {e}',
+              file=sys.stderr)
+        return 1
+
     target = profile_dir(alias)
     try:
         shutil.rmtree(target)
     except OSError as e:
-        print(f'ERROR: failed to remove {target}: {e}', file=sys.stderr)
+        print(f'ERROR: profile {alias!r} was unregistered but failed to remove '
+              f'{target}: {e}', file=sys.stderr)
         return 1
-    unregister_profile(alias)
     print(f'removed profile {alias!r}.')
     remaining = list_profiles()
     if remaining:

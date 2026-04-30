@@ -67,6 +67,15 @@ def test_save_and_load_round_trip(tmp_config, clean_env):
     assert persist is True
 
 
+def test_load_config_strips_single_quotes(tmp_config, clean_env):
+    tmp_config.parent.mkdir(parents=True, exist_ok=True)
+    tmp_config.write_text("OWA_REFRESH_TOKEN='fake-rt-for-tests'\nOWA_TENANT_ID='tid-1'\n")
+    cfg, persist = load_config()
+    assert cfg['OWA_REFRESH_TOKEN'] == 'fake-rt-for-tests'
+    assert cfg['OWA_TENANT_ID'] == 'tid-1'
+    assert persist is True
+
+
 def test_save_sets_0600_permissions(tmp_config, clean_env):
     save_config({'OWA_REFRESH_TOKEN': 'x', 'OWA_TENANT_ID': 'y'})
     mode = stat.S_IMODE(tmp_config.stat().st_mode)
