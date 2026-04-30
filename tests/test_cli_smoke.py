@@ -4,6 +4,7 @@ Exercises subcommand parsing and dispatch without hitting the network.
 exchange_token is monkeypatched to return a synthetic JWT. No real
 tokens, no config writes, no HTTP.
 """
+import io
 import sys
 
 import pytest
@@ -601,20 +602,21 @@ def test_audiences_with_multiple_profiles_no_default(monkeypatch, capsys,
 def test_status_profile_label_on_stderr(monkeypatch, capsys, tmp_config,
                                         clean_env):
     """Single-profile status must keep its 'no valid token' stdout
-    contract. The [profile=...] label goes to stderr so scripts parsing
-    stdout are not regressed."""
+    contract. The `profile: <alias>` header goes to stderr so scripts
+    parsing stdout are not regressed."""
     rc = _run(monkeypatch, ['status', '--profile', 'default'])
     assert rc != 0
     cap = capsys.readouterr()
     assert cap.out.strip() == 'no valid token'
-    assert '[profile=' in cap.err
+    assert 'profile:' in cap.err
+    assert 'default' in cap.err
 
 
 def test_status_without_profile_iterates_all(monkeypatch, capsys, tmp_config,
                                               clean_env):
     """`status` with no --profile prints a labeled block per configured
-    profile. The [profile=...] label moves to stdout so the output is
-    self-describing when scanning several profiles."""
+    profile. The `profile: <alias>` header moves to stdout so the
+    output is self-describing when scanning several profiles."""
     from owa_piggy.config import ensure_profile_registered, profile_dir
     profile_dir('work').mkdir(parents=True, exist_ok=True)
     profile_dir('personal').mkdir(parents=True, exist_ok=True)
@@ -623,8 +625,8 @@ def test_status_without_profile_iterates_all(monkeypatch, capsys, tmp_config,
     rc = _run(monkeypatch, ['status'])
     assert rc != 0
     out = capsys.readouterr().out
-    assert '[profile=work]' in out
-    assert '[profile=personal]' in out
+    assert 'profile:      work' in out
+    assert 'profile:      personal' in out
 
 
 def test_status_no_profiles_configured(monkeypatch, capsys, tmp_config,
@@ -664,6 +666,82 @@ def test_profiles_delete_rejects_bad_alias(monkeypatch, capsys, tmp_config,
     rc = _run(monkeypatch, ['profiles', 'delete', '../escape'])
     assert rc != 0
     assert 'invalid profile alias' in capsys.readouterr().err
+
+
+def test_interactive_profile_picker_ctrl_c_restores_terminal(monkeypatch):
+    import termios
+    import tty
+
+    class FakeIn:
+        def fileno(self):
+            return 0
+
+        def read(self, _n):
+            return '\x03'
+
+    restored = []
+    monkeypatch.setattr(sys, 'stdin', FakeIn())
+    monkeypatch.setattr(sys, 'stdout', io.StringIO())
+    monkeypatch.setattr(termios, 'tcgetattr', lambda fd: ['old-state'])
+    monkeypatch.setattr(tty, 'setraw', lambda fd: None)
+    monkeypatch.setattr(
+        termios,
+        'tcsetattr',
+        lambda fd, when, state: restored.append((fd, when, state)),
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        cli_mod._interactive_profile_picker(['work', 'personal'], 'work')
+
+    assert restored == [(0, termios.TCSADRAIN, ['old-state'])]
+
+
+def test_profiles_delete_preserves_dir_if_registry_update_fails(
+    monkeypatch, capsys, tmp_config, clean_env
+):
+    from owa_piggy.config import ensure_profile_registered, profile_dir
+
+    target = profile_dir('work')
+    target.mkdir(parents=True, exist_ok=True)
+    ensure_profile_registered('work')
+
+    monkeypatch.setattr(
+        cli_mod,
+        'unregister_profile',
+        lambda alias: (_ for _ in ()).throw(OSError('disk full')),
+    )
+    monkeypatch.setattr(
+        cli_mod.shutil,
+        'rmtree',
+        lambda path: pytest.fail('rmtree must not run when registry update fails'),
+    )
+
+    rc = cli_mod._do_profiles_delete('work', force=True)
+    assert rc == 1
+    assert target.exists()
+    assert 'failed to update profile registry' in capsys.readouterr().err
+
+
+def test_profiles_delete_unregistered_dir_left_on_disk_if_rmtree_fails(
+    monkeypatch, capsys, tmp_config, clean_env
+):
+    from owa_piggy.config import ensure_profile_registered, load_profiles_conf, profile_dir
+
+    target = profile_dir('work')
+    target.mkdir(parents=True, exist_ok=True)
+    ensure_profile_registered('work')
+
+    monkeypatch.setattr(
+        cli_mod.shutil,
+        'rmtree',
+        lambda path: (_ for _ in ()).throw(OSError('busy')),
+    )
+
+    rc = cli_mod._do_profiles_delete('work', force=True)
+    assert rc == 1
+    assert target.exists()
+    assert 'work' not in load_profiles_conf()['OWA_PROFILES']
+    assert 'was unregistered but failed to remove' in capsys.readouterr().err
 
 
 def test_cache_hit_remaining_mode(monkeypatch, capsys, tmp_config, clean_env,

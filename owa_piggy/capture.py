@@ -191,7 +191,7 @@ def email_matches_claims(email, claims):
 
 # --- Capture flow ----------------------------------------------------------
 
-def _capture_token_response(session, *, deadline, log=None):
+def _capture_token_response(session, *, deadline, log=None, tick=None):
     """Block until a /token response with refresh_token lands, then return
     its parsed body dict.
 
@@ -200,11 +200,19 @@ def _capture_token_response(session, *, deadline, log=None):
     refreshes also work. We accept the first response that has a
     refresh_token in it. Errors-from-AAD responses (e.g. interaction
     required) are ignored; we keep listening until the deadline.
+
+    `tick(elapsed_s)` is called every ~5s while waiting so callers can
+    print a heartbeat to stderr; without this, capture_silent looks
+    indistinguishable from a hang to anyone watching the terminal.
     """
     if log is None:
         log = lambda *_: None  # noqa: E731
+    if tick is None:
+        tick = lambda *_: None  # noqa: E731
 
     pending_request_ids = set()
+    started = time.monotonic()
+    last_tick = started
 
     def _on_response_received(params):
         resp = params.get('response', {})
@@ -220,6 +228,10 @@ def _capture_token_response(session, *, deadline, log=None):
 
     while time.monotonic() < deadline:
         remaining = deadline - time.monotonic()
+        now = time.monotonic()
+        if now - last_tick >= 5.0:
+            tick(int(now - started))
+            last_tick = now
         # First, see a token-endpoint responseReceived. Use a short
         # window so we can loop and re-check the deadline cleanly.
         try:
@@ -293,6 +305,23 @@ def _logger(prefix):
     return lambda msg: print(f'[{prefix}] {msg}', file=sys.stderr)
 
 
+def _ticker(alias):
+    """Heartbeat printer for the wait-for-/token loop. Always on (not
+    gated by OWA_CAPTURE_DEBUG) so a watching user sees the operation
+    is alive, not hung."""
+    return lambda elapsed: print(
+        f'[{alias}] still waiting for /oauth2/v2.0/token response '
+        f'({elapsed}s elapsed)...', file=sys.stderr)
+
+
+def _capture_headless_default():
+    """Honor OWA_CAPTURE_HEADLESS=0 as the escape hatch for tenants whose
+    Conditional Access / device-compliance check fails in headless mode
+    (mirrors OWA_RESEED_HEADLESS for the legacy scrape path). Default is
+    headless: True so launchd doesn't pop a window onscreen."""
+    return os.environ.get('OWA_CAPTURE_HEADLESS', '1').strip() != '0'
+
+
 def capture_signin(alias, email, *, timeout=300):
     """Visible Edge for first-time setup. Returns a config dict on
     success, or raises RuntimeError with a user-facing message.
@@ -304,6 +333,12 @@ def capture_signin(alias, email, *, timeout=300):
     across MSAL versions.
     """
     log = _logger(f'capture/signin/{alias}')
+    # Sign-in can legitimately take minutes (Okta Verify push approval,
+    # MFA prompt, etc.). The visible Edge window is the primary signal,
+    # but a stderr heartbeat reassures anyone watching the terminal.
+    tick = lambda elapsed: print(  # noqa: E731
+        f'[{alias}] still waiting for sign-in to complete '
+        f'({elapsed}s elapsed)...', file=sys.stderr)
     edge_dir = _config.profile_edge_dir(alias)
     edge_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     port = find_free_port()
@@ -316,7 +351,7 @@ def capture_signin(alias, email, *, timeout=300):
         deadline = time.monotonic() + timeout
         log(f'awaiting /token response (timeout {timeout}s)...')
         token_response = _capture_token_response(
-            session, deadline=deadline, log=log)
+            session, deadline=deadline, log=log, tick=tick)
     finally:
         if session is not None:
             session.close()
@@ -325,8 +360,8 @@ def capture_signin(alias, email, *, timeout=300):
     return _build_config(token_response, email=email, mode='capture')
 
 
-def capture_silent(alias, *, timeout=90):
-    """Headless Edge for scheduled reseed. Returns (config_dict, status):
+def capture_silent(alias, *, timeout=30):
+    """Headless Edge for scheduled reseed. Returns (status, config_dict):
 
       ('ok', dict)        success - dict has OWA_REFRESH_TOKEN/OWA_TENANT_ID
       ('reauth', None)    sidecar session cookies expired; user must
@@ -334,19 +369,24 @@ def capture_silent(alias, *, timeout=90):
       ('error', None)     other failure (no token observed, Edge launch
                           failed, etc.) - log line written to stderr
 
-    Never opens a visible window. If reauth is needed under launchd,
-    the caller logs and exits non-zero; the user sees it in refresh.log
-    and reruns interactive setup.
+    Default is fully headless. Set OWA_CAPTURE_HEADLESS=0 to fall back
+    to offscreen-but-not-headless when a tenant's CA / device-compliance
+    check rejects truly headless Edge (mirrors OWA_RESEED_HEADLESS for
+    the legacy scrape path). Even in the OWA_CAPTURE_HEADLESS=0 mode no
+    onscreen window appears - the window is parked at -32000,-32000 -
+    so launchd users still don't get a flashing browser.
     """
     log = _logger(f'capture/silent/{alias}')
+    tick = _ticker(alias)
     edge_dir = _config.profile_edge_dir(alias)
     if not edge_dir.is_dir():
         log(f'no Edge profile dir at {edge_dir}; cannot reseed silently')
         return 'reauth', None
+    headless = _capture_headless_default()
     port = find_free_port()
-    log(f'launching Edge headless on port {port}')
+    log(f'launching Edge {"headless" if headless else "offscreen"} on port {port}')
     try:
-        proc = launch_edge(edge_dir, port, headless=True, url=OWA_URL)
+        proc = launch_edge(edge_dir, port, headless=headless, url=OWA_URL)
     except RuntimeError as e:
         print(f'ERROR: {e}', file=sys.stderr)
         return 'error', None
@@ -399,8 +439,11 @@ def capture_silent(alias, *, timeout=90):
         deadline = time.monotonic() + timeout
         log(f'awaiting /token response (timeout {timeout}s)...')
         token_response = _capture_token_response(
-            session, deadline=deadline, log=log)
+            session, deadline=deadline, log=log, tick=tick)
     except TimeoutError as e:
+        print(f'[{alias}] timed out after {timeout}s waiting for '
+              f'/oauth2/v2.0/token. Tenant may require non-headless '
+              f'Edge - try OWA_CAPTURE_HEADLESS=0.', file=sys.stderr)
         log(f'timeout: {e}')
         return 'error', None
     except (ConnectionError, CdpError, OSError) as e:

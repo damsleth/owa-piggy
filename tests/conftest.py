@@ -50,7 +50,7 @@ def tmp_config(tmp_path, monkeypatch):
 def clean_env(monkeypatch):
     """Strip any OWA_* env vars so tests start from a known state."""
     for key in ('OWA_REFRESH_TOKEN', 'OWA_TENANT_ID', 'OWA_CLIENT_ID',
-                'OWA_DEFAULT_AUDIENCE', 'OWA_RESEED_SCRIPT'):
+                'OWA_DEFAULT_AUDIENCE', 'OWA_RESEED_SCRIPT', 'OWA_PROFILE'):
         monkeypatch.delenv(key, raising=False)
 
 
