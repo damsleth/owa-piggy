@@ -52,17 +52,28 @@ COMMANDS = (
 )
 
 _EPILOG = """\
-one-time setup:
-  1. Open https://outlook.cloud.microsoft in Microsoft Edge
-     (plain Chromium browsers store a session-bound token AAD rejects)
-  2. Open DevTools (F12) > Console
-  3. Paste this snippet to print both values:
-       const find = s => Object.keys(localStorage).find(k => k.includes(s))
-       const parse = s => JSON.parse(localStorage[find(s)])
-       const rt = parse('|refreshtoken|'), it = parse('|idtoken|')
-       if (!rt.secret) console.warn('WARN: non-MSAL shape.')
-       console.log(`OWA_REFRESH_TOKEN=${rt.secret || rt.data}\\nOWA_TENANT_ID=${(it.realm || find('|idtoken|').split('|')[5])}`)
-  4. Run: owa-piggy setup --profile <alias>
+one-time setup (two paths):
+
+  A. Network-capture (required for Okta-federated / encrypted-MSAL tenants):
+       owa-piggy setup --profile <alias> --email <addr>
+     Edge opens, you sign in normally (password, Okta Verify push, MFA -
+     whatever the tenant requires). owa-piggy captures the refresh token
+     off the /oauth2/v2.0/token response and closes the browser.
+
+  B. Manual paste (legacy MSAL cache, plaintext localStorage):
+     1. Open https://outlook.cloud.microsoft in Microsoft Edge
+        (plain Chromium stores a session-bound token AAD rejects)
+     2. Open DevTools (F12) > Console
+     3. Paste this snippet:
+          const find = s => Object.keys(localStorage).find(k => k.includes(s))
+          const parse = s => JSON.parse(localStorage[find(s)])
+          const rt = parse('|refreshtoken|'), it = parse('|idtoken|')
+          if (!rt.secret) console.warn('WARN: non-MSAL shape.')
+          console.log(`OWA_REFRESH_TOKEN=${rt.secret || rt.data}\\nOWA_TENANT_ID=${(it.realm || find('|idtoken|').split('|')[5])}`)
+     4. Run: owa-piggy setup --profile <alias>
+        (or: pbpaste | owa-piggy setup --profile <alias>)
+     If the snippet warns "non-MSAL shape" the tenant has encrypted cache;
+     use path A instead.
 
 examples:
   owa-piggy                                        # raw access token to stdout
@@ -79,7 +90,8 @@ examples:
   owa-piggy debug                                  # full diagnostics
   owa-piggy reseed --profile work                  # recover from 24h hard-expiry
   owa-piggy reseed --all                           # reseed every configured profile
-  owa-piggy setup --profile new                    # create a new profile
+  owa-piggy setup --profile new                    # paste-flow setup
+  owa-piggy setup --profile new --email me@x.org   # network-capture setup (Okta etc.)
   pbpaste | owa-piggy setup --profile new          # pipe token from clipboard
   owa-piggy profiles                               # list (TTY: interactive picker)
   owa-piggy profiles set-default work              # change the default pointer
@@ -166,6 +178,15 @@ def _build_parser():
     p_setup = sub.add_parser(
         'setup', help='interactive first-time setup; creates the profile if new')
     _add_common_options(p_setup, audience_scope=False)
+    # --email switches setup to the network-capture path: launches Edge
+    # visibly, lets the user sign in, and intercepts the /token response.
+    # Required for tenants whose MSAL.js encrypts the localStorage cache
+    # (Okta-federated, recent-MSAL SPAs) - the legacy paste flow returns
+    # an AES-GCM envelope rather than a usable refresh token there.
+    p_setup.add_argument('--email', metavar='<addr>', default=None,
+                         help='use Edge network-capture flow (required for '
+                              'encrypted-MSAL/Okta tenants); validates '
+                              'captured token belongs to this account')
 
     p_reseed = sub.add_parser(
         'reseed', help='fetch a fresh refresh token headlessly from the Edge sidecar')
@@ -379,7 +400,7 @@ def _cmd_setup(args):
         return rc
     clear_cache()
     config, _ = load_config()
-    if not interactive_setup(config, alias):
+    if not interactive_setup(config, alias, email=getattr(args, 'email', None)):
         return 1
     # Register the profile in profiles.conf so `profiles` sees it and
     # resolve_profile can find it. If this is the first profile ever

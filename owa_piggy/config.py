@@ -300,7 +300,12 @@ def resolve_profile(cli_profile=None, allow_missing=False):
 def parse_kv_stream(text):
     """Parse KEY=value lines. Only recognises known OWA_* keys to avoid
     writing arbitrary junk to the config file."""
-    allowed = {'OWA_REFRESH_TOKEN', 'OWA_TENANT_ID', 'OWA_CLIENT_ID'}
+    allowed = {
+        'OWA_REFRESH_TOKEN', 'OWA_TENANT_ID', 'OWA_CLIENT_ID',
+        # Set by the network-capture setup path (see capture.py); reseed
+        # branches on OWA_AUTH_MODE to pick scrape vs. capture.
+        'OWA_AUTH_MODE', 'OWA_EMAIL',
+    }
     out = {}
     for line in text.splitlines():
         line = line.strip()

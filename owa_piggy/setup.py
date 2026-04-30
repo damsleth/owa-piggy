@@ -4,6 +4,11 @@ read_input() bypasses cooked-mode line-length limits so pasted refresh
 tokens (which can exceed 4KB) don't get truncated. interactive_setup()
 is the `setup` subcommand's flow; it also parses piped stdin so
 `pbpaste | owa-piggy setup` works.
+
+When called with `email=...` the setup flow shells Edge out and captures
+the /token response off the wire (see capture.py). This is the path for
+tenants whose SPA uses MSAL.js encrypted-cache (e.g. Okta-federated
+accounts where the legacy localStorage scrape returns an opaque blob).
 """
 import sys
 
@@ -95,14 +100,24 @@ def read_input(prompt, secret=False):
         return input().strip()
 
 
-def interactive_setup(config, alias='default'):
+def interactive_setup(config, alias='default', *, email=None):
     """Run the setup flow for profile <alias>. `CONFIG_PATH` must already
     be pointing at that profile's config file (caller's job, typically
     via `config.set_active_profile(alias)`).
 
     The alias is used only for user-facing labeling so whoever is
     setting up multiple tenants can tell which one they're typing into.
+
+    When `email` is set, route to the network-capture path: launch Edge
+    visibly, let the user complete sign-in (Okta / AAD / Verify push
+    happens in that window), and intercept the /oauth2/v2.0/token
+    response. This is the only way to onboard tenants whose MSAL.js
+    cache is encrypted, since the localStorage paste path can no longer
+    read the RT in plaintext there.
     """
+    if email is not None:
+        return _capture_setup(config, alias, email)
+
     # Non-interactive path: if stdin is piped, parse KEY=value lines from it.
     # This avoids the bracketed-paste corruption that raw-tty input is prone
     # to with very long secrets, and pairs directly with the JS snippet's
@@ -169,3 +184,47 @@ def _ensure_edge_profile_dir(alias):
     the dir starts empty; thereafter the existing session is reused."""
     d = _config.profile_edge_dir(alias)
     d.mkdir(parents=True, exist_ok=True, mode=0o700)
+
+
+def _capture_setup(config, alias, email):
+    """Drive Edge visibly, capture the FOCI refresh token off the wire,
+    and persist it to the profile config.
+
+    This path is required for tenants whose MSAL.js cache is encrypted
+    (e.g. Okta-federated accounts on newer MSAL releases). The plain
+    localStorage paste path returns an AES-GCM envelope, not an RT, so
+    the network-capture detour is the only way in.
+
+    Imported lazily so a `setup` invocation that uses the legacy paste
+    flow does not pay the cost of importing the CDP machinery.
+    """
+    # Local import: keeps cdp/capture out of the import graph for the
+    # paste-only path used by every existing profile.
+    from . import capture
+
+    print(f'owa-piggy setup [profile={alias}, email={email}]\n', file=sys.stderr)
+    print('Opening Microsoft Edge so you can sign in.', file=sys.stderr)
+    print('owa-piggy will capture the refresh token off the wire and close',
+          file=sys.stderr)
+    print('the window automatically once authentication completes.\n',
+          file=sys.stderr)
+
+    try:
+        captured = capture.capture_signin(alias, email)
+    except TimeoutError:
+        print('ERROR: timed out waiting for sign-in to complete. '
+              'Re-run setup --email to try again.', file=sys.stderr)
+        return False
+    except RuntimeError as e:
+        print(f'ERROR: {e}', file=sys.stderr)
+        return False
+    except KeyboardInterrupt:
+        print('\nABORTED.', file=sys.stderr)
+        return False
+
+    config.update(captured)
+    config['OWA_RT_ISSUED_AT'] = iso_utc_now()
+    save_config(config)
+    print(f'Config saved to {_config.CONFIG_PATH} [profile={alias}]',
+          file=sys.stderr)
+    return True

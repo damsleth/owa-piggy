@@ -284,7 +284,7 @@ def test_setup_clears_cache(monkeypatch, tmp_config, clean_env, make_jwt):
     # try to read stdin. The cache must be gone by the time setup returns.
     seen_cache_during_setup = {}
 
-    def _fake_setup(cfg, alias='default'):
+    def _fake_setup(cfg, alias='default', *, email=None):
         seen_cache_during_setup['snapshot'] = load_cache()
         cfg['OWA_REFRESH_TOKEN'] = '1.AQ_fake'
         cfg['OWA_TENANT_ID'] = 'tid'
