@@ -173,10 +173,29 @@ When the user says "cut a release" / "new patch version" / "ship it":
    launchd the moment they hit disk - you do not need to reinstall
    pipx after editing `scripts/scrape_edge.py` or any Python
    module. The brew copy is what end users get.
+9. Publish the sdist + wheel to PyPI. Build with the venv's `build`
+   module and upload with `uv publish`, which reads the API token
+   from `UV_PUBLISH_TOKEN` (kept in `./.env` at the repo root - do
+   NOT commit it; `.gitignore` already excludes it). Use `uv`
+   specifically; the system `twine` is missing deps on this machine
+   and falls over on `twine check`.
+   ```
+   rm -rf dist build
+   /Users/damsleth/.local/pipx/venvs/owa-piggy/bin/python3 -m build
+   /Users/damsleth/.local/pipx/venvs/owa-piggy/bin/python3 -m twine check dist/*
+   set -a && . ./.env && set +a && uv publish dist/owa_piggy-X.Y.Z*
+   ```
+   PyPI's JSON index (`/pypi/owa-piggy/json`) lags by minutes after
+   upload - if `uv publish` reports "File already exists" on a
+   retry but `pypi.org/pypi/owa-piggy/X.Y.Z/json` returns 200, the
+   upload actually succeeded and the index is just stale. Don't
+   re-tag or re-build to "fix" it.
 
 If any step fails midway (tag push rejected, sha mismatch, tap push
-rejected), stop and surface the error - do not try to "fix" a
-published tag by force-pushing.
+rejected, PyPI 4xx that isn't "File already exists"), stop and
+surface the error - do not try to "fix" a published tag by
+force-pushing, and never bump the patch version a second time to
+work around an already-published file.
 
 ## What NOT to do
 
