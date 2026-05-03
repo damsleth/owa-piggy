@@ -10,7 +10,7 @@ import io
 import os
 import subprocess
 import sys
-import time as _time
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -247,7 +247,7 @@ def do_debug(alias, audience=None, scope=None):
     if cfg_path.exists():
         st = cfg_path.stat()
         mode = oct(st.st_mode & 0o777)
-        age_min = int((_time.time() - st.st_mtime) / 60)
+        age_min = int((time.time() - st.st_mtime) / 60)
         row('ok', 'present', f'perms {mode}, modified {age_min}min ago')
     else:
         row('no', 'missing')
@@ -286,7 +286,7 @@ def do_debug(alias, audience=None, scope=None):
                     scp = payload.get('scp', payload.get('roles', '?'))
                     exp = payload.get('exp', 0)
                     iat = payload.get('iat', 0)
-                    now = _time.time()
+                    now = time.time()
                     row('..', 'access token aud', str(aud))
                     if isinstance(scp, str) and len(scp) > 80:
                         # OWA scopes are legion (~100 space-separated entries).
@@ -298,7 +298,7 @@ def do_debug(alias, audience=None, scope=None):
                     else:
                         row('..', 'access token scp', str(scp))
                     row('..', 'access token exp',
-                        f'in {int((exp-now)/60)} min ({_time.strftime("%H:%M:%S", _time.localtime(exp))})')
+                        f'in {int((exp-now)/60)} min ({time.strftime("%H:%M:%S", time.localtime(exp))})')
                     row('..', 'access token iat',
                         f'{int((now-iat)/60)} min ago')
                 except Exception as e:
@@ -318,7 +318,7 @@ def do_debug(alias, audience=None, scope=None):
     # --- Launchd agent ---
     label = _launchd_label(alias)
     print(f'\nLaunchd refresh agent ({label}):')
-    plist_path = Path.home() / 'Library' / 'LaunchAgents' / f'{label}.plist'
+    plist_path = _launchd_plist_path(alias)
     row('ok' if plist_path.exists() else 'no', 'plist file', str(plist_path))
 
     uid = os.getuid()

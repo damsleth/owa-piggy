@@ -66,6 +66,56 @@ def iso_utc_now():
     return time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
 
 
+# --- Shared low-level helpers ------------------------------------------
+
+def _iter_kv(text):
+    """Yield (key, value) pairs from KEY=value lines.
+
+    Strips empty lines, comments (#-prefix), and surrounding double or
+    single quotes around the value. Caller filters by key name. Used by
+    every config parser in this module so the line-shape rules live in
+    one place.
+    """
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith('#') or '=' not in line:
+            continue
+        k, _, v = line.partition('=')
+        yield k.strip(), v.strip().strip('"').strip("'")
+
+
+def atomic_write(path, payload, *, mode=0o600):
+    """Atomically replace `path` with `payload` (str), chmod 0o<mode>.
+
+    Refresh tokens rotate on every successful exchange, so a partial
+    write here would corrupt the only live token and force the user to
+    reseed from the browser. Write to a sibling temp file, fsync, chmod,
+    then rename - rename within a filesystem is atomic on POSIX, so
+    either the old or the new file is visible, never a truncated mix.
+    Perms are applied before the file holds any payload so a secret
+    never sits at world-readable mode even briefly.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd, tmp_path = tempfile.mkstemp(
+        prefix='.' + path.name + '.', suffix='.tmp', dir=str(path.parent),
+    )
+    tmp = Path(tmp_path)
+    try:
+        os.chmod(tmp, mode)
+        with os.fdopen(fd, 'w') as f:
+            f.write(payload)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            tmp.unlink()
+        except FileNotFoundError:
+            pass
+        raise
+
+
 # --- Profile paths -----------------------------------------------------
 # Functions (not constants) because ROOT_DIR is mutable; deriving at call
 # time means tests that monkeypatch ROOT_DIR get the right paths without
@@ -135,13 +185,7 @@ def load_profiles_conf():
     path = profiles_conf_path()
     if not path.exists():
         return out
-    for line in path.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith('#') or '=' not in line:
-            continue
-        k, _, v = line.partition('=')
-        k = k.strip()
-        v = v.strip().strip('"').strip("'")
+    for k, v in _iter_kv(path.read_text()):
         if k == 'OWA_DEFAULT_PROFILE':
             out['OWA_DEFAULT_PROFILE'] = v
         elif k == 'OWA_PROFILES':
@@ -156,8 +200,6 @@ def save_profiles_conf(data):
     OWA_PROFILES is an iterable of alias strings. Aliases are joined
     space-separated on disk to keep parsing trivial.
     """
-    path = profiles_conf_path()
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     default = data.get('OWA_DEFAULT_PROFILE', '') or ''
     profiles = data.get('OWA_PROFILES', []) or []
     if isinstance(profiles, str):
@@ -170,29 +212,11 @@ def save_profiles_conf(data):
         if p and p not in seen:
             seen.add(p)
             uniq.append(p)
-    lines = [
-        f'OWA_DEFAULT_PROFILE="{default}"',
-        f'OWA_PROFILES="{" ".join(uniq)}"',
-    ]
-    payload = '\n'.join(lines) + '\n'
-
-    fd, tmp_path = tempfile.mkstemp(
-        prefix='.profiles.', suffix='.tmp', dir=str(path.parent)
+    payload = (
+        f'OWA_DEFAULT_PROFILE="{default}"\n'
+        f'OWA_PROFILES="{" ".join(uniq)}"\n'
     )
-    tmp = Path(tmp_path)
-    try:
-        os.chmod(tmp, 0o600)
-        with os.fdopen(fd, 'w') as f:
-            f.write(payload)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, path)
-    except Exception:
-        try:
-            tmp.unlink()
-        except FileNotFoundError:
-            pass
-        raise
+    atomic_write(profiles_conf_path(), payload)
 
 
 def ensure_profile_registered(alias, make_default_if_first=True):
@@ -306,17 +330,7 @@ def parse_kv_stream(text):
         # branches on OWA_AUTH_MODE to pick scrape vs. capture.
         'OWA_AUTH_MODE', 'OWA_EMAIL',
     }
-    out = {}
-    for line in text.splitlines():
-        line = line.strip()
-        if not line or line.startswith('#') or '=' not in line:
-            continue
-        k, _, v = line.partition('=')
-        k = k.strip()
-        v = v.strip().strip('"').strip("'")
-        if k in allowed and v:
-            out[k] = v
-    return out
+    return {k: v for k, v in _iter_kv(text) if k in allowed and v}
 
 
 def load_config():
@@ -329,13 +343,9 @@ def load_config():
     config = {}
     file_keys = set()
     if CONFIG_PATH.exists():
-        for line in CONFIG_PATH.read_text().splitlines():
-            line = line.strip()
-            if line and not line.startswith('#') and '=' in line:
-                k, _, v = line.partition('=')
-                k = k.strip()
-                config[k] = v.strip().strip('"').strip("'")
-                file_keys.add(k)
+        for k, v in _iter_kv(CONFIG_PATH.read_text()):
+            config[k] = v
+            file_keys.add(k)
     # Environment overrides file
     for key in ('OWA_REFRESH_TOKEN', 'OWA_TENANT_ID', 'OWA_CLIENT_ID'):
         if key in os.environ:
@@ -356,10 +366,9 @@ def save_config(config):
     rename over the target - rename within a filesystem is atomic on POSIX, so
     either the old or the new file is visible, never a truncated mix.
     """
-    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     lines = []
     if CONFIG_PATH.exists():
-        # Preserve existing lines, update known keys
+        # Preserve existing lines, update known keys in place
         existing_keys = set()
         for line in CONFIG_PATH.read_text().splitlines():
             stripped = line.strip()
@@ -376,22 +385,4 @@ def save_config(config):
     else:
         for k, v in config.items():
             lines.append(f'{k}="{v}"')
-    payload = '\n'.join(lines) + '\n'
-
-    fd, tmp_path = tempfile.mkstemp(
-        prefix='.config.', suffix='.tmp', dir=str(CONFIG_PATH.parent)
-    )
-    tmp = Path(tmp_path)
-    try:
-        os.chmod(tmp, 0o600)  # apply perms before the file holds any secret
-        with os.fdopen(fd, 'w') as f:
-            f.write(payload)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, CONFIG_PATH)
-    except Exception:
-        try:
-            tmp.unlink()
-        except FileNotFoundError:
-            pass
-        raise
+    atomic_write(CONFIG_PATH, '\n'.join(lines) + '\n')

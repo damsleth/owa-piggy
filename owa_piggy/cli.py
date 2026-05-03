@@ -46,11 +46,6 @@ from .scopes import KNOWN_AUDIENCES, resolve_audience
 from .setup import interactive_setup
 from .status import do_debug, do_status, do_status_all
 
-COMMANDS = (
-    'token', 'status', 'debug', 'setup', 'reseed',
-    'decode', 'remaining', 'audiences', 'profiles',
-)
-
 _EPILOG = """\
 one-time setup (two paths):
 
@@ -655,6 +650,11 @@ _DISPATCH = {
     'audiences': _cmd_audiences,
     'profiles': _cmd_profiles,
 }
+
+# Single source of truth for the subcommand list. _inject_default_command
+# resolves this at call time (inside main), so the bottom-of-file location
+# is fine.
+COMMANDS = tuple(_DISPATCH)
 
 
 def main():

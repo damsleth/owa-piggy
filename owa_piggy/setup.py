@@ -93,7 +93,11 @@ def read_input(prompt, secret=False):
         # through a partial read, then trim whitespace.
         cleaned = re.sub(r'\x1b\[[\d;]*[ -/]*[@-~]', '', ''.join(chars))
         return cleaned.strip()
-    except (ImportError, Exception):
+    except ImportError:
+        # No termios on this platform (Windows, etc.). Fall back to
+        # cooked-mode input. Other errors (e.g. termios.error from a
+        # non-tty stdin) propagate so a real failure is not silently
+        # masked as "input got cooked-mode-truncated".
         if secret:
             import getpass
             return getpass.getpass('').strip()
