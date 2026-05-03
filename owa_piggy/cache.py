@@ -15,12 +15,10 @@ test fixtures which monkeypatch the config path get the cache
 redirected into tmp_path automatically.
 """
 import json
-import os
-import tempfile
 import time
-from pathlib import Path
 
 from . import config as _config
+from .config import atomic_write
 
 CACHE_FILENAME = 'cache.json'
 
@@ -86,32 +84,12 @@ def store_token(tenant_id, client_id, scope, access_token, exp):
     Corrupting this file is harmless - the tool will just refetch. But
     write atomically anyway so concurrent `owa-piggy` invocations (which
     happen in shell loops) can't interleave and produce invalid JSON."""
-    path = _cache_path()
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     cache = load_cache()
     cache[_key(tenant_id, client_id, scope)] = {
         'access_token': access_token,
         'exp': int(exp),
     }
-    payload = json.dumps(cache, indent=2) + '\n'
-
-    fd, tmp_path = tempfile.mkstemp(
-        prefix='.cache.', suffix='.tmp', dir=str(path.parent)
-    )
-    tmp = Path(tmp_path)
-    try:
-        os.chmod(tmp, 0o600)
-        with os.fdopen(fd, 'w') as f:
-            f.write(payload)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, path)
-    except Exception:
-        try:
-            tmp.unlink()
-        except FileNotFoundError:
-            pass
-        raise
+    atomic_write(_cache_path(), json.dumps(cache, indent=2) + '\n')
 
 
 def clear_cache():
