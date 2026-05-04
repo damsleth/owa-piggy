@@ -76,14 +76,20 @@ def find_free_port():
         return s.getsockname()[1]
 
 
-def launch_edge(edge_dir, port, *, headless, url, edge_path=None):
+def launch_edge(edge_dir, port, *, headless, url, edge_path=None,
+                offscreen=False):
     """Launch Edge with a per-profile userdata dir + CDP listening on
     `port`. Returns the Popen handle.
 
     Headless uses --headless=new (the Chromium replacement for the old
     --headless=true) so the runtime is closer to a real browser - some
-    SPAs detect the legacy headless and refuse to load. Visible mode
-    parks the window at a sensible size for sign-in interaction."""
+    SPAs detect the legacy headless and refuse to load.
+
+    `offscreen=True` parks the (real) window at -32000,-32000 in non-
+    headless mode so silent reseed fallbacks don't pop a visible window
+    onscreen. Headless is implicitly offscreen. Visible (sign-in) mode
+    is the only one that puts the window where the user can see and
+    interact with it."""
     binary = edge_path or find_edge()
     if not binary:
         raise RuntimeError(
@@ -105,6 +111,8 @@ def launch_edge(edge_dir, port, *, headless, url, edge_path=None):
             '--window-position=-32000,-32000',
             '--window-size=1,1',
         ]
+    elif offscreen:
+        args += ['--window-position=-32000,-32000', '--window-size=1,1']
     else:
         args += ['--window-position=100,100', '--window-size=900,750']
     args.append(url)
@@ -352,6 +360,13 @@ def capture_signin(alias, email, *, timeout=300):
         log(f'awaiting /token response (timeout {timeout}s)...')
         token_response = _capture_token_response(
             session, deadline=deadline, log=log, tick=tick)
+    except (ConnectionError, CdpError, OSError) as e:
+        # User force-closed Edge mid-auth, or the WS dropped for some
+        # other reason. Surface a friendly RuntimeError instead of a raw
+        # WebSocket traceback - the caller already prints a usable error.
+        raise RuntimeError(
+            'Edge closed before sign-in completed (auth interrupted)'
+        ) from e
     finally:
         if session is not None:
             session.close()
@@ -360,21 +375,24 @@ def capture_signin(alias, email, *, timeout=300):
     return _build_config(token_response, email=email, mode='capture')
 
 
-def capture_silent(alias, *, timeout=20):
+def capture_silent(alias, *, timeout=20, headless=None):
     """Headless Edge for scheduled reseed. Returns (status, config_dict):
 
-      ('ok', dict)        success - dict has OWA_REFRESH_TOKEN/OWA_TENANT_ID
-      ('reauth', None)    sidecar session cookies expired; user must
-                          re-run `setup --email` interactively
-      ('error', None)     other failure (no token observed, Edge launch
-                          failed, etc.) - log line written to stderr
+      ('ok', dict)              success - dict has OWA_REFRESH_TOKEN/OWA_TENANT_ID
+      ('reauth', None)          sidecar session cookies expired; user must
+                                re-run `setup --email` interactively
+      ('headless_blocked', None) headless Edge never reached OWA - tenant's
+                                CA/device-compliance probably rejects truly
+                                headless. Caller should retry with
+                                headless=False before giving up.
+      ('error', None)           other failure (no token observed after page
+                                loaded, Edge launch failed, CDP error) - log
+                                line written to stderr
 
-    Default is fully headless. Set OWA_CAPTURE_HEADLESS=0 to fall back
-    to offscreen-but-not-headless when a tenant's CA / device-compliance
-    check rejects truly headless Edge (mirrors OWA_RESEED_HEADLESS for
-    the legacy scrape path). Even in the OWA_CAPTURE_HEADLESS=0 mode no
-    onscreen window appears - the window is parked at -32000,-32000 -
-    so launchd users still don't get a flashing browser.
+    `headless=None` reads OWA_CAPTURE_HEADLESS (default headless). Pass
+    headless=False to force the offscreen-but-not-headless mode. Even in
+    the offscreen mode no onscreen window appears - the window is parked
+    at -32000,-32000 - so launchd users still don't get a flashing browser.
     """
     log = _logger(f'capture/silent/{alias}')
     tick = _ticker(alias)
@@ -382,11 +400,16 @@ def capture_silent(alias, *, timeout=20):
     if not edge_dir.is_dir():
         log(f'no Edge profile dir at {edge_dir}; cannot reseed silently')
         return 'reauth', None
-    headless = _capture_headless_default()
+    if headless is None:
+        headless = _capture_headless_default()
     port = find_free_port()
     log(f'launching Edge {"headless" if headless else "offscreen"} on port {port}')
     try:
-        proc = launch_edge(edge_dir, port, headless=headless, url=OWA_URL)
+        # offscreen=True keeps the non-headless fallback parked at
+        # -32000,-32000 so the user doesn't see a window pop onscreen
+        # and assume it's interactive - capture_silent never is.
+        proc = launch_edge(edge_dir, port, headless=headless, url=OWA_URL,
+                           offscreen=True)
     except RuntimeError as e:
         print(f'ERROR: {e}', file=sys.stderr)
         return 'error', None
@@ -420,16 +443,20 @@ def capture_silent(alias, *, timeout=20):
                 break
             time.sleep(0.3)
         else:
-            # Hostname never populated - headless Edge is stuck on a blank
-            # document. Conditional Access / device compliance commonly
-            # blocks headless this way; the SPA shell never loads so MSAL
-            # can't even decide whether a reauth is needed.
-            log(f'post-load host stayed empty after 7s; headless likely blocked')
-            print(f'[{alias}] headless Edge never reached OWA (hostname '
-                  f'stayed blank). Tenant is likely blocking headless via '
-                  f'Conditional Access. Try OWA_CAPTURE_HEADLESS=0.',
-                  file=sys.stderr)
-            return 'error', None
+            # Hostname never populated - Edge is stuck on a blank document.
+            # In headless mode this is almost always Conditional Access /
+            # device compliance refusing headless; the SPA shell never
+            # loads so MSAL can't even decide whether a reauth is needed.
+            # Surface a distinct status so reseed.py can auto-fall-back to
+            # non-headless before bothering the user.
+            log(f'post-load host stayed empty after 7s')
+            if headless:
+                return 'headless_blocked', None
+            # Non-headless and still no navigation: cookies are almost
+            # certainly expired (AAD redirected to login but the page
+            # hadn't resolved yet, or session was rejected outright).
+            # Silent capture can't do MFA - kick the user to setup.
+            return 'reauth', None
 
         # Wipe cached access tokens so MSAL has to round-trip /token.
         # The RT and idToken entries are kept so MSAL knows who the
