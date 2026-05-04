@@ -360,7 +360,7 @@ def capture_signin(alias, email, *, timeout=300):
     return _build_config(token_response, email=email, mode='capture')
 
 
-def capture_silent(alias, *, timeout=30):
+def capture_silent(alias, *, timeout=20):
     """Headless Edge for scheduled reseed. Returns (status, config_dict):
 
       ('ok', dict)        success - dict has OWA_REFRESH_TOKEN/OWA_TENANT_ID
@@ -397,20 +397,39 @@ def capture_silent(alias, *, timeout=30):
         session.call('Page.enable', {})
         session.call('Network.enable', {})
 
-        # Give MSAL a moment to hydrate from localStorage and decide
-        # whether to redirect to login. 1.5s is empirically enough on a
-        # warm cache; the tighter timeout below catches stalls anyway.
-        time.sleep(1.5)
-        loc = session.call('Runtime.evaluate', {
-            'expression': 'location.hostname',
-            'returnByValue': True,
-        })
-        host = (loc.get('result', {}) or {}).get('result', {}).get('value', '')
-        log(f'post-load host: {host}')
-        if (host.startswith('login.')
-                or host.endswith('.b2clogin.com')
-                or host == 'account.microsoft.com'):
-            return 'reauth', None
+        # Poll location.hostname while Edge navigates. The page often goes
+        # about:blank -> outlook.cloud.microsoft -> (maybe) login.* over a
+        # few hundred ms; sampling once is racy and misses login redirects
+        # that resolve a hair after the sample, leaving us to time out on
+        # the /token wait instead of returning a clean 'reauth'.
+        host = ''
+        host_deadline = time.monotonic() + 7.0
+        while time.monotonic() < host_deadline:
+            loc = session.call('Runtime.evaluate', {
+                'expression': 'location.hostname',
+                'returnByValue': True,
+            })
+            host = (loc.get('result', {}) or {}).get('result', {}).get('value', '')
+            if host.startswith('login.') \
+                    or host.endswith('.b2clogin.com') \
+                    or host == 'account.microsoft.com':
+                log(f'post-load host: {host} (reauth required)')
+                return 'reauth', None
+            if host and host != 'about:blank':
+                log(f'post-load host: {host}')
+                break
+            time.sleep(0.3)
+        else:
+            # Hostname never populated - headless Edge is stuck on a blank
+            # document. Conditional Access / device compliance commonly
+            # blocks headless this way; the SPA shell never loads so MSAL
+            # can't even decide whether a reauth is needed.
+            log(f'post-load host stayed empty after 7s; headless likely blocked')
+            print(f'[{alias}] headless Edge never reached OWA (hostname '
+                  f'stayed blank). Tenant is likely blocking headless via '
+                  f'Conditional Access. Try OWA_CAPTURE_HEADLESS=0.',
+                  file=sys.stderr)
+            return 'error', None
 
         # Wipe cached access tokens so MSAL has to round-trip /token.
         # The RT and idToken entries are kept so MSAL knows who the

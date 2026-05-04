@@ -117,9 +117,13 @@ def _do_reseed_capture(alias, config):
               file=sys.stderr)
         return 1
     if status != 'ok' or not captured:
-        print(f'ERROR: [{alias}] capture-based reseed failed. '
-              f'Set OWA_CAPTURE_DEBUG=1 and re-run for diagnostics.',
-              file=sys.stderr)
+        if os.environ.get('OWA_CAPTURE_DEBUG'):
+            print(f'ERROR: [{alias}] capture-based reseed failed.',
+                  file=sys.stderr)
+        else:
+            print(f'ERROR: [{alias}] capture-based reseed failed. '
+                  f'Set OWA_CAPTURE_DEBUG=1 and re-run for diagnostics.',
+                  file=sys.stderr)
         return 1
 
     # Merge captured fields into the existing config (preserves OWA_EMAIL,
