@@ -107,15 +107,43 @@ def _do_reseed_capture(alias, config):
 
     print(f'[{alias}] reseed via network capture (OWA_AUTH_MODE=capture)',
           file=sys.stderr)
+    is_tty = sys.stdin.isatty()
     status, captured = capture.capture_silent(alias)
-    if status == 'reauth':
+    if status == 'headless_blocked' and not is_tty:
+        # No human present (launchd) - try the offscreen-non-headless
+        # silent path before giving up, since we can't fall back to
+        # interactive sign-in unattended. The window stays parked at
+        # -32000,-32000 so the user's display stays clean.
+        print(f'[{alias}] headless Edge blocked by tenant; retrying '
+              f'non-headless (offscreen)...', file=sys.stderr)
+        status, captured = capture.capture_silent(alias, headless=False)
+    if status == 'reauth' or (status == 'headless_blocked' and is_tty):
+        # 'headless_blocked' on a TTY skips straight here - the
+        # offscreen-silent retry leaves stale in-flight auth state in
+        # the user-data-dir which then trips AAD error 500121 when
+        # capture_signin reuses the same profile dir.
         email = config.get('OWA_EMAIL', '')
-        hint = f' --email {email}' if email else ' --email <addr>'
-        print(f'ERROR: [{alias}] sidecar session expired; interactive '
-              f'sign-in needed.', file=sys.stderr)
-        print(f'       Run: owa-piggy setup --profile {alias}{hint}',
-              file=sys.stderr)
-        return 1
+        if email and is_tty:
+            print(f'[{alias}] sidecar cookies expired - opening Edge for '
+                  f'interactive sign-in (complete MFA in the window)...',
+                  file=sys.stderr)
+            try:
+                captured = capture.capture_signin(alias, email, timeout=300)
+                status = 'ok'
+            except (RuntimeError, TimeoutError, ConnectionError,
+                    KeyboardInterrupt) as e:
+                kind = 'cancelled' if isinstance(e, KeyboardInterrupt) \
+                    else 'failed'
+                print(f'ERROR: [{alias}] interactive sign-in {kind}: {e}',
+                      file=sys.stderr)
+                return 1
+        else:
+            hint = f' --email {email}' if email else ' --email <addr>'
+            print(f'ERROR: [{alias}] sidecar session expired; interactive '
+                  f'sign-in needed.', file=sys.stderr)
+            print(f'       Run: owa-piggy setup --profile {alias}{hint}',
+                  file=sys.stderr)
+            return 1
     if status != 'ok' or not captured:
         if os.environ.get('OWA_CAPTURE_DEBUG'):
             print(f'ERROR: [{alias}] capture-based reseed failed.',
