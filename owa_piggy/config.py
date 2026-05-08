@@ -332,7 +332,7 @@ def parse_kv_stream(text):
         # Per-profile audience preference. Env var still wins; this is
         # picked up by resolve_audience as a tier between env and the
         # built-in graph default.
-        'OWA_DEFAULT_AUDIENCE',
+        'OWA_DEFAULT_AUDIENCE', 'OWA_RT_ISSUED_AT',
     }
     return {k: v for k, v in _iter_kv(text) if k in allowed and v}
 

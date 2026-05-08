@@ -25,6 +25,7 @@ from .cache import (
     store_token,
 )
 from .config import (
+    profile_config_path,
     list_profiles,
     load_config,
     load_profiles_conf,
@@ -39,7 +40,7 @@ from .oauth import CLIENT_ID, exchange_token
 from .profiles import delete_profile, set_default_profile
 from .reseed import do_reseed, do_reseed_all
 from .scopes import KNOWN_AUDIENCES, resolve_audience
-from .status import do_debug, do_status, do_status_all
+from .status import do_debug, do_status, do_status_all, status_all_report, status_report
 
 _EPILOG = """\
 one-time setup (two paths):
@@ -152,6 +153,8 @@ def _build_parser():
     p_status = sub.add_parser(
         'status', help='compact ISO8601 health summary (all profiles if --profile omitted)')
     _add_common_options(p_status)
+    p_status.add_argument('--json', action='store_true',
+                          help='print token health as JSON without token values')
 
     p_debug = sub.add_parser(
         'debug', help='dump full setup diagnostics for one profile')
@@ -187,8 +190,15 @@ def _build_parser():
     sub.add_parser(
         'audiences', help='list all known FOCI-accessible audiences')
 
+    p_version = sub.add_parser(
+        'version', help='print version information')
+    p_version.add_argument('--json', action='store_true',
+                           help='print version information as JSON')
+
     p_profiles = sub.add_parser(
         'profiles', help='list / manage profiles')
+    p_profiles.add_argument('--json', action='store_true',
+                            help='print profiles as JSON')
     profiles_sub = p_profiles.add_subparsers(
         dest='profiles_command', metavar='<subcommand>')
 
@@ -424,11 +434,18 @@ def _cmd_status(args):
     # profiles / no default) which would otherwise make the informational
     # path unusable on the very installs where it is most useful.
     if not args.profile and not os.environ.get('OWA_PROFILE', '').strip():
+        if getattr(args, 'json', False):
+            print(json.dumps(status_all_report(audience=args.audience, scope=args.scope), indent=2))
+            return 0
         return do_status_all(audience=args.audience, scope=args.scope)
 
     alias, rc = _resolve_and_activate(args)
     if rc:
         return rc
+    if getattr(args, 'json', False):
+        report = status_report(alias, audience=args.audience, scope=args.scope)
+        print(json.dumps(report, indent=2))
+        return 0 if report.get('state') in ('ok', 'warn') else 1
     return do_status(alias, audience=args.audience, scope=args.scope)
 
 
@@ -447,14 +464,43 @@ def _cmd_audiences(args):
     return 0
 
 
+def _cmd_version(args):
+    if getattr(args, 'json', False):
+        print(json.dumps({'tool': 'owa-piggy', 'version': __version__}, indent=2))
+    else:
+        print(f'owa-piggy {__version__}')
+    return 0
+
+
 def _cmd_profiles(args):
     sub = getattr(args, 'profiles_command', None)
     if sub == 'set-default':
         return _do_profiles_set_default(args.alias)
     if sub == 'delete':
         return _do_profiles_delete(args.alias, force=args.force)
+    if getattr(args, 'json', False):
+        print(json.dumps(_profiles_report(), indent=2))
+        return 0
     # Bare `owa-piggy profiles` - list (with interactive picker on TTY).
     return _do_profiles_list()
+
+
+def _profiles_report():
+    reg = load_profiles_conf()
+    enabled = set(reg['OWA_PROFILES'])
+    default = reg['OWA_DEFAULT_PROFILE']
+    return {
+        'default': default or None,
+        'profiles': [
+            {
+                'alias': alias,
+                'default': alias == default,
+                'registered': alias in enabled,
+                'has_config': profile_config_path(alias).is_file(),
+            }
+            for alias in list_profiles()
+        ],
+    }
 
 
 def _do_profiles_list():
@@ -558,6 +604,7 @@ _DISPATCH = {
     'decode': _cmd_decode,
     'remaining': _cmd_remaining,
     'audiences': _cmd_audiences,
+    'version': _cmd_version,
     'profiles': _cmd_profiles,
 }
 

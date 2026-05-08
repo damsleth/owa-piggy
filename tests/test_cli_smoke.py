@@ -5,6 +5,7 @@ exchange_token is monkeypatched to return a synthetic JWT. No real
 tokens, no config writes, no HTTP.
 """
 import io
+import json
 import sys
 
 import pytest
@@ -38,6 +39,16 @@ def test_version_prints_version(monkeypatch, capsys):
     assert excinfo.value.code == 0
     out = capsys.readouterr().out
     assert f'owa-piggy {__version__}' in out
+
+
+def test_version_json(monkeypatch, capsys):
+    from owa_piggy import __version__
+    rc = _run(monkeypatch, ['version', '--json'])
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == {
+        'tool': 'owa-piggy',
+        'version': __version__,
+    }
 
 
 def test_audiences_lists_all_known(monkeypatch, capsys):
@@ -584,6 +595,25 @@ def test_profiles_lists_registered(monkeypatch, capsys, tmp_config, clean_env):
     assert '*' in out  # default marker
 
 
+def test_profiles_json_lists_registered(monkeypatch, capsys, tmp_config, clean_env):
+    from owa_piggy.config import ensure_profile_registered, profile_dir, save_config, set_active_profile
+    profile_dir('work').mkdir(parents=True, exist_ok=True)
+    profile_dir('personal').mkdir(parents=True, exist_ok=True)
+    ensure_profile_registered('work')
+    ensure_profile_registered('personal')
+    set_active_profile('work')
+    save_config({'OWA_REFRESH_TOKEN': '1.AQ_fake', 'OWA_TENANT_ID': 'tid'})
+
+    rc = _run(monkeypatch, ['profiles', '--json'])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['default'] == 'work'
+    rows = {row['alias']: row for row in payload['profiles']}
+    assert rows['work']['default'] is True
+    assert rows['work']['has_config'] is True
+    assert rows['personal']['has_config'] is False
+
+
 def test_audiences_with_multiple_profiles_no_default(monkeypatch, capsys,
                                                       tmp_config, clean_env):
     """`audiences` is purely informational and must work on installs
@@ -638,6 +668,51 @@ def test_status_no_profiles_configured(monkeypatch, capsys, tmp_config,
     assert rc != 0
     err = capsys.readouterr().err
     assert 'no profiles configured' in err
+
+
+def test_status_json_no_profiles(monkeypatch, capsys, tmp_config, clean_env):
+    rc = _run(monkeypatch, ['status', '--json'])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {'profiles': [], 'summary': {'ok': 0, 'warn': 0, 'fail': 0}}
+
+
+def test_status_json_single_profile_redacts_tokens(
+    monkeypatch, capsys, tmp_config, clean_env, make_jwt
+):
+    from owa_piggy.config import save_config
+
+    save_config({
+        'OWA_REFRESH_TOKEN': '1.AQ_fake',
+        'OWA_TENANT_ID': 'tid',
+        'OWA_RT_ISSUED_AT': '2026-05-08T08:00:00Z',
+    })
+    token = make_jwt({
+        'aud': 'https://graph.microsoft.com',
+        'exp': 9_999_999_999,
+        'scp': 'User.Read Mail.Read',
+    })
+    monkeypatch.setattr(cli_mod, 'exchange_token', lambda *a, **k: {
+        'access_token': token,
+        'expires_in': 3600,
+        'refresh_token': '1.AQ_rotated',
+    })
+    monkeypatch.setattr('owa_piggy.status.exchange_token', lambda *a, **k: {
+        'access_token': token,
+        'expires_in': 3600,
+        'refresh_token': '1.AQ_rotated',
+    })
+
+    rc = _run(monkeypatch, ['status', '--profile', 'default', '--json'])
+    assert rc == 0
+    out = capsys.readouterr().out
+    payload = json.loads(out)
+    assert payload['profile'] == 'default'
+    assert payload['state'] == 'ok'
+    assert payload['access_token']['present'] is True
+    assert payload['refresh_token']['present'] is True
+    assert '1.AQ' not in out
+    assert token not in out
 
 
 def test_cli_rejects_traversal_profile(monkeypatch, capsys, tmp_config,
