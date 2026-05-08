@@ -82,3 +82,45 @@ def test_known_audiences_has_graph_default():
     url, desc = KNOWN_AUDIENCES['graph']
     assert url == DEFAULT_AUDIENCE
     assert 'default' in desc.lower()
+
+
+# --- profile_default tier ---------------------------------------------
+
+
+def test_profile_default_short_name_used_when_no_flag_or_env(clean_env):
+    """Per-profile OWA_DEFAULT_AUDIENCE picks the audience when the
+    caller didn't pass --audience/--scope and the env override is unset."""
+    scope, err = resolve_audience(profile_default='outlook')
+    assert err == ''
+    assert scope.startswith('https://outlook.office.com/.default ')
+
+
+def test_profile_default_full_url_accepted(clean_env):
+    scope, err = resolve_audience(profile_default='https://example.invalid/')
+    assert err == ''
+    assert scope.startswith('https://example.invalid/.default ')
+
+
+def test_env_beats_profile_default(monkeypatch, clean_env):
+    """Env OWA_DEFAULT_AUDIENCE wins over the per-profile setting so a
+    one-shot override stays predictable across all profiles."""
+    monkeypatch.setenv('OWA_DEFAULT_AUDIENCE', 'teams')
+    scope, err = resolve_audience(profile_default='outlook')
+    assert err == ''
+    assert scope.startswith('https://api.spaces.skype.com/.default ')
+
+
+def test_audience_flag_beats_profile_default(clean_env):
+    """An explicit --audience always wins over both env and per-profile."""
+    scope, err = resolve_audience(audience='graph', profile_default='outlook')
+    assert err == ''
+    assert scope.startswith('https://graph.microsoft.com/.default ')
+
+
+def test_malformed_profile_default_falls_back(clean_env, capsys):
+    scope, err = resolve_audience(profile_default='not-a-name-not-a-url')
+    assert err == ''
+    assert scope.startswith(f'{DEFAULT_AUDIENCE}/.default ')
+    captured = capsys.readouterr()
+    assert 'WARNING' in captured.err
+    assert 'profile' in captured.err

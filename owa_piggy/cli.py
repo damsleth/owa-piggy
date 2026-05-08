@@ -14,7 +14,6 @@ not. The subsequent argparse pass sees a consistent shape either way.
 import argparse
 import json
 import os
-import shutil
 import sys
 import time
 
@@ -26,24 +25,20 @@ from .cache import (
     store_token,
 )
 from .config import (
-    ensure_profile_registered,
     list_profiles,
     load_config,
     load_profiles_conf,
-    profile_dir,
     resolve_profile,
     save_config,
-    save_profiles_conf,
     set_active_profile,
-    unregister_profile,
     validate_alias,
 )
 from .jwt import decode_jwt, decode_jwt_segment, token_minutes_remaining
 from .migration import migrate_if_needed
 from .oauth import CLIENT_ID, exchange_token
+from .profiles import delete_profile, set_default_profile
 from .reseed import do_reseed, do_reseed_all
 from .scopes import KNOWN_AUDIENCES, resolve_audience
-from .setup import interactive_setup
 from .status import do_debug, do_status, do_status_all
 
 _EPILOG = """\
@@ -273,15 +268,18 @@ def _mint_and_emit(args, *, mode):
     if rc:
         return rc
 
-    scope, err = resolve_audience(args.audience, args.scope)
-    if err:
-        print(f'ERROR: {err}', file=sys.stderr)
-        return 1
-
     config, persist = load_config()
     refresh_token = config.get('OWA_REFRESH_TOKEN', '').strip()
     tenant_id = config.get('OWA_TENANT_ID', '').strip()
     client_id = config.get('OWA_CLIENT_ID', CLIENT_ID).strip()
+
+    scope, err = resolve_audience(
+        args.audience, args.scope,
+        profile_default=config.get('OWA_DEFAULT_AUDIENCE', '').strip(),
+    )
+    if err:
+        print(f'ERROR: {err}', file=sys.stderr)
+        return 1
 
     # Access-token cache short-circuit. Modes that only need the AT (or
     # something derivable from it locally) can be served from the
@@ -388,22 +386,16 @@ def _emit(access_token, mode, *, full_response=None, cache_hit_exp=None):
 
 
 def _cmd_setup(args):
-    # The user is explicitly re-identifying; any cached AT belongs to
-    # the pre-setup identity and must not leak past this point.
     alias, rc = _resolve_and_activate(args, allow_missing=True)
     if rc:
         return rc
-    clear_cache()
-    config, _ = load_config()
-    if not interactive_setup(config, alias, email=getattr(args, 'email', None)):
-        return 1
-    # Register the profile in profiles.conf so `profiles` sees it and
-    # resolve_profile can find it. If this is the first profile ever
-    # created, make it the default.
-    ensure_profile_registered(alias, make_default_if_first=True)
-    print(f'\n\tOWA-PIGGY 🐽  CONFIGURED [{alias}]', file=sys.stderr)
-    print('\n\tENJOY YOUR APP-REG-FREE SCOPES\n', file=sys.stderr)
-    return 0
+    from .profiles import create_profile
+    return create_profile(
+        alias,
+        email=getattr(args, 'email', None),
+        audience=None,
+        full_banner=True,
+    )
 
 
 def _cmd_reseed(args):
@@ -468,126 +460,57 @@ def _cmd_profiles(args):
 def _do_profiles_list():
     """Print configured profiles, marking the default with '*'.
 
-    On an interactive stdout+stdin we draw a simple up/down picker so
-    the user can change the default profile without memorising
-    `profiles set-default`. Non-TTY invocations (pipes, redirects, CI)
-    fall through to the plain printed list so scripts stay parseable.
+    On an interactive stdout+stdin we hand off to the multi-key TUI in
+    `profile_tui.run_picker` so the user can manage profiles without
+    memorising the subcommand surface. Non-TTY invocations (pipes,
+    redirects, CI) fall through to the plain printed list so scripts
+    stay parseable.
+
+    Empty-state: on a TTY, offer to walk through creating the first
+    profile interactively. Non-TTY just prints the hint and exits 0.
     """
+    from . import profile_tui
     profiles = list_profiles()
+    is_tty = sys.stdin.isatty() and sys.stdout.isatty()
+
     if not profiles:
-        print('no profiles configured. Run: owa-piggy setup --profile <alias>')
-        return 0
+        if not is_tty:
+            print('no profiles configured. Run: owa-piggy setup --profile <alias>')
+            return 0
+        return profile_tui.empty_state_setup_flow()
+
+    if is_tty:
+        return profile_tui.run_picker()
+
     reg = load_profiles_conf()
     default = reg['OWA_DEFAULT_PROFILE']
-    if sys.stdin.isatty() and sys.stdout.isatty():
-        return _interactive_profile_picker(profiles, default)
+    enabled = set(reg['OWA_PROFILES'])
     for alias in profiles:
-        marker = ' *' if alias == default else '  '
-        print(f'{marker} {alias}')
+        marker = '*' if alias == default else ('x' if alias in enabled else ' ')
+        print(f' {marker} {alias}')
     return 0
 
 
-def _interactive_profile_picker(profiles, default):
-    """Draw an up/down picker. Enter sets the highlighted profile as
-    default; q/Esc quits without changing anything. '*' marks the current
-    registry default; '>' marks the cursor.
 
-    Falls back to the plain list if termios is unavailable (non-POSIX)
-    or any I/O step raises before the first key read.
+
+def _interactive_profile_picker():
+    """Backwards-compatible thin wrapper around `profile_tui.run_picker`.
+
+    Kept on cli.py because tests reach for it directly. The picker
+    itself lives in profile_tui so the registry mutation, terminal
+    rendering, and key dispatch can be evolved without making cli.py
+    grow.
     """
-    try:
-        import termios
-        import tty
-    except ImportError:
-        for alias in profiles:
-            marker = ' *' if alias == default else '  '
-            print(f'{marker} {alias}')
-        return 0
-
-    idx = profiles.index(default) if default in profiles else 0
-    fd = sys.stdin.fileno()
-    old = termios.tcgetattr(fd)
-
-    def draw(first=False):
-        # Rewind over the previous frame (header + one line per profile +
-        # footer). On first draw there is nothing to clear.
-        if not first:
-            sys.stdout.write(f'\x1b[{len(profiles) + 2}A')
-        sys.stdout.write('profiles (enter = set default, q = quit):\r\n')
-        for i, alias in enumerate(profiles):
-            star = '*' if alias == default else ' '
-            cursor = '>' if i == idx else ' '
-            # \x1b[K clears to end-of-line so the previous frame's trailing
-            # characters do not bleed through when lines differ in length.
-            sys.stdout.write(f'{cursor} {star} {alias}\x1b[K\r\n')
-        sys.stdout.write('\x1b[K\r\n')
-        sys.stdout.flush()
-
-    try:
-        tty.setraw(fd)
-        draw(first=True)
-        while True:
-            ch = sys.stdin.read(1)
-            if ch == '\x1b':
-                seq = sys.stdin.read(1)
-                if seq == '[':
-                    arrow = sys.stdin.read(1)
-                    if arrow == 'A' and idx > 0:
-                        idx -= 1
-                    elif arrow == 'B' and idx < len(profiles) - 1:
-                        idx += 1
-                    draw()
-                    continue
-                # Bare ESC = quit.
-                return 0
-            if ch in ('q', 'Q'):
-                return 0
-            if ch == '\x03':
-                raise KeyboardInterrupt
-            if ch in ('\r', '\n'):
-                break
-            if ch == 'k' and idx > 0:
-                idx -= 1
-                draw()
-            elif ch == 'j' and idx < len(profiles) - 1:
-                idx += 1
-                draw()
-    finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, old)
-
-    chosen = profiles[idx]
-    if chosen == default:
-        print(f'{chosen!r} is already the default; no change.')
-        return 0
-    reg = load_profiles_conf()
-    reg['OWA_DEFAULT_PROFILE'] = chosen
-    if chosen not in reg['OWA_PROFILES']:
-        reg['OWA_PROFILES'].append(chosen)
-    save_profiles_conf(reg)
-    print(f'default profile set to {chosen!r}')
-    return 0
+    from . import profile_tui
+    return profile_tui.run_picker()
 
 
 def _do_profiles_set_default(alias):
     """Mark `alias` as the default profile. Profile must exist on disk."""
-    ok, verr = validate_alias(alias)
+    ok, err = set_default_profile(alias)
     if not ok:
-        print(f'ERROR: {verr}', file=sys.stderr)
+        print(f'ERROR: {err}', file=sys.stderr)
         return 1
-    if alias not in list_profiles():
-        print(
-            f'ERROR: profile {alias!r} not found. Available: '
-            f'{", ".join(list_profiles()) or "(none)"}',
-            file=sys.stderr,
-        )
-        return 1
-    reg = load_profiles_conf()
-    reg['OWA_DEFAULT_PROFILE'] = alias
-    # Re-register so the profile appears in OWA_PROFILES even if this is
-    # a pre-registry profile (shouldn't happen post-migration but harmless).
-    if alias not in reg['OWA_PROFILES']:
-        reg['OWA_PROFILES'].append(alias)
-    save_profiles_conf(reg)
     print(f'default profile set to {alias!r}')
     return 0
 
@@ -614,28 +537,15 @@ def _do_profiles_delete(alias, force=False):
             file=sys.stderr,
         )
         return 1
-    try:
-        unregister_profile(alias)
-    except OSError as e:
-        print(f'ERROR: failed to update profile registry for {alias!r}: {e}',
-              file=sys.stderr)
-        return 1
-
-    target = profile_dir(alias)
-    try:
-        shutil.rmtree(target)
-    except OSError as e:
-        print(f'ERROR: profile {alias!r} was unregistered but failed to remove '
-              f'{target}: {e}', file=sys.stderr)
+    ok, err = delete_profile(
+        alias,
+        uninstall_launchd=True,
+        promote_default=True,
+    )
+    if not ok:
+        print(f'ERROR: profile {alias!r}: {err}', file=sys.stderr)
         return 1
     print(f'removed profile {alias!r}.')
-    remaining = list_profiles()
-    if remaining:
-        print(
-            f'  NB: if you had a launchd job for it, drop it with: '
-            f'setup-refresh.sh --uninstall --profile {alias}',
-            file=sys.stderr,
-        )
     return 0
 
 
