@@ -291,7 +291,8 @@ def test_setup_clears_cache(monkeypatch, tmp_config, clean_env, make_jwt):
         cfg['OWA_TENANT_ID'] = 'tid'
         return True
 
-    monkeypatch.setattr(cli_mod, 'interactive_setup', _fake_setup)
+    from owa_piggy import profiles as profiles_mod
+    monkeypatch.setattr(profiles_mod, 'interactive_setup', _fake_setup)
     monkeypatch.setattr(cli_mod, 'exchange_token',
                         lambda *a, **k: {'access_token':
                                          make_jwt({'exp': int(_time.time()) + 3600}),
@@ -679,9 +680,20 @@ def test_interactive_profile_picker_ctrl_c_restores_terminal(monkeypatch):
         def read(self, _n):
             return '\x03'
 
+    from owa_piggy import profile_tui
+
     restored = []
     monkeypatch.setattr(sys, 'stdin', FakeIn())
     monkeypatch.setattr(sys, 'stdout', io.StringIO())
+    # The picker reads profile state from disk on each frame; stub the
+    # lookups so the call doesn't depend on a real ~/.config tree.
+    monkeypatch.setattr(profile_tui, 'list_profiles', lambda: ['work', 'personal'])
+    monkeypatch.setattr(
+        profile_tui,
+        'load_profiles_conf',
+        lambda: {'OWA_DEFAULT_PROFILE': 'work', 'OWA_PROFILES': ['work', 'personal']},
+    )
+    monkeypatch.setattr(profile_tui, 'launchd_is_installed', lambda alias: False)
     monkeypatch.setattr(termios, 'tcgetattr', lambda fd: ['old-state'])
     monkeypatch.setattr(tty, 'setraw', lambda fd: None)
     monkeypatch.setattr(
@@ -691,7 +703,7 @@ def test_interactive_profile_picker_ctrl_c_restores_terminal(monkeypatch):
     )
 
     with pytest.raises(KeyboardInterrupt):
-        cli_mod._interactive_profile_picker(['work', 'personal'], 'work')
+        cli_mod._interactive_profile_picker()
 
     assert restored == [(0, termios.TCSADRAIN, ['old-state'])]
 
@@ -700,18 +712,19 @@ def test_profiles_delete_preserves_dir_if_registry_update_fails(
     monkeypatch, capsys, tmp_config, clean_env
 ):
     from owa_piggy.config import ensure_profile_registered, profile_dir
+    from owa_piggy import profiles as profiles_mod
 
     target = profile_dir('work')
     target.mkdir(parents=True, exist_ok=True)
     ensure_profile_registered('work')
 
     monkeypatch.setattr(
-        cli_mod,
+        profiles_mod,
         'unregister_profile',
         lambda alias: (_ for _ in ()).throw(OSError('disk full')),
     )
     monkeypatch.setattr(
-        cli_mod.shutil,
+        profiles_mod.shutil,
         'rmtree',
         lambda path: pytest.fail('rmtree must not run when registry update fails'),
     )
@@ -719,20 +732,21 @@ def test_profiles_delete_preserves_dir_if_registry_update_fails(
     rc = cli_mod._do_profiles_delete('work', force=True)
     assert rc == 1
     assert target.exists()
-    assert 'failed to update profile registry' in capsys.readouterr().err
+    assert 'profile registry update failed' in capsys.readouterr().err
 
 
 def test_profiles_delete_unregistered_dir_left_on_disk_if_rmtree_fails(
     monkeypatch, capsys, tmp_config, clean_env
 ):
     from owa_piggy.config import ensure_profile_registered, load_profiles_conf, profile_dir
+    from owa_piggy import profiles as profiles_mod
 
     target = profile_dir('work')
     target.mkdir(parents=True, exist_ok=True)
     ensure_profile_registered('work')
 
     monkeypatch.setattr(
-        cli_mod.shutil,
+        profiles_mod.shutil,
         'rmtree',
         lambda path: (_ for _ in ()).throw(OSError('busy')),
     )

@@ -329,6 +329,10 @@ def parse_kv_stream(text):
         # Set by the network-capture setup path (see capture.py); reseed
         # branches on OWA_AUTH_MODE to pick scrape vs. capture.
         'OWA_AUTH_MODE', 'OWA_EMAIL',
+        # Per-profile audience preference. Env var still wins; this is
+        # picked up by resolve_audience as a tier between env and the
+        # built-in graph default.
+        'OWA_DEFAULT_AUDIENCE',
     }
     return {k: v for k, v in _iter_kv(text) if k in allowed and v}
 
