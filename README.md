@@ -46,16 +46,17 @@ Bare `owa-piggy` is shorthand for `owa-piggy token` - the access token goes to s
 | command                  | what it does                                                          |
 | ------------------------ | --------------------------------------------------------------------- |
 | `token` (default)        | print access token to stdout (default audience: Microsoft Graph)      |
-| `status`                 | compact ISO8601 health summary; all profiles if `--profile` omitted    |
+| `status`                 | compact ISO8601 health summary; all profiles if `--profile` omitted; `--json` emits token health without token values |
 | `debug`                  | full setup diagnostics for one profile                                 |
 | `setup`                  | interactive first-time setup; creates the profile if new              |
 | `reseed`                 | fetch a fresh refresh token headlessly from the Edge sidecar           |
 | `decode`                 | print JWT header and payload of the current access token              |
 | `remaining`              | print minutes remaining on the current access token                   |
 | `audiences`              | list all known FOCI-accessible audiences                              |
-| `profiles`               | list profiles (TTY: interactive picker)                               |
+| `profiles`               | list profiles (TTY: interactive picker); `--json` emits aliases and config presence |
 | `profiles set-default A` | make `A` the default profile                                          |
 | `profiles delete A`      | remove profile `A`'s config + Edge sidecar dir (`--force` to override) |
+| `version`                | print version information; `--json` emits `{"tool": ..., "version": ...}` |
 
 Global options: `--profile <alias>`, `--audience <name>`, `--scope <explicit>`, `--version`, `--help`. Per-command help: `owa-piggy <command> --help`.
 
@@ -68,8 +69,11 @@ owa-piggy --audience teams             # Teams audience
 owa-piggy remaining                    # minutes left on current token
 owa-piggy token --json | jq .scope     # inspect granted scopes
 owa-piggy status                       # compact ISO8601 health summary
+owa-piggy status --json                # machine-readable health, no token values
+owa-piggy profiles --json              # machine-readable profile registry
 owa-piggy debug                        # full setup diagnostics
 owa-piggy --version                    # print version
+owa-piggy version --json               # machine-readable version
 ```
 
 Pipe-friendly - raw token goes to stdout, everything else to stderr:
