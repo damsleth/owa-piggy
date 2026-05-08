@@ -35,6 +35,135 @@ from .reseed import find_reseed_script
 from .scopes import KNOWN_AUDIENCES, resolve_audience
 
 
+def _iso(ts):
+    return datetime.fromtimestamp(ts, tz=timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+
+def _rt_expires_at(config):
+    issued_at = config.get('OWA_RT_ISSUED_AT', '').strip()
+    if not issued_at:
+        return None
+    try:
+        dt = datetime.strptime(issued_at, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    return (dt + timedelta(hours=24)).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+
+def _state(token_ok, minutes_remaining):
+    if not token_ok:
+        return 'fail'
+    if minutes_remaining is not None and minutes_remaining < 10:
+        return 'warn'
+    return 'ok'
+
+
+def status_report(alias, audience=None, scope=None):
+    """Return a token health report for profile <alias> without token values."""
+    _config.set_active_profile(alias)
+    config, persist = load_config()
+    rt = config.get('OWA_REFRESH_TOKEN', '').strip()
+    tid = config.get('OWA_TENANT_ID', '').strip()
+    cid = config.get('OWA_CLIENT_ID', CLIENT_ID).strip()
+    report = {
+        'profile': alias,
+        'state': 'fail',
+        'audience': audience or config.get('OWA_DEFAULT_AUDIENCE', '').strip() or 'graph',
+        'access_token': {
+            'present': False,
+            'expires_at': None,
+            'minutes_remaining': None,
+        },
+        'refresh_token': {
+            'present': bool(rt),
+            'expires_at': _rt_expires_at(config),
+            'minutes_remaining': None,
+        },
+        'hints': [],
+    }
+    if report['refresh_token']['expires_at']:
+        try:
+            exp_dt = datetime.strptime(
+                report['refresh_token']['expires_at'], '%Y-%m-%dT%H:%M:%SZ',
+            ).replace(tzinfo=timezone.utc)
+            report['refresh_token']['minutes_remaining'] = max(
+                0, int((exp_dt - datetime.now(timezone.utc)).total_seconds() / 60),
+            )
+        except ValueError:
+            pass
+
+    if not rt or not tid:
+        if not rt:
+            report['hints'].append(f'run owa-piggy setup --profile {alias}')
+        if not tid:
+            report['hints'].append(f'profile {alias} is missing OWA_TENANT_ID')
+        return report
+    if not (rt.startswith('1.') or rt.startswith('0.')):
+        report['hints'].append('refresh token is not an AAD FOCI token; reseed from Microsoft Edge')
+        return report
+
+    probe_scope, err = resolve_audience(
+        audience,
+        scope,
+        profile_default=config.get('OWA_DEFAULT_AUDIENCE', '').strip(),
+    )
+    if err:
+        report['hints'].append(err)
+        return report
+
+    captured = io.StringIO()
+    stderr_fd = sys.stderr
+    try:
+        sys.stderr = captured
+        result = exchange_token(rt, tid, cid, probe_scope)
+    finally:
+        sys.stderr = stderr_fd
+
+    if not result or not result.get('access_token'):
+        err_line = next((l for l in captured.getvalue().splitlines()
+                         if l.startswith('ERROR: ')), '')
+        report['hints'].append(err_line[len('ERROR: '):] if err_line else 'token exchange failed')
+        return report
+
+    at = result['access_token']
+    try:
+        payload = decode_jwt_segment(at.split('.')[1])
+    except Exception:
+        report['hints'].append('access token decode failed')
+        return report
+
+    exp_ts = int(payload.get('exp', 0))
+    minutes = max(0, int((exp_ts - time.time()) / 60)) if exp_ts else None
+    raw_aud = payload.get('aud', '')
+    aud = raw_aud[0] if isinstance(raw_aud, list) and raw_aud else raw_aud
+    report['audience'] = aud if isinstance(aud, str) and aud else report['audience']
+    report['access_token'] = {
+        'present': True,
+        'expires_at': _iso(exp_ts) if exp_ts else None,
+        'minutes_remaining': minutes,
+    }
+    report['state'] = _state(True, minutes)
+
+    new_rt = result.get('refresh_token')
+    if new_rt and new_rt != rt and persist:
+        config['OWA_REFRESH_TOKEN'] = new_rt
+        save_config(config)
+
+    return report
+
+
+def status_all_report(audience=None, scope=None):
+    profiles = list_profiles()
+    reports = [
+        status_report(alias, audience=audience, scope=scope)
+        for alias in profiles
+    ]
+    summary = {'ok': 0, 'warn': 0, 'fail': 0}
+    for report in reports:
+        summary[report.get('state', 'fail')] = summary.get(report.get('state', 'fail'), 0) + 1
+    return {'profiles': reports, 'summary': summary}
+
+
 def do_status(alias, audience=None, scope=None, multi=False):
     """Compact health summary for profile <alias>. Does a live exchange
     probe to verify the RT actually works (rotates it as a side effect,
