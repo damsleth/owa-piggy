@@ -35,18 +35,20 @@ KNOWN_AUDIENCES = {
 }
 
 
-def resolve_audience(audience=None, scope=None):
+def resolve_audience(audience=None, scope=None, profile_default=None):
     """Compute the scope string to request, honoring precedence:
       1. `scope`                 - explicit --scope value, returned as-is
       2. `audience`              - --audience short name (must be in KNOWN_AUDIENCES)
-      3. OWA_DEFAULT_AUDIENCE    - short name or full https URL
-      4. DEFAULT_AUDIENCE        - graph
+      3. OWA_DEFAULT_AUDIENCE    - short name or full https URL (env)
+      4. `profile_default`       - per-profile config OWA_DEFAULT_AUDIENCE
+      5. DEFAULT_AUDIENCE        - graph
 
     Returns `(scope_string, err)`. err is '' on success. An unknown
     `audience` short name produces an error so typos fail loudly;
-    a malformed OWA_DEFAULT_AUDIENCE logs a warning to stderr and falls
-    back to the built-in default, because env misconfiguration should not
-    silently break every invocation.
+    a malformed OWA_DEFAULT_AUDIENCE (env) logs a warning to stderr and
+    falls back to the next layer, because env misconfiguration should not
+    silently break every invocation. A malformed `profile_default` is
+    treated the same way - warn and fall through to graph.
     """
     if scope:
         return scope, ''
@@ -70,6 +72,16 @@ def resolve_audience(audience=None, scope=None):
         else:
             print(f'WARNING: OWA_DEFAULT_AUDIENCE={env!r} is not a known '
                   f'short name or an https URL; using default',
+                  file=sys.stderr)
+    if aud_url is None and profile_default:
+        pd = profile_default.strip()
+        if pd in KNOWN_AUDIENCES:
+            aud_url = KNOWN_AUDIENCES[pd][0]
+        elif pd.startswith('https://'):
+            aud_url = pd.rstrip('/')
+        elif pd:
+            print(f'WARNING: profile OWA_DEFAULT_AUDIENCE={pd!r} is not a '
+                  f'known short name or an https URL; using default',
                   file=sys.stderr)
     if aud_url is None:
         aud_url = DEFAULT_AUDIENCE

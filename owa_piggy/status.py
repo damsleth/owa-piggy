@@ -23,31 +23,16 @@ from .config import (
     save_config,
 )
 from .jwt import decode_jwt_segment
+from .launchd import (
+    LEGACY_LABEL,
+    is_installed as launchd_is_installed,
+    label_for as launchd_label,
+    legacy_plist_path,
+    plist_path as launchd_plist_path,
+)
 from .oauth import CLIENT_ID, exchange_token
 from .reseed import find_reseed_script
 from .scopes import KNOWN_AUDIENCES, resolve_audience
-
-LAUNCHD_LABEL_PREFIX = 'com.damsleth.owa-piggy'
-
-
-def _launchd_label(alias):
-    """Per-profile plist label used by `setup-refresh.sh --profile <alias>`."""
-    return f'{LAUNCHD_LABEL_PREFIX}.{alias}'
-
-
-def _launchd_plist_path(alias):
-    """Path to the per-profile launchd plist on macOS. Always returns a
-    Path even on non-mac systems - the caller checks .exists() for the
-    truthy answer."""
-    return Path.home() / 'Library' / 'LaunchAgents' / f'{_launchd_label(alias)}.plist'
-
-
-def _launchd_is_installed(alias):
-    """True iff the per-profile launchd plist is on disk. Cheap check;
-    we treat plist presence as 'installed' for the status summary because
-    runtime state (loaded / not loaded) is a transient detail that
-    `debug` already surfaces in full. status stays one-line-per-fact."""
-    return _launchd_plist_path(alias).exists()
 
 
 def do_status(alias, audience=None, scope=None, multi=False):
@@ -93,7 +78,11 @@ def do_status(alias, audience=None, scope=None, multi=False):
     # misconfiguration warning still reaches the user. status honors the
     # same options as the main token path, so
     # `owa-piggy status --audience outlook` probes the outlook audience.
-    probe_scope, err = resolve_audience(audience, scope)
+    probe_scope, err = resolve_audience(
+        audience,
+        scope,
+        profile_default=config.get('OWA_DEFAULT_AUDIENCE', '').strip(),
+    )
     if err:
         print(f'ERROR: {err}', file=sys.stderr)
         return 1
@@ -176,7 +165,7 @@ def do_status(alias, audience=None, scope=None, multi=False):
     else:
         scopes_line = str(scp)
 
-    launchd_state = 'true' if _launchd_is_installed(alias) else 'false'
+    launchd_state = 'true' if launchd_is_installed(alias) else 'false'
     print(f'authtoken:    expires {iso(exp_ts)}')
     print(f'refreshtoken: expires {rt_expires}')
     print(f'audience:     {audience_line}')
@@ -215,11 +204,17 @@ def do_debug(alias, audience=None, scope=None):
     normal invocation), because that's the only honest way to prove the
     token is currently valid."""
 
+    config, persist = load_config()
+
     # Resolve scope up front and bail on argument errors, matching the
     # rest of the CLI. Previously debug silently ignored resolve's error
     # and probed with a None scope, which masked what was actually a fatal
     # arg error with misleading AAD output.
-    debug_scope, scope_err = resolve_audience(audience, scope)
+    debug_scope, scope_err = resolve_audience(
+        audience,
+        scope,
+        profile_default=config.get('OWA_DEFAULT_AUDIENCE', '').strip(),
+    )
     if scope_err:
         print(f'ERROR: {scope_err}', file=sys.stderr)
         return 1
@@ -252,7 +247,6 @@ def do_debug(alias, audience=None, scope=None):
     else:
         row('no', 'missing')
 
-    config, persist = load_config()
     rt = config.get('OWA_REFRESH_TOKEN', '').strip()
     tid = config.get('OWA_TENANT_ID', '').strip()
     cid = config.get('OWA_CLIENT_ID', CLIENT_ID).strip()
@@ -316,9 +310,9 @@ def do_debug(alias, audience=None, scope=None):
                 row('no', 'exchange failed - see error above')
 
     # --- Launchd agent ---
-    label = _launchd_label(alias)
+    label = launchd_label(alias)
     print(f'\nLaunchd refresh agent ({label}):')
-    plist_path = _launchd_plist_path(alias)
+    plist_path = launchd_plist_path(alias)
     row('ok' if plist_path.exists() else 'no', 'plist file', str(plist_path))
 
     uid = os.getuid()
@@ -354,8 +348,8 @@ def do_debug(alias, audience=None, scope=None):
     # Warn if the legacy suffix-less plist is still around; setup-refresh.sh
     # cleans it up on first --all run, but `debug` should surface it for
     # anyone who hasn't re-run install yet.
-    legacy_label = LAUNCHD_LABEL_PREFIX
-    legacy_plist = Path.home() / 'Library' / 'LaunchAgents' / f'{legacy_label}.plist'
+    legacy_label = LEGACY_LABEL
+    legacy_plist = legacy_plist_path()
     if legacy_plist.exists():
         row('!!', 'legacy single-profile plist still present',
             f'{legacy_plist} - run scripts/setup-refresh.sh --all to replace')

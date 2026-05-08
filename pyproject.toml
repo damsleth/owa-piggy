@@ -33,11 +33,12 @@ test = ["pytest"]
 [tool.setuptools]
 packages = ["owa_piggy"]
 
-# Ship the reseed helpers alongside the package so `owa-piggy reseed` works
-# in packaged installs (pipx, pip, brew). They land at
+# Ship the helper scripts alongside the package so `owa-piggy reseed` and
+# profile launchd setup work in packaged installs (pipx, pip, brew). They land at
 # <sys.prefix>/share/owa-piggy/scripts/ which find_reseed_script() checks.
 [tool.setuptools.data-files]
 "share/owa-piggy/scripts" = [
   "scripts/reseed-from-edge.sh",
   "scripts/scrape_edge.py",
+  "scripts/setup-refresh.sh",
 ]

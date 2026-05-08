@@ -19,7 +19,6 @@ Two backends:
 import os
 import subprocess
 import sys
-from pathlib import Path
 
 from . import config as _config
 from .cache import clear_cache
@@ -30,6 +29,7 @@ from .config import (
     save_config,
     set_active_profile,
 )
+from .scripts import find_packaged_script
 
 RESEED_SCRIPT_NAME = 'reseed-from-edge.sh'
 
@@ -46,25 +46,10 @@ def find_reseed_script():
     pyproject.toml ships the scripts as data-files to share/owa-piggy/scripts/
     so installs via pipx/pip/brew get a working --reseed. The repo-checkout
     path stays first so local development picks up edits immediately."""
-    override = os.environ.get('OWA_RESEED_SCRIPT')
-    if override:
-        p = Path(override)
-        if p.is_file():
-            return p
-
-    # Repo checkout: scripts/ sits one level above the package directory.
-    repo_scripts = Path(__file__).resolve().parent.parent / 'scripts' / RESEED_SCRIPT_NAME
-
-    candidates = [
-        repo_scripts,
-        Path(sys.prefix) / 'share' / 'owa-piggy' / 'scripts' / RESEED_SCRIPT_NAME,
-        Path('/usr/local/share/owa-piggy/scripts') / RESEED_SCRIPT_NAME,
-        Path('/opt/homebrew/share/owa-piggy/scripts') / RESEED_SCRIPT_NAME,
-    ]
-    for c in candidates:
-        if c.is_file():
-            return c
-    return None
+    return find_packaged_script(
+        RESEED_SCRIPT_NAME,
+        env_override='OWA_RESEED_SCRIPT',
+    )
 
 
 def do_reseed(alias):
