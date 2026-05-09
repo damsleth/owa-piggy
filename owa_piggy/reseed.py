@@ -29,27 +29,7 @@ from .config import (
     save_config,
     set_active_profile,
 )
-from .scripts import find_packaged_script
-
-RESEED_SCRIPT_NAME = 'reseed-from-edge.sh'
-
-
-def find_reseed_script():
-    """Locate reseed-from-edge.sh across install layouts.
-
-    Search order:
-      1. OWA_RESEED_SCRIPT env var (explicit override)
-      2. ./scripts/ next to the package (repo checkout)
-      3. <sys.prefix>/share/owa-piggy/scripts/ (pip / pipx data-files)
-      4. Homebrew share dirs (/usr/local/share, /opt/homebrew/share)
-
-    pyproject.toml ships the scripts as data-files to share/owa-piggy/scripts/
-    so installs via pipx/pip/brew get a working --reseed. The repo-checkout
-    path stays first so local development picks up edits immediately."""
-    return find_packaged_script(
-        RESEED_SCRIPT_NAME,
-        env_override='OWA_RESEED_SCRIPT',
-    )
+from .scripts import find_reseed_script
 
 
 def do_reseed(alias):
@@ -160,7 +140,7 @@ def _do_reseed_scrape(alias):
     script = find_reseed_script()
     if not script:
         print(
-            f'ERROR: {RESEED_SCRIPT_NAME} not found. Searched:\n'
+            'ERROR: reseed-from-edge.sh not found. Searched:\n'
             '    $OWA_RESEED_SCRIPT\n'
             '    <module_dir>/scripts/ (repo checkout)\n'
             '    <sys.prefix>/share/owa-piggy/scripts/ (pipx/pip)\n'
