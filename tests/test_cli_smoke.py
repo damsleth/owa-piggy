@@ -783,6 +783,141 @@ def test_interactive_profile_picker_ctrl_c_restores_terminal(monkeypatch):
     assert restored == [(0, termios.TCSADRAIN, ['old-state'])]
 
 
+class _ScriptedStdin:
+    """Feed the picker a fixed key sequence then EOF (treated as quit).
+
+    Reading past the end returns 'q' so the loop exits cleanly even if
+    the test under-counts how many reads the picker will do (escape
+    sequence parsing, redraws, etc.). Tests assert the side-effects
+    they care about; loop exit is not under test.
+    """
+
+    def __init__(self, keys):
+        self._keys = list(keys)
+
+    def fileno(self):
+        return 0
+
+    def read(self, _n):
+        if self._keys:
+            return self._keys.pop(0)
+        return 'q'
+
+
+def _stub_picker_environment(monkeypatch, *, profiles, default,
+                             enabled=None, keys=()):
+    """Wire up the termios/stdin/state stubs the picker needs to run
+    detached from a real terminal and a real config tree. Returns the
+    reverse-chronological key list so tests can append before run."""
+    import termios
+    import tty
+    from owa_piggy import profile_tui as tui
+
+    enabled = list(enabled if enabled is not None else profiles)
+    monkeypatch.setattr(sys, 'stdin', _ScriptedStdin(list(keys)))
+    monkeypatch.setattr(sys, 'stdout', io.StringIO())
+    monkeypatch.setattr(tui, 'list_profiles', lambda: list(profiles))
+    monkeypatch.setattr(
+        tui, 'load_profiles_conf',
+        lambda: {'OWA_DEFAULT_PROFILE': default,
+                 'OWA_PROFILES': list(enabled)},
+    )
+    monkeypatch.setattr(tui, 'launchd_is_installed', lambda alias: False)
+    monkeypatch.setattr(termios, 'tcgetattr', lambda fd: ['old-state'])
+    monkeypatch.setattr(tty, 'setraw', lambda fd: None)
+    monkeypatch.setattr(termios, 'tcsetattr', lambda *a, **kw: None)
+
+
+def test_picker_space_toggles_profile(monkeypatch):
+    """Pressing space on a highlighted profile calls disable_profile when
+    it is currently enabled, then enable_profile when it is not - the
+    registry mutation goes through the shared profiles.* helpers, never
+    directly through the picker."""
+    from owa_piggy import profile_tui as tui
+
+    _stub_picker_environment(
+        monkeypatch,
+        profiles=['work', 'personal'],
+        default='work',
+        enabled=['work', 'personal'],
+        keys=[' ', 'q'],
+    )
+    calls = []
+    monkeypatch.setattr(tui, 'disable_profile',
+                        lambda alias: calls.append(('disable', alias)) or (True, ''))
+    monkeypatch.setattr(tui, 'enable_profile',
+                        lambda alias: calls.append(('enable', alias)) or (True, ''))
+
+    rc = tui.run_picker()
+    assert rc == 0
+    # Cursor starts on the default ('work'). Space disables it.
+    assert calls == [('disable', 'work')]
+
+
+def test_picker_enter_sets_default(monkeypatch):
+    """Pressing enter on a non-default profile calls set_default_profile.
+    Pressing enter on the already-default is a no-op (a status-line hint,
+    not a registry write)."""
+    from owa_piggy import profile_tui as tui
+
+    _stub_picker_environment(
+        monkeypatch,
+        profiles=['work', 'personal'],
+        default='work',
+        keys=['j', '\r', 'q'],
+    )
+    calls = []
+    monkeypatch.setattr(tui, 'set_default_profile',
+                        lambda alias: calls.append(alias) or (True, ''))
+
+    rc = tui.run_picker()
+    assert rc == 0
+    assert calls == ['personal']
+
+
+def test_picker_delete_cancel_does_not_mutate(monkeypatch):
+    """Answering 'n' at the delete confirmation must not call
+    delete_profile. The picker prints the about-to-delete summary, the
+    user backs out, and the registry is left alone."""
+    from owa_piggy import profile_tui as tui
+
+    _stub_picker_environment(
+        monkeypatch,
+        profiles=['work', 'personal'],
+        default='work',
+        keys=['d', 'q'],
+    )
+    monkeypatch.setattr(tui, 'profile_dir', lambda alias: f'/tmp/fake/{alias}')
+    monkeypatch.setattr('builtins.input', lambda prompt='': 'n')
+    monkeypatch.setattr(
+        tui, 'delete_profile',
+        lambda *a, **kw: pytest.fail('delete_profile must not run on confirm=no'),
+    )
+
+    rc = tui.run_picker()
+    assert rc == 0
+
+
+def test_picker_shift_r_reseeds_all(monkeypatch):
+    """`R` triggers do_reseed_all - the same code path as
+    `owa-piggy reseed --all` from the shell."""
+    from owa_piggy import profile_tui as tui
+
+    _stub_picker_environment(
+        monkeypatch,
+        profiles=['work'],
+        default='work',
+        keys=['R', 'q'],
+    )
+    calls = []
+    monkeypatch.setattr(tui, 'do_reseed_all', lambda: calls.append('all') or 0)
+    monkeypatch.setattr('builtins.input', lambda prompt='': '')
+
+    rc = tui.run_picker()
+    assert rc == 0
+    assert calls == ['all']
+
+
 def test_profiles_delete_preserves_dir_if_registry_update_fails(
     monkeypatch, capsys, tmp_config, clean_env
 ):
