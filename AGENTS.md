@@ -4,9 +4,10 @@ Instructions for AI coding agents working in this repo.
 
 ## What this is
 
-`owa-piggy` is a small stdlib-only Python CLI (package at `owa_piggy/`,
-~1000 lines split across a handful of modules) that exchanges a refresh
-token scraped from the user's own browser for a fresh Microsoft
+`owa-piggy` is a stdlib-only Python CLI (package at `owa_piggy/`,
+~3,900 LOC across ~15 modules including the headless-Edge capture
+machinery in `capture.py` + `cdp.py`) that exchanges a refresh token
+scraped from the user's own browser for a fresh Microsoft
 Graph/Outlook/Teams/etc. access token. It abuses OWA's first-party
 SPA client ID. No app registration, no server, no multi-user
 deployment. One user, one laptop, macOS-first.
@@ -44,8 +45,14 @@ owa_piggy/
                      # scoped per-profile via CONFIG_PATH.parent
   oauth.py           # CLIENT_ID, ORIGIN, exchange_token (the one HTTP call)
   setup.py           # interactive_setup(alias), read_input (raw-tty paste safety)
-  reseed.py          # find_reseed_script, do_reseed(alias) (shells out)
-  status.py          # do_status(alias), do_debug(alias)
+  scripts.py         # find_packaged_script + per-script wrappers (reseed, setup-refresh)
+  launchd.py         # label_for, plist_path, is_installed, run_setup_refresh
+  reseed.py          # do_reseed(alias) (legacy scrape + capture-mode dispatch)
+  capture.py         # headless Edge /token interception (capture-mode setup + reseed)
+  cdp.py             # tiny Chrome DevTools Protocol websocket client used by capture.py
+  profiles.py        # registry lifecycle: create/delete/enable/disable/set_default_profile
+  profile_tui.py     # interactive `owa-piggy profiles` TUI (run_picker + action handlers)
+  status.py          # do_status(alias), do_debug(alias), status_report (JSON broker)
 scripts/
   reseed-from-edge.sh  # headless Edge sidecar; reads OWA_PIGGY_EDGE_PROFILE_DIR
   scrape_edge.py
