@@ -778,7 +778,7 @@ def test_interactive_profile_picker_ctrl_c_restores_terminal(monkeypatch):
     )
 
     with pytest.raises(KeyboardInterrupt):
-        cli_mod._interactive_profile_picker()
+        profile_tui.run_picker()
 
     assert restored == [(0, termios.TCSADRAIN, ['old-state'])]
 
