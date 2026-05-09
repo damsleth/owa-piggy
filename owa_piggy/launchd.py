@@ -9,11 +9,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-from .scripts import find_packaged_script
+from .scripts import find_setup_refresh_script
 
 LABEL_PREFIX = 'com.damsleth.owa-piggy'
 LEGACY_LABEL = LABEL_PREFIX
-SETUP_REFRESH_SCRIPT_NAME = 'setup-refresh.sh'
 
 
 def label_for(alias):
@@ -34,14 +33,6 @@ def legacy_plist_path():
 def is_installed(alias):
     """True when the per-profile plist exists on disk."""
     return plist_path(alias).exists()
-
-
-def find_setup_refresh_script():
-    """Locate setup-refresh.sh across checkout and packaged layouts."""
-    return find_packaged_script(
-        SETUP_REFRESH_SCRIPT_NAME,
-        env_override='OWA_SETUP_REFRESH_SCRIPT',
-    )
 
 
 def run_setup_refresh(alias, *, install):

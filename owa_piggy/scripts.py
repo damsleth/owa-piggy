@@ -34,3 +34,22 @@ def find_packaged_script(name, *, env_override=None):
         if candidate.is_file():
             return candidate
     return None
+
+
+# Per-script wrappers. Each command's `find_*_script` lives next to
+# `find_packaged_script` so the asymmetry between reseed.py and launchd.py
+# is gone - the only thing that varies between them is the filename and
+# the env var name, both encoded as a single line below.
+
+def find_reseed_script():
+    """Locate reseed-from-edge.sh across install layouts. Honors
+    OWA_RESEED_SCRIPT for explicit overrides."""
+    return find_packaged_script(
+        'reseed-from-edge.sh', env_override='OWA_RESEED_SCRIPT')
+
+
+def find_setup_refresh_script():
+    """Locate setup-refresh.sh across install layouts. Honors
+    OWA_SETUP_REFRESH_SCRIPT for explicit overrides."""
+    return find_packaged_script(
+        'setup-refresh.sh', env_override='OWA_SETUP_REFRESH_SCRIPT')

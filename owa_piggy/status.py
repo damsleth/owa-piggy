@@ -31,8 +31,8 @@ from .launchd import (
     plist_path as launchd_plist_path,
 )
 from .oauth import CLIENT_ID, exchange_token
-from .reseed import find_reseed_script
 from .scopes import KNOWN_AUDIENCES, resolve_audience
+from .scripts import find_reseed_script
 
 
 def _iso(ts):
