@@ -329,7 +329,7 @@ def run_picker():
         # Non-POSIX: degrade gracefully to a plain listing. tty (used by
         # PickerState.go_raw) ships alongside termios on every platform
         # that has either, so probing one is enough.
-        return _print_plain_list()
+        return print_plain_list()
 
     fd = sys.stdin.fileno()
     old = termios.tcgetattr(fd)
@@ -485,8 +485,14 @@ def run_picker():
     return 0
 
 
-def _print_plain_list():
-    """Plain printed listing - the non-TTY / no-termios fallback."""
+def print_plain_list():
+    """Plain printed listing of profiles, marking default with '*' and
+    enabled-but-not-default with 'x'.
+
+    Used by cli.`_do_profiles_list` for the non-TTY / pipe / redirect
+    case, and by `run_picker` itself when termios is unavailable. One
+    body so the two output paths cannot drift.
+    """
     profiles = list_profiles()
     reg = load_profiles_conf()
     default = reg['OWA_DEFAULT_PROFILE']
