@@ -37,7 +37,7 @@ from .config import (
 from .jwt import decode_jwt, decode_jwt_segment, token_minutes_remaining
 from .migration import migrate_if_needed
 from .oauth import CLIENT_ID, exchange_token
-from .profiles import delete_profile, set_default_profile
+from .profiles import create_profile, delete_profile, set_default_profile
 from .reseed import do_reseed, do_reseed_all
 from .scopes import KNOWN_AUDIENCES, resolve_audience
 from .status import do_debug, do_status, do_status_all, status_all_report, status_report
@@ -409,7 +409,6 @@ def _cmd_setup(args):
     alias, rc = _resolve_and_activate(args, allow_missing=True)
     if rc:
         return rc
-    from .profiles import create_profile
     return create_profile(
         alias,
         email=getattr(args, 'email', None),
@@ -519,17 +518,17 @@ def _do_profiles_list():
     On an interactive stdout+stdin we hand off to the multi-key TUI in
     `profile_tui.run_picker` so the user can manage profiles without
     memorising the subcommand surface. Non-TTY invocations (pipes,
-    redirects, CI) fall through to the plain printed list so scripts
-    stay parseable.
+    redirects, CI) fall through to `profile_tui.print_plain_list` -
+    same body the picker itself falls back to when termios is missing,
+    so the two output paths cannot drift.
 
     Empty-state: on a TTY, offer to walk through creating the first
     profile interactively. Non-TTY just prints the hint and exits 0.
     """
     from . import profile_tui
-    profiles = list_profiles()
     is_tty = sys.stdin.isatty() and sys.stdout.isatty()
 
-    if not profiles:
+    if not list_profiles():
         if not is_tty:
             print('no profiles configured. Run: owa-piggy setup --profile <alias>')
             return 0
@@ -538,27 +537,7 @@ def _do_profiles_list():
     if is_tty:
         return profile_tui.run_picker()
 
-    reg = load_profiles_conf()
-    default = reg['OWA_DEFAULT_PROFILE']
-    enabled = set(reg['OWA_PROFILES'])
-    for alias in profiles:
-        marker = '*' if alias == default else ('x' if alias in enabled else ' ')
-        print(f' {marker} {alias}')
-    return 0
-
-
-
-
-def _interactive_profile_picker():
-    """Backwards-compatible thin wrapper around `profile_tui.run_picker`.
-
-    Kept on cli.py because tests reach for it directly. The picker
-    itself lives in profile_tui so the registry mutation, terminal
-    rendering, and key dispatch can be evolved without making cli.py
-    grow.
-    """
-    from . import profile_tui
-    return profile_tui.run_picker()
+    return profile_tui.print_plain_list()
 
 
 def _do_profiles_set_default(alias):
