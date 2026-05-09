@@ -215,6 +215,16 @@ def _build_parser():
     return parser
 
 
+# Subcommand registry. Defined here so `_inject_default_command` can read
+# it without forcing the reader to scroll past every handler. The dispatch
+# table itself lives next to the handlers below; this is just the name
+# tuple used during argv preprocessing.
+COMMANDS = (
+    'token', 'status', 'debug', 'setup', 'reseed', 'decode',
+    'remaining', 'audiences', 'version', 'profiles',
+)
+
+
 def _inject_default_command(argv):
     """Prepend `token` to argv when the user invoked owa-piggy without
     naming a subcommand - either bare (`owa-piggy`) or with only
@@ -608,10 +618,11 @@ _DISPATCH = {
     'profiles': _cmd_profiles,
 }
 
-# Single source of truth for the subcommand list. _inject_default_command
-# resolves this at call time (inside main), so the bottom-of-file location
-# is fine.
-COMMANDS = tuple(_DISPATCH)
+# Sanity check: keep the COMMANDS tuple at the top of the file in sync
+# with the dispatch table below. assert at import time so a missing entry
+# fails loudly during development rather than at first invocation.
+assert set(COMMANDS) == set(_DISPATCH), \
+    'COMMANDS / _DISPATCH out of sync'
 
 
 def main():
