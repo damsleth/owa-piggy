@@ -1,37 +1,63 @@
 # owa-piggy
 
+[![PyPI](https://img.shields.io/pypi/v/owa-piggy.svg)](https://pypi.org/project/owa-piggy/)
+[![GitHub release](https://img.shields.io/github/v/release/damsleth/owa-piggy.svg)](https://github.com/damsleth/owa-piggy/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![codecov](https://codecov.io/gh/damsleth/owa-piggy/branch/main/graph/badge.svg)](https://codecov.io/gh/damsleth/owa-piggy)
 ![ci](https://github.com/damsleth/owa-piggy/actions/workflows/ci.yml/badge.svg)
 
-Turn your existing Outlook Web session into a reusable API token from the terminal.  
-No app registration, asking a tenant admin or managing client secrets.
+Turn your existing Outlook Web session into a reusable API token from the
+terminal. No app registration, no tenant admin ask, no client secrets.
 
-```sh
-brew tap damsleth/tap
-brew install owa-piggy
-owa-piggy setup                       # creates the 'default' profile
-# or, to avoid terminal paste-corruption on long tokens:
-# copy the two lines the browser snippet prints, then
-pbpaste | owa-piggy setup
+`owa-piggy` is the auth broker. The companion suite
+[`owa-tools`](https://github.com/damsleth/owa-tools) ships eight binaries
+(`owa`, `owa-cal`, `owa-mail`, `owa-graph`, `owa-doctor`, `owa-people`,
+`owa-sched`, `owa-drive`) that borrow tokens from `owa-piggy` - separate
+package, separate token store, never imported.
+
+## Install
+
+Homebrew (recommended):
+
+```bash
+brew install damsleth/tap/owa-piggy
+```
+
+PyPI:
+
+```bash
+pipx install owa-piggy
 ```
 
 Bleeding edge (main): `brew install --HEAD damsleth/tap/owa-piggy`
 
-Companion tool: [`owa-cal`](https://github.com/damsleth/owa-cal) is a
-calendar CLI that calls owa-piggy for tokens. The two version
-independently - any owa-cal >= 0.6 works with any owa-piggy >= 0.6.
+Then pull in the rest of the suite with one shortcut:
 
-Then
+```bash
+owa-piggy install-owa-tools           # brew install damsleth/tap/owa-tools
+```
 
-```sh
+## Quickstart
+
+```bash
+# 1. One-time auth setup (opens Edge, signs you in, captures a refresh token)
+owa-piggy setup --profile work --email you@yourcompany.com
+
+# 2. Verify it works
+owa-piggy status
+
+# 3. Use the token
 curl -H "Authorization: Bearer $(owa-piggy)" https://graph.microsoft.com/v1.0/me
 ```
 
-Or, for the Outlook REST audience:
+For the Outlook REST audience:
 
 ```sh
 curl -s -H "Authorization: Bearer $(owa-piggy --audience outlook)" \
   "https://outlook.office.com/api/v2.0/me/messages?\$top=1" | jq -r '.value[0].Subject'
 ```
+
+Raw token on stdout, logs on stderr - pipe-friendly by design.
 
 ---
 
@@ -56,6 +82,7 @@ Bare `owa-piggy` is shorthand for `owa-piggy token` - the access token goes to s
 | `profiles`               | list profiles (TTY: interactive picker); `--json` emits aliases and config presence |
 | `profiles set-default A` | make `A` the default profile                                          |
 | `profiles delete A`      | remove profile `A`'s config + Edge sidecar dir (`--force` to override) |
+| `install-owa-tools`      | shorthand for `brew install damsleth/tap/owa-tools` (the companion suite) |
 | `version`                | print version information; `--json` emits `{"tool": ..., "version": ...}` |
 
 Global options: `--profile <alias>`, `--audience <name>`, `--scope <explicit>`, `--version`, `--help`. Per-command help: `owa-piggy <command> --help`.
