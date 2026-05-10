@@ -14,6 +14,7 @@ not. The subsequent argparse pass sees a consistent shape either way.
 import argparse
 import json
 import os
+import subprocess
 import sys
 import time
 
@@ -190,6 +191,10 @@ def _build_parser():
     sub.add_parser(
         'audiences', help='list all known FOCI-accessible audiences')
 
+    sub.add_parser(
+        'install-owa-tools',
+        help='install the companion owa-tools suite via Homebrew')
+
     p_version = sub.add_parser(
         'version', help='print version information')
     p_version.add_argument('--json', action='store_true',
@@ -222,6 +227,7 @@ def _build_parser():
 COMMANDS = (
     'token', 'status', 'debug', 'setup', 'reseed', 'decode',
     'remaining', 'audiences', 'version', 'profiles',
+    'install-owa-tools',
 )
 
 
@@ -473,6 +479,24 @@ def _cmd_audiences(args):
     return 0
 
 
+def _cmd_install_owa_tools(args):
+    """Hand off to Homebrew to install the companion owa-tools suite.
+
+    Pure convenience shim - the canonical install path is documented as
+    `brew install damsleth/tap/owa-tools`, but typing that from memory is
+    annoying enough that a one-shot subcommand earns its keep.
+    """
+    cmd = ['brew', 'install', 'damsleth/tap/owa-tools']
+    print(f'$ {" ".join(cmd)}', file=sys.stderr)
+    try:
+        return subprocess.call(cmd)
+    except FileNotFoundError:
+        print('ERROR: brew not found on PATH. Install Homebrew first '
+              '(https://brew.sh) or run `pipx install owa-tools` instead.',
+              file=sys.stderr)
+        return 1
+
+
 def _cmd_version(args):
     if getattr(args, 'json', False):
         print(json.dumps({'tool': 'owa-piggy', 'version': __version__}, indent=2))
@@ -595,6 +619,7 @@ _DISPATCH = {
     'audiences': _cmd_audiences,
     'version': _cmd_version,
     'profiles': _cmd_profiles,
+    'install-owa-tools': _cmd_install_owa_tools,
 }
 
 # Sanity check: keep the COMMANDS tuple at the top of the file in sync
