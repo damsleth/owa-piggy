@@ -181,12 +181,16 @@ def _build_parser():
                          help='use Edge network-capture flow (required for '
                               'encrypted-MSAL/Okta tenants); validates '
                               'captured token belongs to this account')
+    p_setup.add_argument('--json', action='store_true',
+                         help='(rejected) setup is interactive; use status --json instead')
 
     p_reseed = sub.add_parser(
         'reseed', help='fetch a fresh refresh token headlessly from the Edge sidecar')
     _add_common_options(p_reseed, audience_scope=False)
     p_reseed.add_argument('--all', action='store_true', dest='all_profiles',
                           help='reseed every configured profile sequentially')
+    p_reseed.add_argument('--json', action='store_true',
+                          help='emit action envelope on stdout')
 
     sub.add_parser(
         'audiences', help='list all known FOCI-accessible audiences')
@@ -210,12 +214,18 @@ def _build_parser():
     p_sd = profiles_sub.add_parser(
         'set-default', help='make <alias> the default profile')
     p_sd.add_argument('alias', metavar='<alias>')
+    p_sd.add_argument('--json', action='store_true',
+                      help='emit action envelope on stdout')
 
     p_del = profiles_sub.add_parser(
         'delete', help='remove a profile config + Edge sidecar dir')
     p_del.add_argument('alias', metavar='<alias>')
     p_del.add_argument('--force', action='store_true',
                        help='allow deleting the profile currently marked default')
+    p_del.add_argument('--yes', action='store_true',
+                       help='skip TTY confirmation (required when stdin is not a TTY)')
+    p_del.add_argument('--json', action='store_true',
+                       help='emit action envelope on stdout')
 
     return parser
 
@@ -412,6 +422,15 @@ def _emit(access_token, mode, *, full_response=None, cache_hit_exp=None):
 
 
 def _cmd_setup(args):
+    # setup is interactive class per mnem CONVENTIONS.md - --json is
+    # rejected with a clear pointer to a machine-friendly alternative.
+    if getattr(args, 'json', False):
+        print(
+            'owa-piggy setup is an interactive command; --json is rejected. '
+            'Use `owa-piggy status --json` for machine-readable profile state.',
+            file=sys.stderr,
+        )
+        return 1
     alias, rc = _resolve_and_activate(args, allow_missing=True)
     if rc:
         return rc
@@ -424,23 +443,71 @@ def _cmd_setup(args):
 
 
 def _cmd_reseed(args):
+    as_json = bool(getattr(args, 'json', False))
+    t0 = time.monotonic()
+
     if getattr(args, 'all_profiles', False):
         if args.profile:
+            if as_json:
+                from owa_piggy.conventions import (
+                    EXIT_USER_ERROR, action_envelope, emit_action,
+                )
+                emit_action(action_envelope(
+                    command='reseed', ok=False,
+                    error={
+                        'code': 'usage',
+                        'message': '--all and --profile are mutually exclusive',
+                    },
+                    duration_ms=(time.monotonic() - t0) * 1000.0,
+                ))
+                return EXIT_USER_ERROR
             print('ERROR: --all and --profile are mutually exclusive',
                   file=sys.stderr)
             return 1
         # Per-profile cache clearing happens inside do_reseed_all via
         # set_active_profile + the nested `owa-piggy setup` call's own
         # clear_cache, so we do not pre-clear here.
-        return do_reseed_all()
+        rc = do_reseed_all()
+        if as_json:
+            from owa_piggy.conventions import action_envelope, emit_action
+            emit_action(action_envelope(
+                command='reseed', ok=(rc == 0),
+                stats={'scope': 'all', 'exit_code': int(rc or 0)},
+                error=None if rc == 0 else {
+                    'code': 'reseed_failed',
+                    'message': 'do_reseed_all returned nonzero',
+                },
+                duration_ms=(time.monotonic() - t0) * 1000.0,
+            ))
+        return rc
+
     alias, rc = _resolve_and_activate(args)
     if rc:
+        if as_json:
+            from owa_piggy.conventions import action_envelope, emit_action
+            emit_action(action_envelope(
+                command='reseed', ok=False,
+                error={'code': 'profile_resolve_failed', 'message': 'could not resolve profile'},
+                duration_ms=(time.monotonic() - t0) * 1000.0,
+            ))
         return rc
     # Clear the AT cache first so we never serve a token minted for the
     # pre-reseed identity/session after the user has explicitly asked
     # for a fresh credential.
     clear_cache()
-    return do_reseed(alias)
+    rc = do_reseed(alias)
+    if as_json:
+        from owa_piggy.conventions import action_envelope, emit_action
+        emit_action(action_envelope(
+            command='reseed', ok=(rc == 0),
+            stats={'profile': alias, 'exit_code': int(rc or 0)},
+            error=None if rc == 0 else {
+                'code': 'reseed_failed',
+                'message': f'do_reseed({alias!r}) returned nonzero',
+            },
+            duration_ms=(time.monotonic() - t0) * 1000.0,
+        ))
+    return rc
 
 
 def _cmd_status(args):
@@ -507,11 +574,19 @@ def _cmd_version(args):
 
 def _cmd_profiles(args):
     sub = getattr(args, 'profiles_command', None)
+    as_json = bool(getattr(args, 'json', False))
     if sub == 'set-default':
-        return _do_profiles_set_default(args.alias)
+        return _do_profiles_set_default(args.alias, as_json=as_json)
     if sub == 'delete':
-        return _do_profiles_delete(args.alias, force=args.force)
-    if getattr(args, 'json', False):
+        return _do_profiles_delete(
+            args.alias,
+            force=args.force,
+            yes=bool(getattr(args, 'yes', False)),
+            as_json=as_json,
+        )
+    if as_json:
+        # Data class: raw doc on stdout. No top-level `ok` per the
+        # reserved-key contract.
         print(json.dumps(_profiles_report(), indent=2))
         return 0
     # Bare `owa-piggy profiles` - list (with interactive picker on TTY).
@@ -564,9 +639,19 @@ def _do_profiles_list():
     return profile_tui.print_plain_list()
 
 
-def _do_profiles_set_default(alias):
+def _do_profiles_set_default(alias, as_json=False):
     """Mark `alias` as the default profile. Profile must exist on disk."""
+    t0 = time.monotonic()
     ok, err = set_default_profile(alias)
+    if as_json:
+        from owa_piggy.conventions import action_envelope, emit_action
+        emit_action(action_envelope(
+            command='profiles set-default', ok=ok,
+            stats={'alias': alias} if ok else {},
+            error=None if ok else {'code': 'set_default_failed', 'message': err},
+            duration_ms=(time.monotonic() - t0) * 1000.0,
+        ))
+        return 0 if ok else 1
     if not ok:
         print(f'ERROR: {err}', file=sys.stderr)
         return 1
@@ -574,36 +659,67 @@ def _do_profiles_set_default(alias):
     return 0
 
 
-def _do_profiles_delete(alias, force=False):
+def _do_profiles_delete(alias, force=False, yes=False, as_json=False):
     """Remove profile <alias> from disk and from profiles.conf.
 
-    Refuses to delete the currently marked default without --force, so a
-    fat-finger doesn't leave the registry pointing at nothing.
+    Destructive. Refuses to delete the currently marked default without
+    --force. Also requires --yes when not on a TTY so an accidental
+    machine invocation can't wipe a profile silently.
     """
+    t0 = time.monotonic()
+
+    def _fail(code, message, exit_code=1):
+        if as_json:
+            from owa_piggy.conventions import action_envelope, emit_action
+            emit_action(action_envelope(
+                command='profiles delete', ok=False,
+                error={'code': code, 'message': message},
+                duration_ms=(time.monotonic() - t0) * 1000.0,
+            ))
+        else:
+            print(f'ERROR: {message}', file=sys.stderr)
+        return exit_code
+
+    # Validate first so bad-input cases keep emitting the same error
+    # as before (the destructive gate is for valid-looking deletes).
     ok, verr = validate_alias(alias)
     if not ok:
-        print(f'ERROR: {verr}', file=sys.stderr)
-        return 1
+        return _fail('invalid_alias', str(verr))
     if alias not in list_profiles():
-        print(f'ERROR: profile {alias!r} not found', file=sys.stderr)
-        return 1
+        return _fail('profile_not_found', f'profile {alias!r} not found')
     reg = load_profiles_conf()
     if reg['OWA_DEFAULT_PROFILE'] == alias and not force:
-        print(
-            f'ERROR: {alias!r} is the default profile. Choose another default '
-            f'with `owa-piggy profiles set-default <alias>` first, or pass '
-            f'--force to override.',
-            file=sys.stderr,
+        return _fail(
+            'default_profile_protected',
+            f'{alias!r} is the default profile. Set another default first '
+            f'or pass --force to override.',
         )
-        return 1
+
+    # Destructive gating: alias is valid and exists. Require explicit
+    # consent when not on a TTY so a machine invocation can't wipe
+    # a profile without saying so.
+    if not yes and not sys.stdin.isatty():
+        return _fail(
+            'confirmation_required',
+            'profiles delete is destructive; pass --yes to confirm '
+            '(and --force if deleting the default profile)',
+        )
     ok, err = delete_profile(
         alias,
         uninstall_launchd=True,
         promote_default=True,
     )
     if not ok:
-        print(f'ERROR: profile {alias!r}: {err}', file=sys.stderr)
-        return 1
+        return _fail('delete_failed', f'profile {alias!r}: {err}')
+    if as_json:
+        from owa_piggy.conventions import action_envelope, emit_action
+        emit_action(action_envelope(
+            command='profiles delete', ok=True,
+            stats={'alias': alias, 'removed': True},
+            warnings=['Refresh tokens cached in keychain are not auto-purged; remove them manually if needed.'],
+            duration_ms=(time.monotonic() - t0) * 1000.0,
+        ))
+        return 0
     print(f'removed profile {alias!r}.')
     return 0
 
