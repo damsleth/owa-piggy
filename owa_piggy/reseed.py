@@ -27,6 +27,7 @@ from .config import (
     list_profiles,
     load_config,
     load_profiles_conf,
+    profiles_conf_path,
     save_config,
     set_active_profile,
 )
@@ -186,11 +187,13 @@ def do_reseed_all():
     # Honor the registry: if profiles.conf has an OWA_PROFILES list, that's
     # the set of *active* profiles - anything on disk but absent from the
     # list is disabled (no launchd agent, no auto-token-rotation) and
-    # should not be reseeded automatically. An empty registry means a
+    # should not be reseeded automatically. A missing registry means a
     # legacy install that predates profiles.conf, in which case treat
-    # everything on disk as active (matches status's behavior).
+    # everything on disk as active (matches status's behavior). A present
+    # but empty registry means every profile is disabled.
+    profiles_conf_exists = profiles_conf_path().exists()
     registered = load_profiles_conf().get('OWA_PROFILES', [])
-    if registered:
+    if profiles_conf_exists:
         active = [a for a in on_disk if a in registered]
         skipped = [a for a in on_disk if a not in registered]
         for alias in skipped:
