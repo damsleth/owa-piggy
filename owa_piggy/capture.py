@@ -489,6 +489,27 @@ def capture_silent(alias, *, timeout=20, headless=None):
 
         session.call('Page.reload', {'ignoreCache': True})
 
+        # Fast-fail reauth check. If MSAL's silent refresh attempt fails
+        # (no usable RT in localStorage, sidecar cookies past their
+        # lifetime, etc.) the SPA redirects to login.microsoftonline.com
+        # within a couple of seconds of the reload. Without this poll the
+        # caller waits the full /token timeout (20s) for a token request
+        # that will never come, even though we have a definitive signal
+        # that the session is dead within ~3s.
+        post_reload_deadline = time.monotonic() + 4.0
+        while time.monotonic() < post_reload_deadline:
+            time.sleep(0.5)
+            loc = session.call('Runtime.evaluate', {
+                'expression': 'location.hostname',
+                'returnByValue': True,
+            })
+            h = (loc.get('result', {}) or {}).get('value', '') or ''
+            if (h.startswith('login.')
+                    or h.endswith('.b2clogin.com')
+                    or h == 'account.microsoft.com'):
+                log(f'post-reload host: {h} (reauth required, fast-fail)')
+                return 'reauth', None
+
         deadline = time.monotonic() + timeout
         log(f'awaiting /token response (timeout {timeout}s)...')
         token_response = _capture_token_response(
