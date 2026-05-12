@@ -181,6 +181,20 @@ The scraper detects stale caches (ID token JWT `iat` > 23h old), forces a Page.r
 
 The `AADSTS700084` error message from the normal flow also prints `hint: run owa-piggy reseed` so you don't need to remember the recipe.
 
+### Mechanism hierarchy
+
+Five token-acquisition mechanisms, ordered from least to most intrusive. `owa-piggy` walks this ladder so the silent paths run first and you only see a browser window when nothing cheaper works.
+
+| # | Mechanism | When it runs | Where |
+|---|-----------|--------------|-------|
+| 1 | Pure HTTP `POST /oauth2/v2.0/token` (curl-equivalent) | Every `owa-piggy token` call. Trades RT for AT; AAD also rotates the RT in the response. | `owa_piggy/oauth.py` |
+| 2 | Headless Edge - legacy MSAL scrape | `reseed` for profiles **without** `OWA_AUTH_MODE=capture`. Defaults to `--headless=new`, reads MSAL `localStorage`. | `scripts/reseed-from-edge.sh` (`HEADLESS=1`) |
+| 3 | Headless Edge - network capture via CDP | `reseed` for profiles with `OWA_AUTH_MODE=capture` (encrypted MSAL cache, e.g. Okta-federated). Intercepts the `/oauth2/v2.0/token` response off the wire. | `owa_piggy/capture.py` (default headless) |
+| 4 | Offscreen non-headless Edge | Fallback when headless is blocked by Conditional Access / device-compliance. Window parked at `-32000,-32000`. | `OWA_RESEED_HEADLESS=0` or `OWA_CAPTURE_HEADLESS=0`; automatic on `headless_blocked` |
+| 5 | Visible Edge | TTY only. Triggered when sidecar cookies expired or AAD rejected the scraped RT (AADSTS700084 after scrape). | `visible_signin()` / `capture.capture_signin()` |
+
+Only step 1 runs continuously. Steps 2-5 fire on `owa-piggy reseed`, which is needed when the RT itself is dead (24h SPA hard-cap). Under `launchd` (no TTY) step 5 is never reached - the reseed bails with an error logged to the per-profile `refresh.log` and the user must re-run interactively. See [.docs/headless-blocked-by-ca.md](.docs/headless-blocked-by-ca.md) for tenant-specific causes that drop the flow to step 4 or 5.
+
 ---
 
 ## Diagnostics
