@@ -939,7 +939,7 @@ def test_profiles_delete_preserves_dir_if_registry_update_fails(
         lambda path: pytest.fail('rmtree must not run when registry update fails'),
     )
 
-    rc = cli_mod._do_profiles_delete('work', force=True)
+    rc = cli_mod._do_profiles_delete('work', force=True, yes=True)
     assert rc == 1
     assert target.exists()
     assert 'profile registry update failed' in capsys.readouterr().err
@@ -961,7 +961,7 @@ def test_profiles_delete_unregistered_dir_left_on_disk_if_rmtree_fails(
         lambda path: (_ for _ in ()).throw(OSError('busy')),
     )
 
-    rc = cli_mod._do_profiles_delete('work', force=True)
+    rc = cli_mod._do_profiles_delete('work', force=True, yes=True)
     assert rc == 1
     assert target.exists()
     assert 'work' not in load_profiles_conf()['OWA_PROFILES']
