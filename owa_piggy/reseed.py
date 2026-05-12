@@ -26,6 +26,7 @@ from .config import (
     iso_utc_now,
     list_profiles,
     load_config,
+    load_profiles_conf,
     save_config,
     set_active_profile,
 )
@@ -177,11 +178,30 @@ def do_reseed_all():
     Each profile's stderr is prefixed with [alias] by the shell script
     so output stays attributable.
     """
-    profiles = list_profiles()
-    if not profiles:
+    on_disk = list_profiles()
+    if not on_disk:
         print('no profiles configured. Run: owa-piggy setup --profile <alias>',
               file=sys.stderr)
         return 1
+    # Honor the registry: if profiles.conf has an OWA_PROFILES list, that's
+    # the set of *active* profiles - anything on disk but absent from the
+    # list is disabled (no launchd agent, no auto-token-rotation) and
+    # should not be reseeded automatically. An empty registry means a
+    # legacy install that predates profiles.conf, in which case treat
+    # everything on disk as active (matches status's behavior).
+    registered = load_profiles_conf().get('OWA_PROFILES', [])
+    if registered:
+        active = [a for a in on_disk if a in registered]
+        skipped = [a for a in on_disk if a not in registered]
+        for alias in skipped:
+            print(f'skipping disabled profile: {alias}', file=sys.stderr)
+    else:
+        active = on_disk
+    if not active:
+        print('no active profiles to reseed (registry has no enabled '
+              'profiles).', file=sys.stderr)
+        return 1
+    profiles = active
     rc = 0
     for i, alias in enumerate(profiles):
         if i:
