@@ -527,7 +527,7 @@ def _cmd_status(args):
     if getattr(args, 'json', False):
         report = status_report(alias, audience=args.audience, scope=args.scope)
         print(json.dumps(report, indent=2))
-        return 0 if report.get('state') in ('ok', 'warn') else 1
+        return 0 if report.get('state') in ('ok', 'warn', 'disabled') else 1
     return do_status(alias, audience=args.audience, scope=args.scope)
 
 
