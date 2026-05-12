@@ -630,6 +630,15 @@ assert set(COMMANDS) == set(_DISPATCH), \
 
 
 def main():
+    raw = list(sys.argv[1:])
+    # Top-level --doctor per mnem CONVENTIONS.md. Handle before
+    # argparse so it composes with --json without touching the
+    # subcommand surface.
+    if "--doctor" in raw:
+        from owa_piggy.doctor import emit_doctor
+        as_json = "--json" in raw
+        return emit_doctor(as_json)
+
     argv = _inject_default_command(sys.argv[1:])
     parser = _build_parser()
     args = parser.parse_args(argv)
