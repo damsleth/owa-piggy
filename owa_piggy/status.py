@@ -20,6 +20,7 @@ from .config import (
     load_config,
     load_profiles_conf,
     profile_edge_dir,
+    profiles_conf_path,
     save_config,
 )
 from .jwt import decode_jwt_segment
@@ -69,6 +70,19 @@ def _state(token_ok, minutes_remaining):
     return 'ok'
 
 
+def _profile_is_disabled(alias):
+    """Return True when profiles.conf exists and omits `alias`.
+
+    Missing profiles.conf means a legacy/test layout that predates the
+    registry, so all on-disk profiles remain active for compatibility.
+    A present-but-empty registry means the user disabled every profile.
+    """
+    if not profiles_conf_path().exists():
+        return False
+    registered = load_profiles_conf().get('OWA_PROFILES', [])
+    return alias not in registered
+
+
 def status_report(alias, audience=None, scope=None):
     """Return a token health report for profile <alias> without token values."""
     _config.set_active_profile(alias)
@@ -92,6 +106,10 @@ def status_report(alias, audience=None, scope=None):
         },
         'hints': [],
     }
+    if _profile_is_disabled(alias):
+        report['state'] = 'disabled'
+        report['hints'].append('profile is disabled')
+        return report
     if report['refresh_token']['expires_at']:
         try:
             exp_dt = datetime.strptime(
@@ -214,10 +232,10 @@ def do_status(alias, audience=None, scope=None, multi=False):
     # Disabled profiles (on disk but not in OWA_PROFILES) get a one-line
     # status and no probe. We don't have a refresh agent for them and
     # don't want a spurious "no valid token" failure on stale data.
-    # An empty registry means the user predates the registry or is in a
+    # A missing registry means the user predates the registry or is in a
     # test fixture - treat all on-disk profiles as enabled in that case.
-    registered = load_profiles_conf().get('OWA_PROFILES', [])
-    if registered and alias not in registered:
+    # A present-but-empty registry means every profile is disabled.
+    if _profile_is_disabled(alias):
         print('status:       disabled')
         return 0
 
