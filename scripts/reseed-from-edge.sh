@@ -76,6 +76,13 @@ EDGE_PID=""
 cleanup_edge() {
   [ -z "$EDGE_PID" ] && return 0
   if kill -0 "$EDGE_PID" 2>/dev/null; then
+    # disown first so bash doesn't print the async "Killed: 9" job
+    # notice once the kernel reaps the SIGKILL'd process. Without this
+    # the per-profile refresh.log gets a stray "line N: PID Killed: 9"
+    # interleaved with the real script output every cleanup, which made
+    # both the scrape success and the verify-failure paths look like a
+    # crash to anyone reading the log.
+    disown "$EDGE_PID" 2>/dev/null || true
     kill "$EDGE_PID" 2>/dev/null || true
     sleep 0.5
     kill -9 "$EDGE_PID" 2>/dev/null || true
@@ -209,10 +216,22 @@ save_token() {
 }
 
 # Probe the saved RT against AAD. Exit 0 = AAD accepted it, non-zero =
-# rejected (stale past 24h SPA cap, tenant mismatch, etc.). Output is
-# discarded - we use the exit code and own the messaging here.
+# rejected (stale past 24h SPA cap, tenant mismatch, etc.). On failure we
+# surface the AAD error code/description from `status` stderr so the log
+# explains *why* the just-saved RT was rejected instead of silently
+# dropping into the visible-signin fallback. Stdout is still discarded
+# (it would just be `no valid token`).
 verify_token() {
-  owa_piggy_clean_env status --profile "$PROFILE_ALIAS" >/dev/null 2>&1
+  local verify_err verify_rc=0
+  verify_err="$(owa_piggy_clean_env status --profile "$PROFILE_ALIAS" 2>&1 >/dev/null)" || verify_rc=$?
+  if [ "$verify_rc" -ne 0 ]; then
+    # status writes 'ERROR: AADSTS....' on rejection; relay the first such
+    # line. Everything else (profile labels, hints) is noise here.
+    local err_line
+    err_line="$(printf '%s\n' "$verify_err" | grep -m1 '^ERROR: ' || true)"
+    [ -n "$err_line" ] && log "verify: $err_line"
+  fi
+  return "$verify_rc"
 }
 
 # --- Attempt 1: scrape from the current sidecar session. ----------------
