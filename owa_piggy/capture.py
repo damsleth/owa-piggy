@@ -356,10 +356,42 @@ def capture_signin(alias, email, *, timeout=300):
     try:
         session = _open_session(port)
         session.call('Network.enable', {})
+        session.call('Runtime.enable', {})
         deadline = time.monotonic() + timeout
         log(f'awaiting /token response (timeout {timeout}s)...')
         token_response = _capture_token_response(
             session, deadline=deadline, log=log, tick=tick)
+
+        # Let MSAL.js finish persisting its post-auth state to localStorage
+        # before we kill Edge. The /token response arrives the moment AAD
+        # returns the auth-code redemption; MSAL still needs to parse it,
+        # encrypt under the msal.cache.encryption cookie, and write the
+        # refreshtoken/idtoken/accesstoken entries. Without this wait the
+        # sidecar profile ends up with valid session cookies but empty
+        # MSAL localStorage, and the next silent reseed has nothing to
+        # refresh - so it bounces to login.* and fast-fails to 'reauth'.
+        log('waiting up to 8s for MSAL to persist localStorage...')
+        persist_deadline = time.monotonic() + 8.0
+        while time.monotonic() < persist_deadline:
+            time.sleep(0.5)
+            r = session.call('Runtime.evaluate', {
+                'expression': ('Object.keys(localStorage).filter('
+                               'k => k.includes("|refreshtoken|") '
+                               '|| k.includes("|idtoken|")).length'),
+                'returnByValue': True,
+            })
+            n = (r.get('result', {}) or {}).get('value', 0) or 0
+            if n > 0:
+                log(f'MSAL persisted {n} idtoken/refreshtoken entries')
+                break
+        else:
+            # Tenants with strict CA enforcement may refuse to let MSAL
+            # complete its silent acquisition under any conditions - the
+            # signin still works (we got the /token response) but MSAL
+            # never writes a long-lived cache. Surface this so subsequent
+            # silent reseeds don't look mysteriously broken.
+            log('MSAL did not persist localStorage; silent reseed unlikely '
+                'to work for this tenant')
     except (ConnectionError, CdpError, OSError) as e:
         # User force-closed Edge mid-auth, or the WS dropped for some
         # other reason. Surface a friendly RuntimeError instead of a raw
