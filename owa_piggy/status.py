@@ -39,6 +39,17 @@ def _iso(ts):
     return datetime.fromtimestamp(ts, tz=timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
 
+def _humanize_minutes(m):
+    """Compact human-readable duration: 29m, 1h29m, 2d3h."""
+    if m < 60:
+        return f'{m}m'
+    h, mm = divmod(m, 60)
+    if h < 24:
+        return f'{h}h{mm}m'
+    d, h = divmod(h, 24)
+    return f'{d}d{h}h'
+
+
 def _rt_expires_at(config):
     issued_at = config.get('OWA_RT_ISSUED_AT', '').strip()
     if not issued_at:
@@ -199,6 +210,17 @@ def do_status(alias, audience=None, scope=None, multi=False):
     # ISO8601 lines remain the script-friendly stdout payload).
     label_stream = sys.stdout if multi else sys.stderr
     print(f'profile:      {alias}', file=label_stream)
+
+    # Disabled profiles (on disk but not in OWA_PROFILES) get a one-line
+    # status and no probe. We don't have a refresh agent for them and
+    # don't want a spurious "no valid token" failure on stale data.
+    # An empty registry means the user predates the registry or is in a
+    # test fixture - treat all on-disk profiles as enabled in that case.
+    registered = load_profiles_conf().get('OWA_PROFILES', [])
+    if registered and alias not in registered:
+        print('status:       disabled')
+        return 0
+
     if not rt or not tid or not (rt.startswith('1.') or rt.startswith('0.')):
         print('no valid token')
         return 1
@@ -248,6 +270,7 @@ def do_status(alias, audience=None, scope=None, multi=False):
         return 1
 
     exp_ts = int(payload.get('exp', 0))
+    at_minutes = max(0, int((exp_ts - time.time()) / 60)) if exp_ts else None
     scp = payload.get('scp') or payload.get('roles') or ''
     # aud can be a string (v1) or an array (v2 spec allows it). Normalise.
     raw_aud = payload.get('aud', '')
@@ -283,22 +306,30 @@ def do_status(alias, audience=None, scope=None, multi=False):
     if issued_at:
         try:
             dt = datetime.strptime(issued_at, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc)
-            rt_expires = (dt + timedelta(hours=24)).strftime('%Y-%m-%dT%H:%M:%SZ')
+            exp_dt = dt + timedelta(hours=24)
+            rt_minutes = max(0, int((exp_dt - datetime.now(timezone.utc)).total_seconds() / 60))
+            rt_expires = f'{exp_dt.strftime("%Y-%m-%dT%H:%M:%SZ")} ({_humanize_minutes(rt_minutes)})'
         except ValueError:
             pass
 
+    # OWA-issued access tokens always carry the same dense scope set, so
+    # spelling out three names and a count was pure noise. Collapse to
+    # `default(N)`. Non-string scp (rare) falls back to its raw repr.
     if isinstance(scp, str):
         parts = scp.split()
-        scopes_line = (f'{", ".join(parts[:3])}, ... ({len(parts)} scopes)'
-                       if len(parts) > 3 else ', '.join(parts))
+        scopes_line = f'default({len(parts)})' if parts else ''
     else:
         scopes_line = str(scp)
 
+    at_expires = iso(exp_ts)
+    if at_minutes is not None:
+        at_expires = f'{at_expires} ({_humanize_minutes(at_minutes)})'
+
     launchd_state = 'true' if launchd_is_installed(alias) else 'false'
-    print(f'authtoken:    expires {iso(exp_ts)}')
+    print(f'authtoken:    expires {at_expires}')
     print(f'refreshtoken: expires {rt_expires}')
     print(f'audience:     {audience_line}')
-    print(f'scope(s):     {scopes_line}')
+    print(f'scopes:       {scopes_line}')
     print(f'launchd:      {launchd_state}')
     return 0
 
