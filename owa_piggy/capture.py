@@ -432,7 +432,9 @@ def capture_silent(alias, *, timeout=20, headless=None):
                 'expression': 'location.hostname',
                 'returnByValue': True,
             })
-            host = (loc.get('result', {}) or {}).get('result', {}).get('value', '')
+            # session.call returns the `result` field of the JSON-RPC envelope
+            # already, so `loc.result` IS the RemoteObject - no double-deref.
+            host = (loc.get('result', {}) or {}).get('value', '') or ''
             if host.startswith('login.') \
                     or host.endswith('.b2clogin.com') \
                     or host == 'account.microsoft.com':
@@ -443,12 +445,17 @@ def capture_silent(alias, *, timeout=20, headless=None):
                 break
             time.sleep(0.3)
         else:
-            # Hostname never populated - Edge is stuck on a blank document.
-            # In headless mode this is almost always Conditional Access /
-            # device compliance refusing headless; the SPA shell never
-            # loads so MSAL can't even decide whether a reauth is needed.
-            # Surface a distinct status so reseed.py can auto-fall-back to
-            # non-headless before bothering the user.
+            # Hostname never populated - Edge is stuck on a blank document
+            # for 7+ seconds. Causes we have actually seen:
+            #   - Edge launch was abnormally slow (cold cache, GPU init hang)
+            #   - The user-data-dir was locked by another Edge process
+            #   - First-run profile state mid-bootstrap
+            # We've not yet observed a real tenant-policy "block headless"
+            # in the wild; the legacy comment claiming Conditional Access
+            # was the cause was wrong (the dereference one line up was
+            # silently returning '' for every poll, so this branch fired
+            # on every run). Keep the status name for backwards-compat
+            # with reseed.py's fallback ladder.
             log(f'post-load host stayed empty after 7s')
             if headless:
                 return 'headless_blocked', None
@@ -477,7 +484,7 @@ def capture_silent(alias, *, timeout=20, headless=None):
             })()''',
             'returnByValue': True,
         })
-        wiped = (wipe.get('result', {}) or {}).get('result', {}).get('value', 0)
+        wiped = (wipe.get('result', {}) or {}).get('value', 0)
         log(f'wiped {wiped} accesstoken cache entries')
 
         session.call('Page.reload', {'ignoreCache': True})
