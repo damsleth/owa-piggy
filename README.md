@@ -3,7 +3,6 @@
 [![PyPI](https://img.shields.io/pypi/v/owa-piggy.svg)](https://pypi.org/project/owa-piggy/)
 [![GitHub release](https://img.shields.io/github/v/release/damsleth/owa-piggy.svg)](https://github.com/damsleth/owa-piggy/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![codecov](https://codecov.io/gh/damsleth/owa-piggy/branch/main/graph/badge.svg)](https://codecov.io/gh/damsleth/owa-piggy)
 ![ci](https://github.com/damsleth/owa-piggy/actions/workflows/ci.yml/badge.svg)
 
 Turn your existing Outlook Web session into a reusable API token from the
