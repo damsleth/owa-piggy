@@ -386,7 +386,12 @@ def _mint_and_emit(args, *, mode):
     # fails (sidecar session also dead, capture timeout, etc.) we fall
     # through to the original error so the user still sees the underlying
     # cause instead of a generic 'reseed failed'.
-    if not result and info['aad_error']:
+    #
+    # Set OWA_AUTO_RESEED=0 to disable - useful for scripts that want the
+    # raw AAD error and the original ~instant failure path, or for
+    # debugging the reseed plumbing itself.
+    auto_reseed = os.environ.get('OWA_AUTO_RESEED', '1').strip() != '0'
+    if not result and info['aad_error'] and auto_reseed:
         print(f'[{alias}] {info["aad_error"]}: refresh token expired; '
               f'auto-reseeding...', file=sys.stderr)
         rc = do_reseed(alias)
