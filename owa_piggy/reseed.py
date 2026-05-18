@@ -76,6 +76,16 @@ def _do_reseed_capture(alias, config):
           file=sys.stderr)
     is_tty = sys.stdin.isatty()
     status, captured = capture.capture_silent(alias)
+    # Transient 'error' on the first attempt (CDP hiccup, slow /token
+    # round-trip past the timeout, etc.) is the most common cause of
+    # hourly cron failures in the refresh.log. One retry recovers nearly
+    # all of them. Skip the retry for 'reauth' (user action required) and
+    # 'headless_blocked' (handled by the headless->offscreen fallback
+    # below) since neither benefits from re-running the same path.
+    if status == 'error':
+        print(f'[{alias}] capture returned transient error; retrying once...',
+              file=sys.stderr)
+        status, captured = capture.capture_silent(alias)
     if status == 'headless_blocked' and not is_tty:
         # No human present (launchd) - try the offscreen-non-headless
         # silent path before giving up, since we can't fall back to
