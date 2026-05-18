@@ -570,7 +570,9 @@ def _cmd_debug(args):
     return do_debug(alias, audience=args.audience, scope=args.scope)
 
 
-def _cmd_audiences(args):
+def _cmd_audiences(_args):
+    # Underscore-prefixed because the dispatcher contract passes args to
+    # every handler but this one has nothing to read off it.
     max_name = max(len(n) for n in KNOWN_AUDIENCES)
     max_aud = max(len(aud) for aud, _ in KNOWN_AUDIENCES.values())
     for name, (aud, desc) in KNOWN_AUDIENCES.items():
