@@ -53,6 +53,15 @@ def exchange_token(refresh_token, tenant_id, client_id, scope):
                       'Run `owa-piggy reseed` to fetch a fresh token '
                       'headlessly from the Edge sidecar profile.',
                       file=sys.stderr)
+            elif 'AADSTS70043' in err_body:
+                # The tenant-side Conditional Access sign-in-frequency cap
+                # (typically 7 days). Same recovery path as 700084, but the
+                # error code is different so we surface it explicitly.
+                print('hint: refresh token expired by Conditional Access '
+                      'sign-in-frequency policy. Run `owa-piggy reseed` to '
+                      'fetch a fresh token headlessly from the Edge sidecar '
+                      'profile (Edge must still have a live tenant session).',
+                      file=sys.stderr)
         except Exception:
             print(f'ERROR: HTTP {e.code}: {err_body[:200]}', file=sys.stderr)
         return None
