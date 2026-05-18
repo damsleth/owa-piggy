@@ -100,15 +100,26 @@ def prompt_new_profile_fields(default_alias=''):
             print(f'  profile {alias!r} already exists.')
             continue
         break
+    # Empty email => legacy paste flow (faster, works on plain MSAL
+    # tenants). Set email => network-capture flow (required for
+    # encrypted-MSAL / Okta-federated tenants). The free-form prompt
+    # lets the user choose without making them remember `--email`.
     while True:
         try:
-            email = input('email address (used by Edge sign-in capture): ').strip()
+            email = input(
+                'email address for Edge sign-in capture '
+                '(blank = legacy paste flow): '
+            ).strip()
         except (EOFError, KeyboardInterrupt):
             print()
             return None, None, None
-        if email and '@' in email:
+        if not email:
+            email = None
             break
-        print('  please enter an email address (e.g. you@example.com).')
+        if '@' in email:
+            break
+        print('  enter an email address (e.g. you@example.com), '
+              'or leave blank for the paste flow.')
     print(f'default audience for this profile [{"/".join(_AUDIENCE_HINTS)}, '
           f'or full https URL] (default: graph):')
     try:
@@ -351,6 +362,10 @@ def run_picker():
     def draw():
         profiles, default, enabled = load_state()
         clamp_cursor(profiles)
+        # Compute launchd install state once per frame rather than re-
+        # stat'ing the plist for every row on every keystroke. Small
+        # win, but it also turns N filesystem calls into 1.
+        launchd_state = {alias: launchd_is_installed(alias) for alias in profiles}
         # Full-screen redraw: cheaper to reason about than a partial diff,
         # and the screen is tiny.
         sys.stdout.write(CLEAR_SCREEN)
@@ -372,7 +387,7 @@ def run_picker():
                     state_marker = f'{GREEN}x{RESET}'
                 else:
                     state_marker = f'{DIM} {RESET}'
-                launchd_marker = f' {CYAN}(L){RESET}' if launchd_is_installed(alias) else ''
+                launchd_marker = f' {CYAN}(L){RESET}' if launchd_state[alias] else ''
                 sys.stdout.write(
                     f' {cursor} [{state_marker}] {alias}{launchd_marker}{CLEAR_EOL}\r\n'
                 )
