@@ -87,6 +87,8 @@ examples:
   owa-piggy setup --profile new --email me@x.org   # network-capture setup (Okta etc.)
   pbpaste | owa-piggy setup --profile new          # pipe token from clipboard
   owa-piggy profiles                               # list (TTY: interactive picker)
+  owa-piggy profiles list                          # non-interactive list (alias of bare)
+  owa-piggy profiles list --json                   # machine-readable list
   owa-piggy profiles set-default work              # change the default pointer
   owa-piggy profiles delete personal               # remove a profile
   owa-piggy audiences                              # list all FOCI audiences
@@ -211,6 +213,14 @@ def _build_parser():
                             help='print profiles as JSON')
     profiles_sub = p_profiles.add_subparsers(
         dest='profiles_command', metavar='<subcommand>')
+
+    p_list = profiles_sub.add_parser(
+        'list', help='list profiles (non-interactive alias of bare `profiles`)')
+    # Distinct dest so the subparser flag doesn't clobber the parent
+    # `profiles --json` (argparse default-merge behavior). _cmd_profiles
+    # ORs the two so both spellings yield JSON.
+    p_list.add_argument('--json', action='store_true', dest='profiles_list_json',
+                        help='print profiles as JSON')
 
     p_sd = profiles_sub.add_parser(
         'set-default', help='make <alias> the default profile')
@@ -629,7 +639,11 @@ def _cmd_version(args):
 
 def _cmd_profiles(args):
     sub = getattr(args, 'profiles_command', None)
-    as_json = bool(getattr(args, 'json', False))
+    # `list` uses a distinct dest (profiles_list_json) so the subparser
+    # flag doesn't clobber the parent `--json`; OR them here so both
+    # spellings work: `profiles --json list` and `profiles list --json`.
+    as_json = bool(getattr(args, 'json', False)
+                   or getattr(args, 'profiles_list_json', False))
     if sub == 'set-default':
         return _do_profiles_set_default(args.alias, as_json=as_json)
     if sub == 'delete':
@@ -641,9 +655,19 @@ def _cmd_profiles(args):
         )
     if as_json:
         # Data class: raw doc on stdout. No top-level `ok` per the
-        # reserved-key contract.
+        # reserved-key contract. Shared by bare `profiles --json` and
+        # the explicit `profiles list` subcommand.
         print(json.dumps(_profiles_report(), indent=2))
         return 0
+    if sub == 'list':
+        # Non-interactive alias of bare `profiles`. Skips the TTY picker
+        # so scripts (and hugr doctor) get predictable output regardless
+        # of where they run.
+        from . import profile_tui
+        if not list_profiles():
+            print('no profiles configured. Run: owa-piggy setup --profile <alias>')
+            return 0
+        return profile_tui.print_plain_list()
     # Bare `owa-piggy profiles` - list (with interactive picker on TTY).
     return _do_profiles_list()
 
