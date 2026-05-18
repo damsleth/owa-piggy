@@ -2,11 +2,13 @@
 
 Both do a live exchange probe against AAD, which rotates the refresh token
 as a side effect. That's fine - a normal invocation would do the same.
+The exchange step itself goes through ``token_flow.exchange_fresh`` so
+status, debug, and the main mint path share scope resolution, FOCI
+shape checking, stderr capture, and rotated-RT persistence.
 
 Both take an `alias` parameter so output can be labeled with the active
 profile and the launchd plist we probe is the right one for that profile.
 """
-import io
 import os
 import subprocess
 import sys
@@ -21,7 +23,6 @@ from .config import (
     load_profiles_conf,
     profile_edge_dir,
     profiles_conf_path,
-    save_config,
 )
 from .jwt import decode_jwt_segment
 from .launchd import (
@@ -31,9 +32,10 @@ from .launchd import (
     legacy_plist_path,
     plist_path as launchd_plist_path,
 )
-from .oauth import CLIENT_ID, exchange_token
+from .oauth import CLIENT_ID
 from .scopes import KNOWN_AUDIENCES, resolve_audience
 from .scripts import find_reseed_script
+from .token_flow import exchange_fresh
 
 
 def _iso(ts):
@@ -88,8 +90,6 @@ def status_report(alias, audience=None, scope=None):
     _config.set_active_profile(alias)
     config, persist = load_config()
     rt = config.get('OWA_REFRESH_TOKEN', '').strip()
-    tid = config.get('OWA_TENANT_ID', '').strip()
-    cid = config.get('OWA_CLIENT_ID', CLIENT_ID).strip()
     report = {
         'profile': alias,
         'state': 'fail',
@@ -121,16 +121,6 @@ def status_report(alias, audience=None, scope=None):
         except ValueError:
             pass
 
-    if not rt or not tid:
-        if not rt:
-            report['hints'].append(f'run owa-piggy setup --profile {alias}')
-        if not tid:
-            report['hints'].append(f'profile {alias} is missing OWA_TENANT_ID')
-        return report
-    if not (rt.startswith('1.') or rt.startswith('0.')):
-        report['hints'].append('refresh token is not an AAD FOCI token; reseed from Microsoft Edge')
-        return report
-
     probe_scope, err = resolve_audience(
         audience,
         scope,
@@ -140,16 +130,24 @@ def status_report(alias, audience=None, scope=None):
         report['hints'].append(err)
         return report
 
-    captured = io.StringIO()
-    stderr_fd = sys.stderr
-    try:
-        sys.stderr = captured
-        result = exchange_token(rt, tid, cid, probe_scope)
-    finally:
-        sys.stderr = stderr_fd
+    # exchange_fresh handles config field extraction, FOCI shape check,
+    # stderr capture (so we can surface the AAD error as a hint instead
+    # of leaking it to the caller's stdout), and rotated-RT persistence.
+    result, info = exchange_fresh(config, probe_scope, persist=persist,
+                                  capture_stderr=True)
+
+    if not info['rt_present']:
+        report['hints'].append(f'run owa-piggy setup --profile {alias}')
+        return report
+    if not info['tid_present']:
+        report['hints'].append(f'profile {alias} is missing OWA_TENANT_ID')
+        return report
+    if not info['rt_shape_ok']:
+        report['hints'].append('refresh token is not an AAD FOCI token; reseed from Microsoft Edge')
+        return report
 
     if not result or not result.get('access_token'):
-        err_line = next((l for l in captured.getvalue().splitlines()
+        err_line = next((l for l in info['stderr_text'].splitlines()
                          if l.startswith('ERROR: ')), '')
         report['hints'].append(err_line[len('ERROR: '):] if err_line else 'token exchange failed')
         return report
@@ -172,12 +170,6 @@ def status_report(alias, audience=None, scope=None):
         'minutes_remaining': minutes,
     }
     report['state'] = _state(True, minutes)
-
-    new_rt = result.get('refresh_token')
-    if new_rt and new_rt != rt and persist:
-        config['OWA_REFRESH_TOKEN'] = new_rt
-        save_config(config)
-
     return report
 
 
@@ -217,9 +209,6 @@ def do_status(alias, audience=None, scope=None, multi=False):
     # but do_status_all() calls us directly per alias so we own it here.
     _config.set_active_profile(alias)
     config, persist = load_config()
-    rt = config.get('OWA_REFRESH_TOKEN', '').strip()
-    tid = config.get('OWA_TENANT_ID', '').strip()
-    cid = config.get('OWA_CLIENT_ID', CLIENT_ID).strip()
 
     # The per-profile header (`profile: <alias>`) goes to stdout in
     # multi-profile mode so concatenated output is self-describing, and
@@ -239,11 +228,7 @@ def do_status(alias, audience=None, scope=None, multi=False):
         print('status:       disabled')
         return 0
 
-    if not rt or not tid or not (rt.startswith('1.') or rt.startswith('0.')):
-        print('no valid token')
-        return 1
-
-    # Resolve scope BEFORE capturing stderr so any OWA_DEFAULT_AUDIENCE
+    # Resolve scope BEFORE the exchange so any OWA_DEFAULT_AUDIENCE
     # misconfiguration warning still reaches the user. status honors the
     # same options as the main token path, so
     # `owa-piggy status --audience outlook` probes the outlook audience.
@@ -255,26 +240,27 @@ def do_status(alias, audience=None, scope=None, multi=False):
     if err:
         print(f'ERROR: {err}', file=sys.stderr)
         return 1
-    # Capture exchange_token's stderr so we can surface the AAD error
-    # code alongside 'no valid token' instead of dropping it silently.
-    # Silent drops made AADSTS700084 look like a mystery - the user would
-    # see 'no valid token' in status and then the real reason only when
-    # running `owa-piggy` bare.
-    captured = io.StringIO()
-    stderr_fd = sys.stderr
-    try:
-        sys.stderr = captured
-        result = exchange_token(rt, tid, cid, probe_scope)
-    finally:
-        sys.stderr = stderr_fd
+
+    # exchange_fresh captures exchange_token's stderr so we can surface
+    # the AAD error alongside 'no valid token' instead of dropping it.
+    # Silent drops made AADSTS700084 look like a mystery - the user
+    # would see 'no valid token' here and the real reason only when
+    # running `owa-piggy` bare. Persistence of any rotated RT is
+    # handled by the helper.
+    result, info = exchange_fresh(config, probe_scope, persist=persist,
+                                  capture_stderr=True)
+
+    if not info['rt_present'] or not info['tid_present'] or not info['rt_shape_ok']:
+        print('no valid token')
+        return 1
 
     if not result or not result.get('access_token'):
         print('no valid token')
-        # Send the AAD error to the same stream as the [profile=...] label
-        # so single-profile mode keeps its strict stdout contract
+        # Send the AAD error to the same stream as the [profile=...]
+        # label so single-profile mode keeps its strict stdout contract
         # (stdout == 'no valid token') while multi-profile output stays
         # self-describing when scanning several profiles at once.
-        err_line = next((l for l in captured.getvalue().splitlines()
+        err_line = next((l for l in info['stderr_text'].splitlines()
                          if l.startswith('ERROR: ')), '')
         if err_line:
             print(err_line, file=label_stream)
@@ -309,11 +295,7 @@ def do_status(alias, audience=None, scope=None, multi=False):
                 break
     audience_line = f'{aud_name} ({aud})' if aud_name else (aud or 'unknown')
 
-    # Persist rotated RT (matches main-flow behavior).
-    new_rt = result.get('refresh_token')
-    if new_rt and new_rt != rt and persist:
-        config['OWA_REFRESH_TOKEN'] = new_rt
-        save_config(config)
+    # Rotated RT persistence is handled by exchange_fresh above.
 
     def iso(ts):
         return datetime.fromtimestamp(ts, tz=timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -448,7 +430,12 @@ def do_debug(alias, audience=None, scope=None):
 
         if shape_ok and tid:
             print('  probing live exchange against AAD...')
-            result = exchange_token(rt, tid, cid, debug_scope)
+            # exchange_fresh handles persistence of any rotated RT when
+            # persist=True; we let stderr flow through (capture_stderr=False)
+            # so AAD error text reaches the user via the same path the
+            # `exchange failed - see error above` row points at.
+            result, _info = exchange_fresh(config, debug_scope, persist=persist,
+                                           capture_stderr=False)
             if result and result.get('access_token'):
                 row('ok', 'exchange succeeded')
                 at = result['access_token']
@@ -476,11 +463,8 @@ def do_debug(alias, audience=None, scope=None):
                 except Exception as e:
                     row('no', 'access token decode failed', str(e))
 
-                new_rt = result.get('refresh_token', '')
-                if new_rt and new_rt != rt:
+                if _info['rotated']:
                     if persist:
-                        config['OWA_REFRESH_TOKEN'] = new_rt
-                        save_config(config)
                         row('ok', 'refresh token rotated and persisted')
                     else:
                         row('..', 'refresh token rotated (env-only, not persisted)')

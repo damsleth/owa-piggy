@@ -18,8 +18,7 @@ def test_status_json_marks_disabled_without_probe(
     save_profiles_conf({'OWA_DEFAULT_PROFILE': '', 'OWA_PROFILES': []})
     calls = []
     monkeypatch.setattr(
-        status_mod,
-        'exchange_token',
+        'owa_piggy.token_flow.exchange_token',
         lambda *_args: calls.append(True) or {'access_token': 'unused'},
     )
 
@@ -55,7 +54,7 @@ def test_status_json_keeps_legacy_fallback_when_registry_missing(
             }),
         }
 
-    monkeypatch.setattr(status_mod, 'exchange_token', _exchange)
+    monkeypatch.setattr('owa_piggy.token_flow.exchange_token', _exchange)
 
     report = status_mod.status_report('work')
 
@@ -87,7 +86,7 @@ def test_status_honors_profile_default_audience(
             }),
         }
 
-    monkeypatch.setattr(status_mod, 'exchange_token', _exchange)
+    monkeypatch.setattr('owa_piggy.token_flow.exchange_token', _exchange)
     monkeypatch.setattr(status_mod, 'launchd_is_installed', lambda _alias: False)
 
     rc = status_mod.do_status('work')
@@ -125,7 +124,7 @@ def test_debug_honors_profile_default_audience(
     def _fake_run(*_args, **_kwargs):
         return SimpleNamespace(returncode=1, stdout='', stderr='not loaded')
 
-    monkeypatch.setattr(status_mod, 'exchange_token', _exchange)
+    monkeypatch.setattr('owa_piggy.token_flow.exchange_token', _exchange)
     monkeypatch.setattr(status_mod.subprocess, 'run', _fake_run)
     monkeypatch.setattr(status_mod, 'find_reseed_script', lambda: None)
 
