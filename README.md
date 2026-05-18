@@ -91,12 +91,13 @@ Bare `owa-piggy` is shorthand for `owa-piggy token` - the access token goes to s
 | `remaining`              | print minutes remaining on the current access token                   |
 | `audiences`              | list all known FOCI-accessible audiences                              |
 | `profiles`               | list profiles (TTY: interactive picker); `--json` emits aliases and config presence |
-| `profiles set-default A` | make `A` the default profile                                          |
-| `profiles delete A`      | remove profile `A`'s config + Edge sidecar dir (`--force` to override) |
+| `profiles list`          | non-interactive list (alias of bare `profiles` without the picker); `--json` emits the registry doc - use this in scripts |
+| `profiles set-default A` | make `A` the default profile; `--json` emits an action envelope     |
+| `profiles delete A`      | remove profile `A`'s config + Edge sidecar dir; `--force` to override default-pointer guard, `--yes` to bypass TTY confirmation (required in non-TTY), `--json` for action envelope |
 | `install-owa-tools`      | shorthand for `brew install damsleth/tap/owa-tools` (the companion suite) |
 | `version`                | print version information; `--json` emits `{"tool": ..., "version": ...}` |
 
-Global options: `--profile <alias>`, `--audience <name>`, `--scope <explicit>`, `--version`, `--help`. Per-command help: `owa-piggy <command> --help`.
+Top-level flags: `--version`, `--help`. Per-command options (`--profile <alias>`, `--audience <name>`, `--scope <explicit>`) are accepted on the bare invocation too, because it's rewritten to `owa-piggy token <opts>`. `--audience` is validated against the known list at parse time, so typos error out with the full audience set instead of silently using the default. Per-command help: `owa-piggy <command> --help`.
 
 ## Examples
 
@@ -106,9 +107,11 @@ owa-piggy --audience outlook           # Outlook REST audience
 owa-piggy --audience teams             # Teams audience
 owa-piggy remaining                    # minutes left on current token
 owa-piggy token --json | jq .scope     # inspect granted scopes
+eval $(owa-piggy token --env)          # export ACCESS_TOKEN= / EXPIRES_IN=
 owa-piggy status                       # compact ISO8601 health summary
 owa-piggy status --json                # machine-readable health, no token values
-owa-piggy profiles --json              # machine-readable profile registry
+owa-piggy profiles list                # non-interactive list (safe in scripts)
+owa-piggy profiles list --json         # machine-readable profile registry
 owa-piggy debug                        # full setup diagnostics
 owa-piggy --version                    # print version
 owa-piggy version --json               # machine-readable version
@@ -199,16 +202,20 @@ Only step 1 runs continuously. Steps 2-5 fire on `owa-piggy reseed`, which is ne
 ## Diagnostics
 
 ```sh
-owa-piggy status
+owa-piggy status --profile work
 ```
 ```
-authtoken:    expires 2026-04-20T11:46:51Z
-audience:     outlook (https://outlook.office.com)
-scope(s):     Calendars.ReadWrite, Mail.ReadWrite, Files.ReadWrite, ... (74 scopes)
-refreshtoken: expires 2026-04-21T09:30:00Z
+profile:      work
+authtoken:    expires 2026-04-20T11:46:51Z (1h24m)
+refreshtoken: expires 2026-04-21T09:30:00Z (22h38m)
+audience:     graph (https://graph.microsoft.com)
+scopes:       default(26)
+launchd:      true
 ```
 
-Prints `no valid token` (exit 1) if setup is missing or the live probe fails. The refresh-token expiry is the 24h hard-cap, computed from `OWA_RT_ISSUED_AT` which is stamped on `setup` and `reseed` (setups from before this field landed will show `unknown` until the next reseed).
+Without `--profile`, `status` reports every configured profile in a stanza per alias. Prints `no valid token` (exit 1) and an `ERROR:` line on stderr if the live probe fails for a profile. The refresh-token expiry is the 24h hard-cap, computed from `OWA_RT_ISSUED_AT` which is stamped on `setup` and `reseed` (setups from before this field landed will show `unknown` until the next reseed). `scopes:` collapses to `default(N)` for the default scope set; an explicit `--scope` request prints the granted scope list verbatim. `launchd:` shows whether a per-profile LaunchAgent is bootstrapped.
+
+`owa-piggy status --json` returns the machine-readable shape consumed by `hugr doctor` and other suite tools: one object per profile with `state` (`ok|fail|disabled`), `access_token.expires_at`, `refresh_token.expires_at`, and `hints[]`.
 
 ```sh
 owa-piggy debug
@@ -246,6 +253,11 @@ Writes are atomic (temp file + fsync + rename) so a crash mid-rotation cannot co
 - `OWA_REFRESH_TOKEN`, `OWA_TENANT_ID` - override the corresponding config values (when `OWA_REFRESH_TOKEN` is env-supplied, rotated tokens are kept env-only and not written back to disk)
 - `OWA_CLIENT_ID` - override the default OWA client ID
 - `OWA_DEFAULT_AUDIENCE` - change the default audience (a short name from `owa-piggy audiences` like `outlook`, or a full https URL). Command-line `--audience` / `--scope` still wins.
+- `OWA_PROFILE` - select the active profile, overriding `OWA_DEFAULT_PROFILE`. Equivalent to `--profile <alias>`.
+- `OWA_AUTH_MODE` - stamped on the profile config by `setup` (`scrape` for legacy MSAL paste flow, `capture` for the network-capture flow used by encrypted-MSAL / Okta-federated tenants). `reseed` branches on this to pick the right mechanism.
+- `OWA_EMAIL` - account hint stamped on the profile when `setup --email` is used; reseed validates captured tokens against it.
+- `OWA_RT_ISSUED_AT` - ISO-8601 timestamp written on every `setup` / `reseed`. Drives the refresh-token hard-cap calculation in `status`.
+- `OWA_RESEED_HEADLESS=0`, `OWA_CAPTURE_HEADLESS=0` - escape hatches for tenants whose Conditional Access blocks headless Edge. Drop the reseed/capture flow to an offscreen non-headless window (mechanism step 4 in the hierarchy table above).
 
 ---
 
@@ -259,6 +271,8 @@ owa-piggy setup --profile personal            # ...and another
 owa-piggy --profile work                      # raw token for 'work'
 OWA_PROFILE=work owa-piggy                    # same, via env
 owa-piggy profiles                            # list (TTY: interactive picker)
+owa-piggy profiles list                       # non-interactive list (scripts, CI)
+owa-piggy profiles list --json                # machine-readable registry
 owa-piggy profiles set-default work           # change the default pointer
 owa-piggy status --profile personal           # health check, per profile
 owa-piggy reseed --profile work               # recover one profile after 24h

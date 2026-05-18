@@ -71,3 +71,42 @@ def test_reseed_json_emits_envelope_on_usage_error():
   assert payload["command"] == "reseed"
   assert payload["ok"] is False
   assert payload["error"]["code"] == "usage"
+
+
+def _profiles_list_keys(payload: dict) -> None:
+  """Shape check for `profiles --json` / `profiles list --json`."""
+  assert "default" in payload
+  assert isinstance(payload.get("profiles"), list)
+  for entry in payload["profiles"]:
+    assert "alias" in entry
+    assert "default" in entry
+    assert "registered" in entry
+    assert "has_config" in entry
+
+
+def test_profiles_list_json_returns_registry_doc():
+  """`profiles list --json` returns the same shape as bare `profiles --json`."""
+  result = _run("profiles", "list", "--json")
+  assert result.returncode == 0
+  payload = json.loads(result.stdout)
+  _profiles_list_keys(payload)
+
+
+def test_profiles_json_list_returns_registry_doc():
+  """Parent `--json` placement also yields JSON (regression: argparse
+  subparser default once clobbered the parent flag, producing plain text)."""
+  result = _run("profiles", "--json", "list")
+  assert result.returncode == 0
+  payload = json.loads(result.stdout)
+  _profiles_list_keys(payload)
+
+
+def test_profiles_list_plain_does_not_open_picker():
+  """`profiles list` (no --json) emits plain text even on a TTY context;
+  it must never block on an interactive picker - that's the whole point
+  of having `list` as a non-interactive alias for scripts."""
+  result = _run("profiles", "list")
+  # Either we have profiles (plain list, one per line, possibly with markers)
+  # or the empty-state hint. Both are non-interactive.
+  assert result.returncode == 0
+  assert "owa-piggy setup" in result.stdout or result.stdout.strip()
