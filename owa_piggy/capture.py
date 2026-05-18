@@ -407,7 +407,7 @@ def capture_signin(alias, email, *, timeout=300):
     return _build_config(token_response, email=email, mode='capture')
 
 
-def capture_silent(alias, *, timeout=20, headless=None):
+def capture_silent(alias, *, timeout=None, headless=None):
     """Headless Edge for scheduled reseed. Returns (status, config_dict):
 
       ('ok', dict)              success - dict has OWA_REFRESH_TOKEN/OWA_TENANT_ID
@@ -425,7 +425,17 @@ def capture_silent(alias, *, timeout=20, headless=None):
     headless=False to force the offscreen-but-not-headless mode. Even in
     the offscreen mode no onscreen window appears - the window is parked
     at -32000,-32000 - so launchd users still don't get a flashing browser.
+
+    `timeout=None` reads OWA_CAPTURE_TIMEOUT (default 60s). The default was
+    20s historically but Conditional-Access-heavy tenants routinely take
+    25-40s on the post-reload /token round-trip; the 20s budget tripped
+    spurious 'error' returns on otherwise healthy sessions.
     """
+    if timeout is None:
+        try:
+            timeout = int(os.environ.get('OWA_CAPTURE_TIMEOUT', '60'))
+        except ValueError:
+            timeout = 60
     log = _logger(f'capture/silent/{alias}')
     tick = _ticker(alias)
     edge_dir = _config.profile_edge_dir(alias)

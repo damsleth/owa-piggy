@@ -12,6 +12,7 @@ with a known subcommand and injecting `token` explicitly when it does
 not. The subsequent argparse pass sees a consistent shape either way.
 """
 import argparse
+import io
 import json
 import os
 import subprocess
@@ -286,6 +287,41 @@ def _cmd_remaining(args):
     return _mint_and_emit(args, mode='remaining')
 
 
+def _exchange_capturing_error(refresh_token, tenant_id, client_id, scope):
+    """Call exchange_token but also return the AADSTS error code (if any).
+
+    exchange_token prints 'ERROR: <code>: <desc>' to stderr on failure
+    and returns None. The caller in _mint_and_emit wants the AAD code so
+    it can decide whether the failure is the kind that auto-reseed can
+    fix (AADSTS70043 / AADSTS700084) vs. a real config problem. Rather
+    than restructure exchange_token to return a (data, code) pair (which
+    would ripple through status.py's stderr-capture call sites too), we
+    intercept its stderr the same way status.py does and grep out the
+    AADSTS token. Stderr is replayed verbatim so the user-facing
+    contract is unchanged.
+    """
+    if not refresh_token or not tenant_id:
+        return exchange_token(refresh_token, tenant_id, client_id, scope), None
+    captured = io.StringIO()
+    stderr_fd = sys.stderr
+    try:
+        sys.stderr = captured
+        result = exchange_token(refresh_token, tenant_id, client_id, scope)
+    finally:
+        sys.stderr = stderr_fd
+    text = captured.getvalue()
+    if text:
+        sys.stderr.write(text)
+        sys.stderr.flush()
+    aad_error = None
+    if not result:
+        for code in ('AADSTS70043', 'AADSTS700084'):
+            if code in text:
+                aad_error = code
+                break
+    return result, aad_error
+
+
 def _mint_and_emit(args, *, mode):
     """Shared token-mint path for token/decode/remaining.
 
@@ -360,7 +396,26 @@ def _mint_and_emit(args, *, mode):
                   file=sys.stderr)
         return 1
 
-    result = exchange_token(refresh_token, tenant_id, client_id, scope)
+    result, aad_error = _exchange_capturing_error(
+        refresh_token, tenant_id, client_id, scope)
+    # AADSTS70043 (7-day Conditional Access sign-in-frequency cap) and
+    # AADSTS700084 (24h SPA hard-cap) are both unrecoverable without a
+    # fresh RT off the wire - but we can fetch one ourselves via
+    # do_reseed without surfacing the AAD error to the consumer (owa-cal,
+    # owa-mail, ...). One auto-reseed + retry per call. If reseed itself
+    # fails (sidecar session also dead, capture timeout, etc.) we fall
+    # through to the original error so the user still sees the underlying
+    # cause instead of a generic 'reseed failed'.
+    if not result and aad_error in ('AADSTS70043', 'AADSTS700084'):
+        print(f'[{alias}] {aad_error}: refresh token expired; '
+              f'auto-reseeding...', file=sys.stderr)
+        rc = do_reseed(alias)
+        if rc == 0:
+            config, persist = load_config()
+            refresh_token = config.get('OWA_REFRESH_TOKEN', '').strip()
+            tenant_id = config.get('OWA_TENANT_ID', '').strip()
+            result, aad_error = _exchange_capturing_error(
+                refresh_token, tenant_id, client_id, scope)
     if not result:
         return 1
 
