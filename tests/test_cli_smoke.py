@@ -102,7 +102,7 @@ def test_decode_prints_synthetic_jwt(monkeypatch, capsys, tmp_config,
     token = make_jwt({'exp': 9_999_999_999,
                       'aud': 'https://graph.microsoft.com',
                       'scp': 'Mail.Read Mail.Send'})
-    monkeypatch.setattr(cli_mod, 'exchange_token',
+    monkeypatch.setattr('owa_piggy.token_flow.exchange_token',
                         lambda rt, tid, cid, scope: {'access_token': token,
                                                      'expires_in': 3600})
     rc = _run(monkeypatch, ['decode'])
@@ -119,7 +119,7 @@ def test_remaining_prints_minutes(monkeypatch, capsys, tmp_config, clean_env,
     save_config({'OWA_REFRESH_TOKEN': '1.AQ_fake',
                  'OWA_TENANT_ID': 'tid'})
     token = make_jwt({'exp': int(frozen_time) + 3600})
-    monkeypatch.setattr(cli_mod, 'exchange_token',
+    monkeypatch.setattr('owa_piggy.token_flow.exchange_token',
                         lambda *a, **k: {'access_token': token,
                                          'expires_in': 3600})
     rc = _run(monkeypatch, ['remaining'])
@@ -152,7 +152,7 @@ def test_raw_token_to_stdout(monkeypatch, capsys, tmp_config, clean_env,
     from owa_piggy.config import save_config
     save_config({'OWA_REFRESH_TOKEN': '1.AQ_fake', 'OWA_TENANT_ID': 'tid'})
     token = make_jwt({'exp': 9_999_999_999})
-    monkeypatch.setattr(cli_mod, 'exchange_token',
+    monkeypatch.setattr('owa_piggy.token_flow.exchange_token',
                         lambda *a, **k: {'access_token': token,
                                          'expires_in': 3600})
     rc = _run(monkeypatch, [])
@@ -165,7 +165,7 @@ def test_env_mode_emits_shell_vars(monkeypatch, capsys, tmp_config, clean_env,
     from owa_piggy.config import save_config
     save_config({'OWA_REFRESH_TOKEN': '1.AQ_fake', 'OWA_TENANT_ID': 'tid'})
     token = make_jwt({'exp': 9_999_999_999})
-    monkeypatch.setattr(cli_mod, 'exchange_token',
+    monkeypatch.setattr('owa_piggy.token_flow.exchange_token',
                         lambda *a, **k: {'access_token': token,
                                          'expires_in': 3600})
     rc = _run(monkeypatch, ['token', '--env'])
@@ -181,7 +181,7 @@ def test_bare_token_env_works(monkeypatch, capsys, tmp_config, clean_env,
     from owa_piggy.config import save_config
     save_config({'OWA_REFRESH_TOKEN': '1.AQ_fake', 'OWA_TENANT_ID': 'tid'})
     token = make_jwt({'exp': 9_999_999_999})
-    monkeypatch.setattr(cli_mod, 'exchange_token',
+    monkeypatch.setattr('owa_piggy.token_flow.exchange_token',
                         lambda *a, **k: {'access_token': token,
                                          'expires_in': 3600})
     rc = _run(monkeypatch, ['--env'])
@@ -216,7 +216,7 @@ def test_cache_short_circuits_exchange(monkeypatch, capsys, tmp_config,
 
     def _boom(*a, **k):
         raise AssertionError('exchange_token must not be called on cache hit')
-    monkeypatch.setattr(cli_mod, 'exchange_token', _boom)
+    monkeypatch.setattr('owa_piggy.token_flow.exchange_token', _boom)
 
     rc = _run(monkeypatch, [])
     assert rc == 0
@@ -235,7 +235,7 @@ def test_cache_writes_on_exchange(monkeypatch, tmp_config, clean_env,
 
     save_config({'OWA_REFRESH_TOKEN': '1.AQ_fake', 'OWA_TENANT_ID': 'tid'})
     token = make_jwt({'exp': int(_time.time()) + 3600})
-    monkeypatch.setattr(cli_mod, 'exchange_token',
+    monkeypatch.setattr('owa_piggy.token_flow.exchange_token',
                         lambda *a, **k: {'access_token': token,
                                          'expires_in': 3600})
     rc = _run(monkeypatch, [])
@@ -267,7 +267,7 @@ def test_cache_does_not_cross_tenant_boundary(monkeypatch, capsys, tmp_config,
     def _exchange(*a, **k):
         called['n'] += 1
         return {'access_token': fresh, 'expires_in': 3600}
-    monkeypatch.setattr(cli_mod, 'exchange_token', _exchange)
+    monkeypatch.setattr('owa_piggy.token_flow.exchange_token', _exchange)
 
     rc = _run(monkeypatch, [])
     assert rc == 0
@@ -304,7 +304,7 @@ def test_setup_clears_cache(monkeypatch, tmp_config, clean_env, make_jwt):
 
     from owa_piggy import profiles as profiles_mod
     monkeypatch.setattr(profiles_mod, 'interactive_setup', _fake_setup)
-    monkeypatch.setattr(cli_mod, 'exchange_token',
+    monkeypatch.setattr('owa_piggy.token_flow.exchange_token',
                         lambda *a, **k: {'access_token':
                                          make_jwt({'exp': int(_time.time()) + 3600}),
                                          'expires_in': 3600})
@@ -363,7 +363,7 @@ def test_json_bypasses_cache(monkeypatch, capsys, tmp_config, clean_env,
         called['n'] += 1
         return {'access_token': fresh_token, 'refresh_token': '1.AQ_rotated',
                 'expires_in': 3600}
-    monkeypatch.setattr(cli_mod, 'exchange_token', _exchange)
+    monkeypatch.setattr('owa_piggy.token_flow.exchange_token', _exchange)
 
     rc = _run(monkeypatch, ['token', '--json'])
     assert rc == 0
@@ -394,7 +394,7 @@ def test_expired_cache_falls_through_to_exchange(monkeypatch, capsys,
     def _exchange(*a, **k):
         called['n'] += 1
         return {'access_token': fresh, 'expires_in': 3600}
-    monkeypatch.setattr(cli_mod, 'exchange_token', _exchange)
+    monkeypatch.setattr('owa_piggy.token_flow.exchange_token', _exchange)
 
     rc = _run(monkeypatch, [])
     assert rc == 0
@@ -499,7 +499,7 @@ def test_cache_hit_env_mode(monkeypatch, capsys, tmp_config, clean_env,
     token = make_jwt({'exp': future})
     store_token('tid', CLIENT_ID, scope, token, future)
 
-    monkeypatch.setattr(cli_mod, 'exchange_token',
+    monkeypatch.setattr('owa_piggy.token_flow.exchange_token',
                         lambda *a, **k: pytest.fail('cache should serve --env'))
     rc = _run(monkeypatch, ['token', '--env'])
     assert rc == 0
@@ -530,7 +530,7 @@ def test_cache_hit_decode_mode(monkeypatch, capsys, tmp_config, clean_env,
                       'scp': 'Mail.Read'})
     store_token('tid', CLIENT_ID, scope, token, int(_time.time()) + 3600)
 
-    monkeypatch.setattr(cli_mod, 'exchange_token',
+    monkeypatch.setattr('owa_piggy.token_flow.exchange_token',
                         lambda *a, **k: pytest.fail('cache should serve decode'))
     rc = _run(monkeypatch, ['decode'])
     assert rc == 0
@@ -572,7 +572,7 @@ def test_scope_value_not_treated_as_unknown_flag(monkeypatch, capsys,
     from owa_piggy.config import save_config
     save_config({'OWA_REFRESH_TOKEN': '1.AQ_fake', 'OWA_TENANT_ID': 'tid'})
     token = make_jwt({'exp': 9_999_999_999})
-    monkeypatch.setattr(cli_mod, 'exchange_token',
+    monkeypatch.setattr('owa_piggy.token_flow.exchange_token',
                         lambda *a, **k: {'access_token': token,
                                          'expires_in': 3600})
     rc = _run(monkeypatch, ['--scope', 'https://graph.microsoft.com/.default'])
@@ -692,12 +692,12 @@ def test_status_json_single_profile_redacts_tokens(
         'exp': 9_999_999_999,
         'scp': 'User.Read Mail.Read',
     })
-    monkeypatch.setattr(cli_mod, 'exchange_token', lambda *a, **k: {
+    monkeypatch.setattr('owa_piggy.token_flow.exchange_token', lambda *a, **k: {
         'access_token': token,
         'expires_in': 3600,
         'refresh_token': '1.AQ_rotated',
     })
-    monkeypatch.setattr('owa_piggy.status.exchange_token', lambda *a, **k: {
+    monkeypatch.setattr('owa_piggy.token_flow.exchange_token', lambda *a, **k: {
         'access_token': token,
         'expires_in': 3600,
         'refresh_token': '1.AQ_rotated',
@@ -983,7 +983,7 @@ def test_cache_hit_remaining_mode(monkeypatch, capsys, tmp_config, clean_env,
     token = make_jwt({'exp': future})
     store_token('tid', CLIENT_ID, scope, token, future)
 
-    monkeypatch.setattr(cli_mod, 'exchange_token',
+    monkeypatch.setattr('owa_piggy.token_flow.exchange_token',
                         lambda *a, **k: pytest.fail('cache should serve remaining'))
     rc = _run(monkeypatch, ['remaining'])
     assert rc == 0

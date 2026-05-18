@@ -12,7 +12,6 @@ with a known subcommand and injecting `token` explicitly when it does
 not. The subsequent argparse pass sees a consistent shape either way.
 """
 import argparse
-import io
 import json
 import os
 import subprocess
@@ -38,11 +37,12 @@ from .config import (
 )
 from .jwt import decode_jwt, decode_jwt_segment, token_minutes_remaining
 from .migration import migrate_if_needed
-from .oauth import CLIENT_ID, exchange_token
+from .oauth import CLIENT_ID
 from .profiles import create_profile, delete_profile, set_default_profile
 from .reseed import do_reseed, do_reseed_all
 from .scopes import KNOWN_AUDIENCES, resolve_audience
 from .status import do_debug, do_status, do_status_all, status_all_report, status_report
+from .token_flow import exchange_fresh
 
 _EPILOG = """\
 one-time setup (two paths):
@@ -297,41 +297,6 @@ def _cmd_remaining(args):
     return _mint_and_emit(args, mode='remaining')
 
 
-def _exchange_capturing_error(refresh_token, tenant_id, client_id, scope):
-    """Call exchange_token but also return the AADSTS error code (if any).
-
-    exchange_token prints 'ERROR: <code>: <desc>' to stderr on failure
-    and returns None. The caller in _mint_and_emit wants the AAD code so
-    it can decide whether the failure is the kind that auto-reseed can
-    fix (AADSTS70043 / AADSTS700084) vs. a real config problem. Rather
-    than restructure exchange_token to return a (data, code) pair (which
-    would ripple through status.py's stderr-capture call sites too), we
-    intercept its stderr the same way status.py does and grep out the
-    AADSTS token. Stderr is replayed verbatim so the user-facing
-    contract is unchanged.
-    """
-    if not refresh_token or not tenant_id:
-        return exchange_token(refresh_token, tenant_id, client_id, scope), None
-    captured = io.StringIO()
-    stderr_fd = sys.stderr
-    try:
-        sys.stderr = captured
-        result = exchange_token(refresh_token, tenant_id, client_id, scope)
-    finally:
-        sys.stderr = stderr_fd
-    text = captured.getvalue()
-    if text:
-        sys.stderr.write(text)
-        sys.stderr.flush()
-    aad_error = None
-    if not result:
-        for code in ('AADSTS70043', 'AADSTS700084'):
-            if code in text:
-                aad_error = code
-                break
-    return result, aad_error
-
-
 def _mint_and_emit(args, *, mode):
     """Shared token-mint path for token/decode/remaining.
 
@@ -351,7 +316,6 @@ def _mint_and_emit(args, *, mode):
         return rc
 
     config, persist = load_config()
-    refresh_token = config.get('OWA_REFRESH_TOKEN', '').strip()
     tenant_id = config.get('OWA_TENANT_ID', '').strip()
     client_id = config.get('OWA_CLIENT_ID', CLIENT_ID).strip()
 
@@ -382,32 +346,38 @@ def _mint_and_emit(args, *, mode):
             return _emit(cached_at, mode,
                          cache_hit_exp=get_cached_exp(tenant_id, client_id, scope))
 
-    # Sanity-check the token shape before we ship it to AAD. Real FOCI
-    # refresh tokens are "{version}.{base64url payload}" with version 0
-    # or 1. Plain Chromium browsers store a session-bound opaque token
-    # at MSAL's cache location that AAD rejects as malformed. Fail fast
-    # with an actionable message instead of letting AADSTS9002313 confuse
-    # the user.
-    if refresh_token and not (refresh_token.startswith('1.') or refresh_token.startswith('0.')):
+    # exchange_fresh handles config-field extraction, FOCI shape check,
+    # stderr capture, AAD-error detection, and rotated-RT persistence.
+    # We replay the captured stderr immediately so the user-facing
+    # 'ERROR: AADSTS...' line still reaches the terminal verbatim.
+    result, info = exchange_fresh(config, scope, persist=persist,
+                                  capture_stderr=True)
+    if info['stderr_text']:
+        sys.stderr.write(info['stderr_text'])
+        sys.stderr.flush()
+
+    if not info['rt_present']:
+        print(f'ERROR: OWA_REFRESH_TOKEN not set for profile {alias!r}. '
+              f'Run: owa-piggy setup --profile {alias}',
+              file=sys.stderr)
+        return 1
+    if info['rt_present'] and not info['rt_shape_ok']:
+        # Real FOCI refresh tokens are "{version}.{base64url payload}"
+        # with version 0 or 1. Plain Chromium browsers store a session-
+        # bound opaque token at MSAL's cache location that AAD rejects
+        # as malformed; fail fast with an actionable message instead of
+        # letting AADSTS9002313 confuse the user.
         print('ERROR: OWA_REFRESH_TOKEN does not look like an AAD FOCI refresh '
               'token (expected "1.AQ..." or "0.AQ..."). Plain Chromium browsers '
               'store a session-bound token that AAD will not accept. Reseed '
               'from Microsoft Edge via `owa-piggy setup`.', file=sys.stderr)
         return 1
-
-    if not refresh_token or not tenant_id:
-        if not refresh_token:
-            print(f'ERROR: OWA_REFRESH_TOKEN not set for profile {alias!r}. '
-                  f'Run: owa-piggy setup --profile {alias}',
-                  file=sys.stderr)
-        if not tenant_id:
-            print(f'ERROR: OWA_TENANT_ID not set for profile {alias!r}. '
-                  f'Run: owa-piggy setup --profile {alias}',
-                  file=sys.stderr)
+    if not info['tid_present']:
+        print(f'ERROR: OWA_TENANT_ID not set for profile {alias!r}. '
+              f'Run: owa-piggy setup --profile {alias}',
+              file=sys.stderr)
         return 1
 
-    result, aad_error = _exchange_capturing_error(
-        refresh_token, tenant_id, client_id, scope)
     # AADSTS70043 (7-day Conditional Access sign-in-frequency cap) and
     # AADSTS700084 (24h SPA hard-cap) are both unrecoverable without a
     # fresh RT off the wire - but we can fetch one ourselves via
@@ -416,22 +386,21 @@ def _mint_and_emit(args, *, mode):
     # fails (sidecar session also dead, capture timeout, etc.) we fall
     # through to the original error so the user still sees the underlying
     # cause instead of a generic 'reseed failed'.
-    if not result and aad_error in ('AADSTS70043', 'AADSTS700084'):
-        print(f'[{alias}] {aad_error}: refresh token expired; '
+    if not result and info['aad_error']:
+        print(f'[{alias}] {info["aad_error"]}: refresh token expired; '
               f'auto-reseeding...', file=sys.stderr)
         rc = do_reseed(alias)
         if rc == 0:
             config, persist = load_config()
-            refresh_token = config.get('OWA_REFRESH_TOKEN', '').strip()
-            tenant_id = config.get('OWA_TENANT_ID', '').strip()
-            result, aad_error = _exchange_capturing_error(
-                refresh_token, tenant_id, client_id, scope)
+            result, info = exchange_fresh(config, scope, persist=persist,
+                                          capture_stderr=True)
+            if info['stderr_text']:
+                sys.stderr.write(info['stderr_text'])
+                sys.stderr.flush()
     if not result:
         return 1
 
     access_token = result.get('access_token')
-    new_refresh = result.get('refresh_token')
-
     if not access_token:
         print(f'ERROR: no access_token in response: {list(result.keys())}',
               file=sys.stderr)
@@ -444,21 +413,19 @@ def _mint_and_emit(args, *, mode):
         payload = decode_jwt_segment(access_token.split('.')[1])
         exp = payload.get('exp')
         if isinstance(exp, (int, float)):
-            store_token(tenant_id, client_id, scope, access_token, exp)
+            store_token(info['tid'], info['cid'], scope, access_token, exp)
     except Exception:
         pass
 
-    # Persist rotated refresh token only when the original came from the
-    # config file. Env-only callers stay env-only; writing to disk would
-    # silently turn non-persistent usage into persistent secret storage.
-    if new_refresh:
-        config['OWA_REFRESH_TOKEN'] = new_refresh
-        if persist:
-            save_config(config)
-        elif new_refresh != refresh_token:
-            print('NOTE: refresh token rotated; OWA_REFRESH_TOKEN was env-only so '
-                  'the new token was not written to disk. Update your environment '
-                  'or run `owa-piggy setup` to persist.', file=sys.stderr)
+    # exchange_fresh persisted the rotated RT when persist=True. The
+    # env-only case still rotated the in-memory config dict but did not
+    # write to disk - surface that to the user so they know to update
+    # their environment (the NOTE writes go to stderr to keep stdout
+    # script-clean).
+    if info['rotated'] and not persist:
+        print('NOTE: refresh token rotated; OWA_REFRESH_TOKEN was env-only so '
+              'the new token was not written to disk. Update your environment '
+              'or run `owa-piggy setup` to persist.', file=sys.stderr)
 
     return _emit(access_token, mode, full_response=result)
 
