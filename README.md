@@ -17,12 +17,12 @@ package, separate token store, never imported.
 ## Suite
 
 `owa-piggy` is the M365 auth broker in the
-**[mnem](https://github.com/damsleth/mnem)** memory suite, alongside
+**[hugr](https://github.com/damsleth/hugr)** memory suite, alongside
 YAAMS (Tier 1 raw), cognitive-ledger (Tier 2 curated), and owa-tools
 (M365 read/write). The suite gives you one install (`brew install
-damsleth/tap/mnem`), one verb surface (`mnem auth ...`), and one
+damsleth/tap/hugr`), one verb surface (`hugr auth ...`), and one
 CLI contract (output classes, exit codes - see
-[mnem/CONVENTIONS.md](https://github.com/damsleth/mnem/blob/main/CONVENTIONS.md)).
+[hugr/CONVENTIONS.md](https://github.com/damsleth/hugr/blob/main/CONVENTIONS.md)).
 `owa-piggy` continues to work standalone and remains the only thing
 that touches your refresh tokens.
 
