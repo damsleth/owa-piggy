@@ -1,8 +1,8 @@
-"""owa-piggy implementation of the mnem suite CLI contract.
+"""owa-piggy implementation of the hugr suite CLI contract.
 
 Mirrors yaams/conventions.py and ledger/conventions.py - they will
-collapse into a shared mnem-conventions package later. See
-https://github.com/damsleth/mnem/blob/main/CONVENTIONS.md.
+collapse into a shared hugr-conventions package later. See
+https://github.com/damsleth/hugr/blob/main/CONVENTIONS.md.
 """
 
 from __future__ import annotations

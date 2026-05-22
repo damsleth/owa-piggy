@@ -459,7 +459,7 @@ def _emit(access_token, mode, *, full_response=None, cache_hit_exp=None):
 
 
 def _cmd_setup(args):
-    # setup is interactive class per mnem CONVENTIONS.md - --json is
+    # setup is interactive class per hugr CONVENTIONS.md - --json is
     # rejected with a clear pointer to a machine-friendly alternative.
     if getattr(args, 'json', False):
         print(
@@ -800,7 +800,7 @@ assert set(COMMANDS) == set(_DISPATCH), \
 
 def main():
     raw = list(sys.argv[1:])
-    # Top-level --doctor per mnem CONVENTIONS.md. Handle before
+    # Top-level --doctor per hugr CONVENTIONS.md. Handle before
     # argparse so it composes with --json without touching the
     # subcommand surface.
     if "--doctor" in raw:

@@ -1,4 +1,4 @@
-"""Tests for the mnem CLI contract helpers in owa_piggy/conventions.py."""
+"""Tests for the hugr CLI contract helpers in owa_piggy/conventions.py."""
 from __future__ import annotations
 
 import io
