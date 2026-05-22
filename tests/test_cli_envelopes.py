@@ -1,6 +1,6 @@
 """Action envelope coverage on owa-piggy command surface.
 
-Tests the mnem CONVENTIONS.md contract on the state-changing
+Tests the hugr CONVENTIONS.md contract on the state-changing
 commands: reseed, profiles set-default, profiles delete, plus the
 interactive setup rejection.
 """
