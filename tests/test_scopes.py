@@ -3,6 +3,7 @@
 Exercises the precedence chain: scope override > named audience >
 OWA_DEFAULT_AUDIENCE > DEFAULT_AUDIENCE (graph).
 """
+from owa_piggy.oauth import ORIGIN, origin_for_client
 from owa_piggy.scopes import DEFAULT_AUDIENCE, KNOWN_AUDIENCES, resolve_audience
 
 
@@ -31,6 +32,38 @@ def test_named_audience_teams(clean_env):
     scope, err = resolve_audience(audience='teams')
     assert err == ''
     assert scope.startswith('https://api.spaces.skype.com/.default ')
+
+
+def test_named_audience_presence(clean_env):
+    scope, err = resolve_audience(audience='presence')
+    assert err == ''
+    assert scope.startswith('https://presence.teams.microsoft.com/.default ')
+
+
+def test_named_audience_uis(clean_env):
+    scope, err = resolve_audience(audience='uis')
+    assert err == ''
+    assert scope.startswith('https://uis.teams.microsoft.com/.default ')
+
+
+def test_origin_defaults_to_outlook_for_unknown_client():
+    assert origin_for_client('00000000-0000-0000-0000-000000000000') == ORIGIN
+
+
+def test_origin_for_teams_web_client():
+    # Teams web app (5e3ce6c0) is registered against a Teams origin; AAD's
+    # cross-origin check rejects the Outlook origin for it.
+    assert (
+        origin_for_client('5e3ce6c0-2b1f-4285-8d4b-75ee78787346')
+        == 'https://teams.microsoft.com'
+    )
+
+
+def test_origin_explicit_override_wins():
+    assert (
+        origin_for_client('5e3ce6c0-2b1f-4285-8d4b-75ee78787346', 'https://custom.example')
+        == 'https://custom.example'
+    )
 
 
 def test_unknown_audience_errors(clean_env):

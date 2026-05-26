@@ -13,8 +13,28 @@ import urllib.request
 CLIENT_ID = '9199bf20-a13f-4107-85dc-02114787ef48'
 ORIGIN = 'https://outlook.cloud.microsoft'
 
+# AAD's cross-origin check (AADSTS9002327) ties an SPA refresh-token grant
+# to an Origin registered on that client's app registration. The default
+# Outlook origin works for the default Teams Web client (9199bf20); the
+# Teams web app (5e3ce6c0) is registered against a Teams origin instead.
+# Callers can override per-profile via OWA_ORIGIN; this map supplies the
+# right default when only OWA_CLIENT_ID is set.
+KNOWN_CLIENT_ORIGINS = {
+    '9199bf20-a13f-4107-85dc-02114787ef48': 'https://outlook.cloud.microsoft',
+    '5e3ce6c0-2b1f-4285-8d4b-75ee78787346': 'https://teams.microsoft.com',
+}
 
-def exchange_token(refresh_token, tenant_id, client_id, scope):
+
+def origin_for_client(client_id, override=None):
+    """Resolve the Origin header for a token exchange. An explicit
+    override (OWA_ORIGIN) wins; otherwise fall back to the per-client
+    default, then the global Outlook origin."""
+    if override:
+        return override
+    return KNOWN_CLIENT_ORIGINS.get(client_id, ORIGIN)
+
+
+def exchange_token(refresh_token, tenant_id, client_id, scope, origin=None):
     url = f'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token'
     data = urllib.parse.urlencode({
         'grant_type': 'refresh_token',
@@ -28,7 +48,7 @@ def exchange_token(refresh_token, tenant_id, client_id, scope):
         headers={
             'Content-Type': 'application/x-www-form-urlencoded',
             # SPA clients require Origin to satisfy AAD's cross-origin check (AADSTS9002327)
-            'Origin': ORIGIN,
+            'Origin': origin_for_client(client_id, origin),
         },
         method='POST',
     )

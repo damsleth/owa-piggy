@@ -21,8 +21,10 @@ DEFAULT_AUDIENCE = 'https://graph.microsoft.com'
 KNOWN_AUDIENCES = {
     'outlook':    ('https://outlook.office.com',                   'Outlook REST'),
     'graph':      ('https://graph.microsoft.com',                  'Microsoft Graph (default)'),
-    'teams':      ('https://api.spaces.skype.com',                 'Microsoft Teams (legacy Skype audience)'),
-    'ic3':        ('https://ic3.teams.office.com',                 'Microsoft Teams chatsvc (modern)'),
+    'teams':      ('https://api.spaces.skype.com',                 'Microsoft Teams middle-tier (mt/part, Skype audience)'),
+    'ic3':        ('https://ic3.teams.office.com',                 'Microsoft Teams chatsvc / asyncgw (modern)'),
+    'presence':   ('https://presence.teams.microsoft.com',        'Microsoft Teams presence / pubsub (ups)'),
+    'uis':        ('https://uis.teams.microsoft.com',              'Microsoft Teams user/notification settings (nss)'),
     'azure':      ('https://management.azure.com',                 'Azure Resource Manager'),
     'keyvault':   ('https://vault.azure.net',                      'Azure Key Vault'),
     'storage':    ('https://storage.azure.com',                    'Azure Blob/Table/Queue Storage'),
