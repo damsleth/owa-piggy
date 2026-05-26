@@ -34,6 +34,12 @@ def test_named_audience_teams(clean_env):
     assert scope.startswith('https://api.spaces.skype.com/.default ')
 
 
+def test_named_audience_csa(clean_env):
+    scope, err = resolve_audience(audience='csa')
+    assert err == ''
+    assert scope.startswith('https://chatsvcagg.teams.microsoft.com/.default ')
+
+
 def test_named_audience_presence(clean_env):
     scope, err = resolve_audience(audience='presence')
     assert err == ''
