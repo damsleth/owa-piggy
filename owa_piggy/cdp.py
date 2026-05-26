@@ -6,6 +6,9 @@ silent refresh, capture /token response). Same primitives as the
 inline WS code in scripts/scrape_edge.py - kept as a separate module
 because that script stays self-contained for its own runtime
 (invoked via `python3 scripts/scrape_edge.py` outside the package).
+This is the canonical copy: the framing (length encodings, masking,
+ping/pong) is regression-tested in tests/test_cdp.py, and the twin in
+scrape_edge.py carries a "keep in sync" marker pointing back here.
 
 CdpSession multiplexes one WebSocket connection between request/response
 calls (call) and continuous event listening (wait_event). Buffered

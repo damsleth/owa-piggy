@@ -194,6 +194,14 @@ def find_tab():
     raise TimeoutError(f'CDP tab not ready: {last_err}')
 
 
+# --- WebSocket framing -----------------------------------------------------
+# KEEP IN SYNC with owa_piggy/cdp.py (_ws_handshake, _send_frame, _recv_frame).
+# This is a hand-copied twin: the script must run standalone via
+# `python3 scripts/scrape_edge.py` outside the installed package, so it can't
+# import owa_piggy.cdp. The canonical framing is regression-tested in
+# tests/test_cdp.py; mirror any fix to the length encodings, masking, or
+# ping/pong handling here.
+
 def ws_handshake(path):
     """Open a WS connection to localhost:PORT at `path`. Returns the raw socket."""
     key = base64.b64encode(secrets.token_bytes(16)).decode()
