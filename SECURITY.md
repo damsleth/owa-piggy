@@ -56,11 +56,12 @@ changed something. Read the AADSTS code and plan accordingly.
 **In scope:**  The tool assumes a single user, logged in to OWA in
 Edge on their own machine, running the CLI under their own account.
 
-- The refresh token is stored at `~/.config/owa-piggy/config`,
-  mode `0600`. Any process running as that user can
-  read it.
-- Access tokens are cached at `~/.config/owa-piggy/cache.json`,
-  same mode, same rules - keyed by the scope string, valid until
+- The refresh token is stored per profile at
+  `~/.config/owa-piggy/profiles/<alias>/config`, mode `0600`. Any
+  process running as that user can read it.
+- Access tokens are cached per profile at
+  `~/.config/owa-piggy/profiles/<alias>/cache.json`, same mode,
+  same rules - keyed by `(tenant, client, scope)`, valid until
   each token's `exp`. Delete the file to force a fresh mint.
 - The `decode`, `status`, and `debug` subcommands print claims from the
   access token to stdout/stderr. Treat that output like credentials.

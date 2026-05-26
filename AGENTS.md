@@ -5,7 +5,7 @@ Instructions for AI coding agents working in this repo.
 ## What this is
 
 `owa-piggy` is a stdlib-only Python CLI (package at `owa_piggy/`,
-~3,900 LOC across ~15 modules including the headless-Edge capture
+~4,700 LOC across ~21 modules including the headless-Edge capture
 machinery in `capture.py` + `cdp.py`) that exchanges a refresh token
 scraped from the user's own browser for a fresh Microsoft
 Graph/Outlook/Teams/etc. access token. It abuses OWA's first-party
@@ -20,9 +20,13 @@ The threat model is "just for me" - do not harden it into a service.
 
 - **Stdlib only** at runtime. No `requests`, no `msal`, no deps.
   `pytest` is dev-only under `[project.optional-dependencies] test`.
-- **Do not touch `CLIENT_ID`, `ORIGIN`, or the `User-Agent` in
-  `exchange_token`** without a clear reason. Those values make AAD
-  accept the request; changing them breaks the tool silently.
+- **Do not touch `CLIENT_ID`, the `Origin`, or the `Content-Type`
+  header in `exchange_token`** without a clear reason. Those values
+  make AAD accept the request; changing them breaks the tool
+  silently. The `Origin` is resolved per client ID by
+  `origin_for_client` / `KNOWN_CLIENT_ORIGINS` in `oauth.py` and is
+  overridable per profile with `OWA_ORIGIN` - extend the map there
+  rather than hardcoding a new origin.
 - **Never commit real refresh tokens, access tokens, tenant IDs, or
   `~/.config/owa-piggy/config` contents**, even in tests or fixtures.
   Use obvious fakes (`"fake-rt-for-tests"`).
@@ -43,7 +47,10 @@ owa_piggy/
   migration.py       # one-shot legacy single-config -> profiles/default/ rescue
   cache.py           # access-token cache keyed by (tenant, client, scope),
                      # scoped per-profile via CONFIG_PATH.parent
-  oauth.py           # CLIENT_ID, ORIGIN, exchange_token (the one HTTP call)
+  oauth.py           # CLIENT_ID, per-client Origin (origin_for_client /
+                     # KNOWN_CLIENT_ORIGINS), exchange_token (the one HTTP call)
+  token_flow.py      # shared live AAD exchange for token/status/debug:
+                     # scope resolve, RT shape check, rotated-RT persist
   setup.py           # interactive_setup(alias), read_input (raw-tty paste safety)
   scripts.py         # find_packaged_script + per-script wrappers (reseed, setup-refresh)
   launchd.py         # label_for, plist_path, is_installed, run_setup_refresh
@@ -53,6 +60,10 @@ owa_piggy/
   profiles.py        # registry lifecycle: create/delete/enable/disable/set_default_profile
   profile_tui.py     # interactive `owa-piggy profiles` TUI (run_picker + action handlers)
   status.py          # do_status(alias), do_debug(alias), status_report (JSON broker)
+  doctor.py          # `owa-piggy --doctor` health check (hugr doctor JSON
+                     # contract; MUST NOT print or log tokens)
+  conventions.py     # hugr suite CLI contract (output classes, exit codes);
+                     # mirrors yaams/ledger conventions.py
 scripts/
   reseed-from-edge.sh  # headless Edge sidecar; reads OWA_PIGGY_EDGE_PROFILE_DIR
   scrape_edge.py
@@ -168,35 +179,43 @@ When the user says "cut a release" / "new patch version" / "ship it":
    did.
 7. Commit the tap with message `owa-piggy X.Y.Z` (matches the tap's
    existing convention) and push.
-8. `brew upgrade owa-piggy owa-cal` on the dev machine to actually
-   pull the new formula locally - the tap push only updates the
-   metadata; nothing on disk changes until brew refetches. Skipping
-   this leaves the dev machine on the previous version even though
-   `git log` and PyPI both say the new one shipped.
+8. `brew upgrade owa-piggy` on the dev machine to actually pull the
+   new formula locally - the tap push only updates the metadata;
+   nothing on disk changes until brew refetches. Skipping this
+   leaves the dev machine on the previous version even though
+   `git log` and PyPI both say the new one shipped. (`owa-cal` and
+   the other `owa-*` binaries are no longer standalone formulae -
+   they ship inside `owa-tools`; use `brew upgrade owa-tools` for
+   those.)
 
    Note: the launchd reseed agent invokes `~/.local/bin/owa-piggy`,
-   which on this machine is a *pipx editable* install pointing at
-   the repo (see `pipx list`). Code changes here are live in
-   launchd the moment they hit disk - you do not need to reinstall
-   pipx after editing `scripts/scrape_edge.py` or any Python
-   module. The brew copy is what end users get.
-9. Publish the sdist + wheel to PyPI. Build with the venv's `build`
-   module and upload with `uv publish`, which reads the API token
-   from `UV_PUBLISH_TOKEN` (kept in `./.env` at the repo root - do
-   NOT commit it; `.gitignore` already excludes it). Use `uv`
-   specifically; the system `twine` is missing deps on this machine
-   and falls over on `twine check`.
+   which on this machine is a symlink into the repo's editable venv
+   (`~/.local/bin/owa-piggy -> ./.venv/bin/owa-piggy`). Code changes
+   here are live in launchd the moment they hit disk - you do not
+   need to reinstall after editing `scripts/scrape_edge.py` or any
+   Python module. The brew copy is what end users get.
+9. Publish the sdist + wheel to PyPI. The old pipx build venv is gone
+   and `uv` is not installed on this machine; build and upload from
+   the repo's `.venv` with `twine`. The PyPI API token lives in
+   `UV_PUBLISH_TOKEN` in `./.env` at the repo root (do NOT commit it;
+   `.gitignore` already excludes it) - twine consumes it as
+   `__token__` / `TWINE_PASSWORD`.
    ```
    rm -rf dist build
-   /Users/damsleth/.local/pipx/venvs/owa-piggy/bin/python3 -m build
-   /Users/damsleth/.local/pipx/venvs/owa-piggy/bin/python3 -m twine check dist/*
-   set -a && . ./.env && set +a && uv publish dist/owa_piggy-X.Y.Z*
+   .venv/bin/python -m pip install -q build twine   # first time only
+   .venv/bin/python -m build
+   .venv/bin/python -m twine check dist/*
+   set -a && . ./.env && set +a && \
+     TWINE_USERNAME=__token__ TWINE_PASSWORD="$UV_PUBLISH_TOKEN" \
+     .venv/bin/python -m twine upload --skip-existing dist/owa_piggy-X.Y.Z*
    ```
-   PyPI's JSON index (`/pypi/owa-piggy/json`) lags by minutes after
-   upload - if `uv publish` reports "File already exists" on a
-   retry but `pypi.org/pypi/owa-piggy/X.Y.Z/json` returns 200, the
-   upload actually succeeded and the index is just stale. Don't
-   re-tag or re-build to "fix" it.
+   Use `--skip-existing`: twine uploads the wheel first, so if a retry
+   happens after that part succeeded it returns a confusing `400 File
+   already exists` for the wheel while the sdist still needs uploading.
+   Confirm success at `pypi.org/pypi/owa-piggy/X.Y.Z/json` (200 =
+   live). That JSON index lags a few minutes, so a stale 404 right
+   after a successful upload is not a failure - don't re-tag or
+   re-build to "fix" it.
 
 If any step fails midway (tag push rejected, sha mismatch, tap push
 rejected, PyPI 4xx that isn't "File already exists"), stop and
