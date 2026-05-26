@@ -60,6 +60,11 @@ def exchange_fresh(config, scope, *, persist, capture_stderr=False):
     rt = config.get('OWA_REFRESH_TOKEN', '').strip()
     tid = config.get('OWA_TENANT_ID', '').strip()
     cid = config.get('OWA_CLIENT_ID', CLIENT_ID).strip()
+    origin = config.get('OWA_ORIGIN', '').strip() or None
+    # Only forward an explicit OWA_ORIGIN override. When unset, let
+    # exchange_token pick the per-client default origin — and keep the
+    # call 4-positional so existing callers / test mocks are unaffected.
+    origin_kw = {'origin': origin} if origin else {}
     info = {
         'rt': rt,
         'tid': tid,
@@ -79,7 +84,7 @@ def exchange_fresh(config, scope, *, persist, capture_stderr=False):
         stderr_fd = sys.stderr
         try:
             sys.stderr = captured
-            result = exchange_token(rt, tid, cid, scope)
+            result = exchange_token(rt, tid, cid, scope, **origin_kw)
         finally:
             sys.stderr = stderr_fd
         info['stderr_text'] = captured.getvalue()
@@ -89,7 +94,7 @@ def exchange_fresh(config, scope, *, persist, capture_stderr=False):
         # lines from info['stderr_text'] and would double-print if we
         # echoed here. Replay is one line - leave it to the caller.
     else:
-        result = exchange_token(rt, tid, cid, scope)
+        result = exchange_token(rt, tid, cid, scope, **origin_kw)
 
     if not result:
         for code in _RECOVERABLE_AAD_CODES:
