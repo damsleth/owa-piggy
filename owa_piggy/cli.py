@@ -256,11 +256,21 @@ def _inject_default_command(argv):
     """Prepend `token` to argv when the user invoked owa-piggy without
     naming a subcommand - either bare (`owa-piggy`) or with only
     options (`owa-piggy --profile work`). `--help` and `--version` are
-    passed through untouched so argparse handles them at the root.
+    passed through untouched so argparse handles them at the root. A
+    bare `help` word is rewritten to `--help` so it reads as a verb
+    (mirrors the `version` subcommand / `--version` flag pairing);
+    `help <cmd>` becomes `<cmd> --help` (git-style routing) so the
+    per-subcommand help is reachable without remembering the flag
+    spelling. An unknown help topic falls back to root `--help`.
     """
     if not argv:
         return ['token']
     head = argv[0]
+    if head == 'help':
+        rest = list(argv[1:])
+        if rest and rest[0] in COMMANDS:
+            return rest + ['--help']
+        return ['--help']
     if head in COMMANDS:
         return list(argv)
     if head in ('-h', '--help', '--version'):
