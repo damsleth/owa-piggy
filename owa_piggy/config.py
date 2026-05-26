@@ -351,7 +351,7 @@ def load_config():
             config[k] = v
             file_keys.add(k)
     # Environment overrides file
-    for key in ('OWA_REFRESH_TOKEN', 'OWA_TENANT_ID', 'OWA_CLIENT_ID'):
+    for key in ('OWA_REFRESH_TOKEN', 'OWA_TENANT_ID', 'OWA_CLIENT_ID', 'OWA_ORIGIN'):
         if key in os.environ:
             config[key] = os.environ[key]
     persist = (
