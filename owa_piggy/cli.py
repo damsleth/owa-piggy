@@ -83,6 +83,7 @@ examples:
   owa-piggy debug                                  # full diagnostics
   owa-piggy reseed --profile work                  # recover from 24h hard-expiry
   owa-piggy reseed --all                           # reseed every configured profile
+  owa-piggy edge --profile work                    # open Edge with the profile's sidecar session
   owa-piggy setup --profile new                    # paste-flow setup
   owa-piggy setup --profile new --email me@x.org   # network-capture setup (Okta etc.)
   pbpaste | owa-piggy setup --profile new          # pipe token from clipboard
@@ -195,6 +196,10 @@ def _build_parser():
     p_reseed.add_argument('--json', action='store_true',
                           help='emit action envelope on stdout')
 
+    p_edge = sub.add_parser(
+        'edge', help="open a normal Edge window using a profile's sidecar session")
+    _add_common_options(p_edge, audience_scope=False)
+
     sub.add_parser(
         'audiences', help='list all known FOCI-accessible audiences')
 
@@ -247,7 +252,7 @@ def _build_parser():
 # tuple used during argv preprocessing.
 COMMANDS = (
     'token', 'status', 'debug', 'setup', 'reseed', 'decode',
-    'remaining', 'audiences', 'version', 'profiles',
+    'remaining', 'edge', 'audiences', 'version', 'profiles',
     'install-owa-tools',
 )
 
@@ -557,6 +562,38 @@ def _cmd_reseed(args):
     return rc
 
 
+def _cmd_edge(args):
+    """Open a normal, interactive Edge window against the profile's sidecar
+    userdata dir, then return - leaving the browser running.
+
+    Unlike `setup --email` (which drives Edge via CDP and closes it the
+    moment it captures a token), this just hands you the browser. Sign in
+    however the tenant wants; the session cookies land in the per-profile
+    edge-profile dir, so a later `owa-piggy reseed` reseeds from that fresh
+    session instead of a stale scraped token.
+    """
+    alias, rc = _resolve_and_activate(args)
+    if rc:
+        return rc
+    from .capture import open_edge
+    try:
+        _proc, edge_dir = open_edge(alias)
+    except RuntimeError as e:
+        print(f'ERROR: {e}', file=sys.stderr)
+        return 1
+    # Collapse $HOME to ~ so the path is readable without leaking the
+    # username into a wide terminal dump.
+    shown = str(edge_dir)
+    home = os.path.expanduser('~')
+    if shown.startswith(home):
+        shown = '~' + shown[len(home):]
+    print(f'[{alias}] launched Edge with profile sidecar')
+    print(f'  userdata: {shown}')
+    print('  Sign in normally; close Edge when done.')
+    print(f'  Then run: owa-piggy reseed --profile {alias}')
+    return 0
+
+
 def _cmd_status(args):
     # No explicit profile + no OWA_PROFILE env: iterate every profile.
     # This bypasses resolve_profile()'s ambiguity error (multiple
@@ -795,6 +832,7 @@ _DISPATCH = {
     'reseed': _cmd_reseed,
     'decode': _cmd_decode,
     'remaining': _cmd_remaining,
+    'edge': _cmd_edge,
     'audiences': _cmd_audiences,
     'version': _cmd_version,
     'profiles': _cmd_profiles,

@@ -125,6 +125,54 @@ def launch_edge(edge_dir, port, *, headless, url, edge_path=None,
     )
 
 
+def open_edge(alias, *, url=None):
+    """Launch a normal, interactive Edge window bound to <alias>'s sidecar
+    userdata dir and return (Popen, edge_dir). Does NOT capture, reload, or
+    auto-close anything - this is the "just open my profile's browser" path.
+
+    Why a separate launcher from `launch_edge`: the capture flows attach a
+    CDP debugger (--remote-debugging-port), park the window offscreen, and
+    tear Edge down the moment a /token response lands. Here we want the
+    opposite - a real window the user drives by hand, left running after we
+    exit. So no debug port, no window-position games, and crucially
+    start_new_session=True so the browser survives this process exiting and
+    is detached from the terminal's process group (Ctrl-C in owa-piggy or
+    closing the shell must not take Edge down with it).
+
+    The point is persistence: signing in here writes session cookies into
+    the per-profile edge-profile dir, which is the same dir the silent
+    reseed (`capture_silent`) reads. A fresh browser sign-in generally
+    yields a longer-lived session than a scraped refresh token, so a later
+    `owa-piggy reseed` picks up from a healthier starting point.
+
+    The userdata dir is created if absent (mode 0o700) so this also works
+    as a first-time "open Edge for a brand-new profile" step.
+    """
+    edge_dir = _config.profile_edge_dir(alias)
+    edge_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    binary = find_edge()
+    if not binary:
+        raise RuntimeError(
+            'Microsoft Edge not found. Tried: '
+            + ', '.join(_EDGE_CANDIDATES)
+            + ' and PATH lookup. Install Edge or set the path manually.'
+        )
+    args = [
+        binary,
+        '--no-first-run',
+        '--no-default-browser-check',
+        f'--user-data-dir={edge_dir}',
+        url or OWA_URL,
+    ]
+    proc = subprocess.Popen(
+        args,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    return proc, edge_dir
+
+
 def _terminate(proc):
     if proc is None:
         return
