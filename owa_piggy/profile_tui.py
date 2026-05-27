@@ -294,6 +294,20 @@ def _action_reseed(state, current):
             else f'reseed failed for {current!r}.')
 
 
+def _action_open_edge(current):
+    """Open a normal Edge window against <current>'s sidecar userdata dir
+    and leave it running. No cooked-mode drop: open_edge is detached and
+    returns immediately, so there's nothing to wait on - we stay in the
+    picker and just report what happened on the status line.
+    """
+    from .capture import open_edge
+    try:
+        open_edge(current)
+    except RuntimeError as e:
+        return f'edge launch failed for {current!r}: {e}'
+    return f'opened Edge for {current!r}; sign in, CLOSE Edge, then reseed (r).'
+
+
 def _action_reseed_all(state):
     """Shift-r: reseed every configured profile sequentially.
 
@@ -330,6 +344,7 @@ def run_picker():
       u              - uninstall launchd agent for highlighted profile
       r              - reseed highlighted profile (drops out, re-enters)
       R              - reseed every profile (= `owa-piggy reseed --all`)
+      e              - open Edge with the highlighted profile's sidecar session
       q / esc        - quit
 
     Falls back to a plain printed list when termios is unavailable.
@@ -373,7 +388,7 @@ def run_picker():
         sys.stdout.write(
             f'  {DIM}'
             'up/down  navigate  ·  space toggle  ·  enter set default\r\n'
-            '  a add  ·  d delete  ·  l install launchd  ·  u uninstall  ·  r reseed  ·  R reseed all  ·  q quit'
+            '  a add  ·  d delete  ·  l install launchd  ·  u uninstall  ·  r reseed  ·  R reseed all  ·  e edge  ·  q quit'
             f'{RESET}\r\n\r\n'
         )
         if not profiles:
@@ -484,6 +499,11 @@ def run_picker():
 
             if ch == 'r':
                 state.message = _action_reseed(state, current) or ''
+                draw()
+                continue
+
+            if ch == 'e':
+                state.message = _action_open_edge(current) or ''
                 draw()
                 continue
 
