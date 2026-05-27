@@ -27,7 +27,7 @@ def test_help_exits_zero(monkeypatch, capsys):
     assert 'usage: owa-piggy' in out
     # Spot-check documented subcommands.
     for cmd in ('token', 'status', 'debug', 'setup', 'reseed', 'decode',
-                'remaining', 'audiences', 'profiles'):
+                'remaining', 'edge', 'audiences', 'profiles'):
         assert cmd in out, f'{cmd} missing from --help'
 
 
@@ -337,6 +337,54 @@ def test_reseed_clears_cache(monkeypatch, tmp_config, clean_env):
     rc = _run(monkeypatch, ['reseed'])
     assert rc == 0
     assert observed['cache'] == {}
+
+
+def test_edge_launches_profile_sidecar(monkeypatch, capsys, tmp_config,
+                                       clean_env):
+    """`edge --profile work` resolves the profile, hands its sidecar dir to
+    capture.open_edge, and prints the next-step hint. open_edge is stubbed
+    so the test never actually spawns a browser."""
+    import owa_piggy.capture as capture_mod
+    from owa_piggy.config import (
+        ensure_profile_registered,
+        profile_dir,
+        profile_edge_dir,
+    )
+    profile_dir('work').mkdir(parents=True, exist_ok=True)
+    ensure_profile_registered('work')
+
+    seen = {}
+
+    def _fake_open_edge(alias, *, url=None):
+        seen['alias'] = alias
+        return ('proc-sentinel', profile_edge_dir(alias))
+
+    monkeypatch.setattr(capture_mod, 'open_edge', _fake_open_edge)
+    rc = _run(monkeypatch, ['edge', '--profile', 'work'])
+    assert rc == 0
+    assert seen['alias'] == 'work'
+    out = capsys.readouterr().out
+    assert 'launched Edge' in out
+    assert 'reseed --profile work' in out
+
+
+def test_edge_reports_missing_edge_binary(monkeypatch, capsys, tmp_config,
+                                          clean_env):
+    """When open_edge can't find Edge it raises RuntimeError; the command
+    surfaces it as a clean ERROR line and exits non-zero rather than letting
+    the traceback escape."""
+    import owa_piggy.capture as capture_mod
+    from owa_piggy.config import ensure_profile_registered, profile_dir
+    profile_dir('work').mkdir(parents=True, exist_ok=True)
+    ensure_profile_registered('work')
+
+    def _boom(alias, *, url=None):
+        raise RuntimeError('Microsoft Edge not found.')
+
+    monkeypatch.setattr(capture_mod, 'open_edge', _boom)
+    rc = _run(monkeypatch, ['edge', '--profile', 'work'])
+    assert rc == 1
+    assert 'Microsoft Edge not found' in capsys.readouterr().err
 
 
 def test_json_bypasses_cache(monkeypatch, capsys, tmp_config, clean_env,
@@ -916,6 +964,29 @@ def test_picker_shift_r_reseeds_all(monkeypatch):
     rc = tui.run_picker()
     assert rc == 0
     assert calls == ['all']
+
+
+def test_picker_e_opens_edge(monkeypatch):
+    """`e` calls capture.open_edge for the highlighted profile and leaves
+    the picker running (open_edge is detached - no cooked-mode drop)."""
+    from owa_piggy import capture as capture_mod
+    from owa_piggy import profile_tui as tui
+
+    _stub_picker_environment(
+        monkeypatch,
+        profiles=['work', 'personal'],
+        default='work',
+        keys=['e', 'q'],
+    )
+    calls = []
+    monkeypatch.setattr(
+        capture_mod, 'open_edge',
+        lambda alias, **kw: calls.append(alias) or ('proc', f'/tmp/{alias}'))
+
+    rc = tui.run_picker()
+    assert rc == 0
+    # Cursor starts on the default ('work').
+    assert calls == ['work']
 
 
 def test_profiles_delete_preserves_dir_if_registry_update_fails(

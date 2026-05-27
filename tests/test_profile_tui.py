@@ -122,3 +122,27 @@ def test_delete_surfaces_failure(monkeypatch, capsys):
     msg = profile_tui._action_delete(FakeState(), 'work')
     assert msg == 'delete cancelled.'  # failed delete is not "deleted"
     assert 'rmtree failed' in capsys.readouterr().err
+
+
+# --- _action_open_edge -------------------------------------------------
+
+def test_open_edge_delegates_to_capture(monkeypatch):
+    from owa_piggy import capture as capture_mod
+    calls = []
+    monkeypatch.setattr(capture_mod, 'open_edge',
+                        lambda alias, **kw: calls.append(alias) or ('proc', '/tmp/x'))
+    msg = profile_tui._action_open_edge('work')
+    assert calls == ['work']
+    assert 'opened Edge' in msg and 'work' in msg
+
+
+def test_open_edge_surfaces_launch_failure(monkeypatch):
+    from owa_piggy import capture as capture_mod
+
+    def _boom(alias, **kw):
+        raise RuntimeError('Microsoft Edge not found.')
+
+    monkeypatch.setattr(capture_mod, 'open_edge', _boom)
+    msg = profile_tui._action_open_edge('work')
+    assert 'edge launch failed' in msg
+    assert 'Microsoft Edge not found' in msg
