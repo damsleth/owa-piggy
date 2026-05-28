@@ -189,7 +189,7 @@ COMMAND_SCHEMA = [
             flags=[_PROFILE]),
     command("audiences", "List all known FOCI-accessible audiences", output="text"),
     command("version", "Print version information", flags=[_JSON]),
-    command("profiles", "List / manage profiles (subcommands: list, set-default, delete)",
+    command("profiles", "List / manage profiles (subcommands: list, new, set-default, delete)",
             mutates=True, flags=[_JSON]),
     command("install-owa-tools", "Install the companion owa-tools suite via Homebrew",
             mutates=True),
