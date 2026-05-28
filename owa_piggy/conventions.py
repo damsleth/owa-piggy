@@ -1,32 +1,26 @@
-"""owa-piggy binding to the shared hugr CLI contract.
+"""owa-piggy implementation of the hugr suite CLI contract.
 
 The wire contract (action/error envelopes, the doctor payload shape,
-the 0-5 exit-code taxonomy, redact()) lives in the ``hugr-conventions``
-package - the executable form of CONVENTIONS.md in the hugr repo. This
-module binds it to owa-piggy's tool name and version. The auth broker
-has no long-running streaming actions, so the NDJSON stream_* helpers
-are intentionally not re-exported here.
+the 0-5 exit-code taxonomy, redact()) is specified by CONVENTIONS.md
+in the hugr repo. owa-piggy keeps a self-contained hand-copy of it
+here rather than depending on a separate package, so owa-piggy
+installs cleanly with no third-party runtime dependency and stays
+independently shippable - the suite's loose-coupling axiom. Mirrors
+the equivalent files in yaams, cognitive-ledger, and owa-tools.
+
+The auth broker has no long-running streaming actions, so the NDJSON
+``stream_*`` helpers are intentionally omitted here.
 
 See https://github.com/damsleth/hugr/blob/main/CONVENTIONS.md.
 """
 
 from __future__ import annotations
 
-from typing import Any, Iterable, Mapping
-
-import hugr_conventions as _hc
-from hugr_conventions import (  # re-export: identical wire shapes
-  EXIT_AUTH,
-  EXIT_NOT_FOUND,
-  EXIT_OK,
-  EXIT_PARTIAL,
-  EXIT_TRANSIENT,
-  EXIT_USER_ERROR,
-  DoctorFinding,
-  emit_action,
-  emit_data_error,
-  redact,
-)
+import json
+import re
+import sys
+from dataclasses import dataclass, field
+from typing import Any, Callable, Iterable, Mapping, TextIO
 
 __all__ = [
   "EXIT_OK",
@@ -48,6 +42,42 @@ __all__ = [
 TOOL_NAME = "owa-piggy"
 
 
+# --- Exit codes ------------------------------------------------------------
+
+EXIT_OK = 0
+EXIT_USER_ERROR = 1
+EXIT_TRANSIENT = 2
+EXIT_AUTH = 3
+EXIT_NOT_FOUND = 4
+EXIT_PARTIAL = 5
+
+
+# --- Redaction -------------------------------------------------------------
+
+_JWT_RE = re.compile(r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}")
+_BEARER_RE = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._\-+/=]+")
+_TOKEN_FIELD_RE = re.compile(
+  r'(?i)"(access_token|refresh_token|id_token|client_secret|api_key|secret)"\s*:\s*"[^"]*"'
+)
+_BODY_FIELD_RE = re.compile(
+  r'(?i)"(body|content|text|html_body|plain_body)"\s*:\s*"[^"]*"'
+)
+
+
+def redact(text: Any) -> str:
+  if text is None:
+    return ""
+  if not isinstance(text, str):
+    text = str(text)
+  text = _JWT_RE.sub("<redacted-jwt>", text)
+  text = _BEARER_RE.sub("Bearer <redacted>", text)
+  text = _TOKEN_FIELD_RE.sub(lambda m: f'"{m.group(1)}":"<redacted>"', text)
+  text = _BODY_FIELD_RE.sub(lambda m: f'"{m.group(1)}":"<redacted>"', text)
+  return text
+
+
+# --- internals -------------------------------------------------------------
+
 def _version() -> str:
   try:
     from owa_piggy import __version__
@@ -55,6 +85,14 @@ def _version() -> str:
   except Exception:
     return "0.0.0"
 
+
+def _writeln(obj: Mapping[str, Any], stream: TextIO | None) -> None:
+  stream = stream if stream is not None else sys.stdout
+  stream.write(json.dumps(obj, ensure_ascii=False) + "\n")
+  stream.flush()
+
+
+# --- Action envelope -------------------------------------------------------
 
 def action_envelope(
   *,
@@ -65,17 +103,23 @@ def action_envelope(
   error: Mapping[str, Any] | None = None,
   duration_ms: float | None = None,
 ) -> dict[str, Any]:
-  return _hc.action_envelope(
-    tool=TOOL_NAME,
-    version=_version,
-    command=command,
-    ok=ok,
-    stats=stats,
-    warnings=warnings,
-    error=error,
-    duration_ms=duration_ms,
-  )
+  return {
+    "tool": TOOL_NAME,
+    "version": _version(),
+    "command": command,
+    "ok": bool(ok),
+    "duration_ms": float(duration_ms) if duration_ms is not None else 0.0,
+    "stats": dict(stats or {}),
+    "warnings": list(warnings or []),
+    "error": dict(error) if error else None,
+  }
 
+
+def emit_action(envelope: Mapping[str, Any], stream: TextIO | None = None) -> None:
+  _writeln(envelope, stream)
+
+
+# --- Data-class failure envelope -------------------------------------------
 
 def data_error(
   *,
@@ -84,22 +128,68 @@ def data_error(
   message: str,
   hint: str | None = None,
 ) -> dict[str, Any]:
-  return _hc.data_error(
-    tool=TOOL_NAME,
-    version=_version,
-    command=command,
-    code=code,
-    message=message,
-    hint=hint,
-  )
+  err: dict[str, Any] = {"code": code, "message": message}
+  if hint:
+    err["hint"] = hint
+  return {
+    "tool": TOOL_NAME,
+    "version": _version(),
+    "command": command,
+    "ok": False,
+    "error": err,
+  }
 
 
-def DoctorPayload(**kwargs: Any) -> _hc.DoctorPayload:  # noqa: N802 - preserves call site
-  """owa-piggy-bound :class:`hugr_conventions.DoctorPayload`.
+def emit_data_error(envelope: Mapping[str, Any], stream: TextIO | None = None) -> None:
+  _writeln(envelope, stream)
 
-  Defaults ``tool`` to ``"owa-piggy"`` and ``version`` to the live
-  package version so existing call sites construct it unchanged.
-  """
-  kwargs.setdefault("tool", TOOL_NAME)
-  kwargs.setdefault("version", _version)
-  return _hc.DoctorPayload(**kwargs)
+
+# --- Doctor payload --------------------------------------------------------
+
+@dataclass
+class DoctorFinding:
+  id: str
+  severity: str
+  message: str
+  hint: str | None = None
+
+  def to_dict(self) -> dict[str, Any]:
+    out: dict[str, Any] = {
+      "id": self.id,
+      "severity": self.severity,
+      "message": self.message,
+    }
+    if self.hint:
+      out["hint"] = self.hint
+    return out
+
+
+@dataclass
+class DoctorPayload:
+  tool: str = TOOL_NAME
+  version: "str | Callable[[], str]" = field(default_factory=lambda: _version)
+  config_path: str | None = None
+  data_path: str | None = None
+  auth: dict[str, Any] | None = None
+  models: dict[str, Any] | None = None
+  findings: list[DoctorFinding] = field(default_factory=list)
+
+  def to_dict(self) -> dict[str, Any]:
+    v = self.version() if callable(self.version) else self.version
+    out: dict[str, Any] = {"tool": self.tool, "version": str(v)}
+    if self.config_path is not None:
+      out["config_path"] = self.config_path
+    if self.data_path is not None:
+      out["data_path"] = self.data_path
+    if self.auth is not None:
+      out["auth"] = self.auth
+    if self.models is not None:
+      out["models"] = self.models
+    out["findings"] = [f.to_dict() for f in self.findings]
+    return out
+
+  def exit_code(self) -> int:
+    severities = {f.severity for f in self.findings}
+    if "error" in severities:
+      return EXIT_USER_ERROR
+    return EXIT_OK
