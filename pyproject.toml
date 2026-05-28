@@ -19,9 +19,7 @@ classifiers = [
   "Environment :: Console",
   "Development Status :: 4 - Beta",
 ]
-dependencies = [
-  "hugr-conventions>=0.1",
-]
+dependencies = []
 
 [project.urls]
 Homepage = "https://github.com/damsleth/owa-piggy"
