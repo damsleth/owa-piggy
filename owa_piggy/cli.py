@@ -91,6 +91,8 @@ examples:
   owa-piggy profiles                               # list (TTY: interactive picker)
   owa-piggy profiles list                          # non-interactive list (alias of bare)
   owa-piggy profiles list --json                   # machine-readable list
+  owa-piggy profiles new work                      # alias of `setup --profile work`
+  owa-piggy profiles new work --email me@x.org     # network-capture setup (Okta etc.)
   owa-piggy profiles set-default work              # change the default pointer
   owa-piggy profiles delete personal               # remove a profile
   owa-piggy audiences                              # list all FOCI audiences
@@ -240,6 +242,14 @@ def _build_parser():
     p_sd.add_argument('alias', metavar='<alias>')
     p_sd.add_argument('--json', action='store_true',
                       help='emit action envelope on stdout')
+
+    p_new = profiles_sub.add_parser(
+        'new', help='create a new profile (alias of `setup --profile <alias>`)')
+    p_new.add_argument('alias', metavar='<alias>')
+    p_new.add_argument('--email', metavar='<addr>', default=None,
+                       help='use Edge network-capture flow (required for '
+                            'encrypted-MSAL/Okta tenants); validates '
+                            'captured token belongs to this account')
 
     p_del = profiles_sub.add_parser(
         'delete', help='remove a profile config + Edge sidecar dir')
@@ -673,6 +683,14 @@ def _cmd_profiles(args):
     # spellings work: `profiles --json list` and `profiles list --json`.
     as_json = bool(getattr(args, 'json', False)
                    or getattr(args, 'profiles_list_json', False))
+    if sub == 'new':
+        # Thin alias for `setup --profile <alias>`. We synthesize the
+        # shape `_cmd_setup` expects (args.profile, args.email, args.json)
+        # rather than duplicate the create_profile call, so the two paths
+        # cannot drift.
+        args.profile = args.alias
+        args.json = False
+        return _cmd_setup(args)
     if sub == 'set-default':
         return _do_profiles_set_default(args.alias, as_json=as_json)
     if sub == 'delete':
