@@ -19,6 +19,7 @@ import sys
 import time
 
 from . import __version__
+from . import schema as schema_mod
 from .cache import (
     clear_cache,
     get_cached_exp,
@@ -93,6 +94,13 @@ examples:
   owa-piggy profiles set-default work              # change the default pointer
   owa-piggy profiles delete personal               # remove a profile
   owa-piggy audiences                              # list all FOCI audiences
+
+machine surface (uniform across the owa suite):
+  owa-piggy schema [<command>]                     # JSON command schema
+  owa-piggy --help --json                          # the same schema
+  owa-piggy --agent <cmd>                          # wrap JSON stdout in an envelope
+  owa-piggy --err-json <cmd>                       # structured JSON errors on stderr
+  owa-piggy --doctor [--json]                      # health / redaction doctor payload
 
 notes:
   - Default audience is Microsoft Graph (superset of Outlook REST plus
@@ -846,17 +854,9 @@ assert set(COMMANDS) == set(_DISPATCH), \
     'COMMANDS / _DISPATCH out of sync'
 
 
-def main():
-    raw = list(sys.argv[1:])
-    # Top-level --doctor per hugr CONVENTIONS.md. Handle before
-    # argparse so it composes with --json without touching the
-    # subcommand surface.
-    if "--doctor" in raw:
-        from owa_piggy.doctor import emit_doctor
-        as_json = "--json" in raw
-        return emit_doctor(as_json)
-
-    argv = _inject_default_command(sys.argv[1:])
+def _dispatch(raw):
+    """Inject the default command, parse, migrate, and run a handler."""
+    argv = _inject_default_command(raw)
     parser = _build_parser()
     args = parser.parse_args(argv)
 
@@ -869,3 +869,87 @@ def main():
         parser.print_help()
         return 1
     return handler(args)
+
+
+def _run_with_modes(raw, agent, err_json):
+    """Run a non-interactive command under --agent / --err-json.
+
+    Mirrors owa_core.modes.run_with_output_modes: captures stdout and (for
+    machine commands only) stderr, then wraps success output in the agent
+    envelope or renders a structured error. Interactive / UI-launching
+    commands are run unwrapped - capturing their stdin prompts or browser
+    handoff would break them - so the mode flags are a no-op there.
+    """
+    import contextlib
+    import io
+
+    command = schema_mod.command_name(_inject_default_command(raw))
+    if command not in schema_mod.MACHINE_COMMANDS:
+        return _dispatch(raw)
+
+    out_buf, err_buf = io.StringIO(), io.StringIO()
+    try:
+        with contextlib.redirect_stdout(out_buf), contextlib.redirect_stderr(err_buf):
+            rc = _dispatch(raw)
+    except SystemExit as exc:
+        rc = int(exc.code or 0)
+    out, err = out_buf.getvalue(), err_buf.getvalue()
+
+    if err_json and rc != 0:
+        payload = {
+            "error": {
+                "code": "ERROR",
+                "message": (err.strip() or f"{command} failed"),
+                "exit_code": rc,
+                "tool": "owa-piggy",
+                "command": command,
+            }
+        }
+        json.dump(payload, sys.stderr, ensure_ascii=False, separators=(",", ":"))
+        sys.stderr.write("\n")
+        return rc
+
+    if err:
+        sys.stderr.write(err)
+    if rc != 0 or not agent:
+        if out:
+            sys.stdout.write(out)
+        return rc
+
+    text = out.strip()
+    if text:
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            sys.stdout.write(out)
+            print("--agent requires JSON stdout; this command did not emit JSON "
+                  "(try the command's --json flag)", file=sys.stderr)
+            return 2
+    else:
+        data = None
+    json.dump(schema_mod.envelope(command, data), sys.stdout, ensure_ascii=False, indent=2)
+    sys.stdout.write("\n")
+    return 0
+
+
+def main():
+    raw = list(sys.argv[1:])
+    # Top-level --doctor per hugr CONVENTIONS.md. Handle before
+    # argparse so it composes with --json without touching the
+    # subcommand surface.
+    if "--doctor" in raw:
+        from owa_piggy.doctor import emit_doctor
+        as_json = "--json" in raw
+        return emit_doctor(as_json)
+
+    # Machine surface: `schema [<cmd>]` and `--help --json`, handled before
+    # argparse so they compose without touching the subcommand grammar.
+    handled = schema_mod.maybe_emit_schema(raw, commands=schema_mod.COMMAND_SCHEMA)
+    if handled is not None:
+        return handled
+
+    # --agent / --err-json wrap JSON output for automation consumers.
+    agent, err_json, raw = schema_mod.split_mode_flags(raw)
+    if agent or err_json:
+        return _run_with_modes(raw, agent, err_json)
+    return _dispatch(raw)
