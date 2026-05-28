@@ -99,6 +99,20 @@ Bare `owa-piggy` is shorthand for `owa-piggy token` - the access token goes to s
 
 Top-level flags: `--version`, `--help`. Per-command options (`--profile <alias>`, `--audience <name>`, `--scope <explicit>`) are accepted on the bare invocation too, because it's rewritten to `owa-piggy token <opts>`. `--audience` is validated against the known list at parse time, so typos error out with the full audience set instead of silently using the default. Per-command help: `owa-piggy <command> --help`.
 
+### Machine surface
+
+owa-piggy exposes the same introspection/agent surface as the owa-tools
+consumer CLIs, so one agent can drive the whole suite uniformly:
+
+| invocation                 | what it does                                                        |
+| -------------------------- | ------------------------------------------------------------------- |
+| `owa-piggy schema`         | JSON command schema (`tool`, `suite`, `schema_version`, `commands`) |
+| `owa-piggy schema <cmd>`   | schema for one command                                              |
+| `owa-piggy --help --json`  | the same schema via the help flag                                   |
+| `owa-piggy --agent <cmd>`  | wrap JSON stdout in a stable `{"_owa": …, "data": …}` envelope (or `OWA_AGENT=1`); non-interactive commands only |
+| `owa-piggy --err-json <cmd>` | structured JSON error on stderr (or `OWA_ERR_JSON=1`)              |
+| `owa-piggy --doctor [--json]` | hugr health/redaction doctor payload                             |
+
 ## Examples
 
 ```sh
