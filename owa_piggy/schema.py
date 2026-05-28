@@ -31,7 +31,7 @@ SUITE = "owa-piggy"
 # --err-json can safely capture and wrap them. Interactive or UI-launching
 # commands (setup, edge, reseed, debug, install-owa-tools) run unwrapped.
 MACHINE_COMMANDS = frozenset(
-    {"token", "status", "decode", "remaining", "audiences", "version", "profiles"}
+    {"token", "status", "version", "profiles"}
 )
 
 _TRUTHY = {"1", "true", "yes", "on"}
@@ -172,9 +172,9 @@ COMMAND_SCHEMA = [
     command("debug", "Dump full setup diagnostics for one profile",
             flags=[_PROFILE, _AUDIENCE, _SCOPE]),
     command("decode", "Print the JWT header and payload of the current token",
-            flags=[_PROFILE, _AUDIENCE, _SCOPE]),
+            output="text", flags=[_PROFILE, _AUDIENCE, _SCOPE]),
     command("remaining", "Print minutes remaining on the current token",
-            flags=[_PROFILE, _AUDIENCE, _SCOPE]),
+            output="text", flags=[_PROFILE, _AUDIENCE, _SCOPE]),
     command("setup", "Interactive first-time setup; creates the profile if new",
             mutates=True,
             flags=[_PROFILE,
@@ -187,7 +187,7 @@ COMMAND_SCHEMA = [
                    flag("--json", summary="Emit an action envelope on stdout")]),
     command("edge", "Open a normal Edge window using a profile's sidecar session",
             flags=[_PROFILE]),
-    command("audiences", "List all known FOCI-accessible audiences"),
+    command("audiences", "List all known FOCI-accessible audiences", output="text"),
     command("version", "Print version information", flags=[_JSON]),
     command("profiles", "List / manage profiles (subcommands: list, set-default, delete)",
             mutates=True, flags=[_JSON]),
