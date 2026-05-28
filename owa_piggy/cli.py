@@ -921,7 +921,8 @@ def _run_with_modes(raw, agent, err_json):
         try:
             data = json.loads(text)
         except json.JSONDecodeError:
-            sys.stdout.write(out)
+            # Don't replay the raw stdout - it may be a secret (access token,
+            # JWT) and the agent contract is "envelope or nothing on stdout".
             print("--agent requires JSON stdout; this command did not emit JSON "
                   "(try the command's --json flag)", file=sys.stderr)
             return 2
