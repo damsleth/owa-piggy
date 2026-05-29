@@ -72,7 +72,7 @@ def test_set_active_profile_redirects_cache(tmp_config, clean_env):
 def test_load_profiles_conf_missing_returns_defaults(tmp_config, clean_env):
     assert not profiles_conf_path().exists()
     out = load_profiles_conf()
-    assert out == {'OWA_DEFAULT_PROFILE': '', 'OWA_PROFILES': []}
+    assert out == {'OWA_DEFAULT_PROFILE': '', 'OWA_PROFILES': [], 'OWA_SCHEDULED': []}
 
 
 def test_save_and_load_profiles_conf_round_trip(tmp_config, clean_env):
@@ -141,6 +141,65 @@ def test_unregister_profile_clears_default(tmp_config, clean_env):
     # work was default; default is now empty so the next `profiles set-default` or
     # setup call has to pick an explicit replacement.
     assert out['OWA_DEFAULT_PROFILE'] == ''
+    assert out['OWA_PROFILES'] == ['personal']
+
+
+# --- OWA_SCHEDULED (launchd schedule set) -----------------------------
+
+
+def test_schedule_round_trip(tmp_config, clean_env):
+    save_profiles_conf({
+        'OWA_DEFAULT_PROFILE': 'work',
+        'OWA_PROFILES': ['work', 'personal'],
+        'OWA_SCHEDULED': ['work'],
+    })
+    out = load_profiles_conf()
+    assert out['OWA_SCHEDULED'] == ['work']
+
+
+def test_save_profiles_conf_intersects_scheduled_with_registered(tmp_config, clean_env):
+    """A scheduled alias that is not in OWA_PROFILES is dropped on write -
+    the subset invariant cannot drift."""
+    save_profiles_conf({
+        'OWA_DEFAULT_PROFILE': 'work',
+        'OWA_PROFILES': ['work'],
+        'OWA_SCHEDULED': ['work', 'ghost'],
+    })
+    assert load_profiles_conf()['OWA_SCHEDULED'] == ['work']
+
+
+def test_schedule_profile_adds_and_registers(tmp_config, clean_env):
+    """schedule_profile adds to OWA_SCHEDULED and ensures OWA_PROFILES
+    membership (the subset invariant)."""
+    config_mod.schedule_profile('work')
+    out = load_profiles_conf()
+    assert out['OWA_SCHEDULED'] == ['work']
+    assert 'work' in out['OWA_PROFILES']
+    assert config_mod.is_scheduled('work') is True
+
+
+def test_schedule_profile_idempotent(tmp_config, clean_env):
+    config_mod.schedule_profile('work')
+    config_mod.schedule_profile('work')
+    assert load_profiles_conf()['OWA_SCHEDULED'] == ['work']
+
+
+def test_unschedule_profile_keeps_registration(tmp_config, clean_env):
+    """Unscheduling leaves the profile enabled - it just stops auto-reseeding."""
+    ensure_profile_registered('work')
+    config_mod.schedule_profile('work')
+    config_mod.unschedule_profile('work')
+    out = load_profiles_conf()
+    assert out['OWA_SCHEDULED'] == []
+    assert 'work' in out['OWA_PROFILES']
+
+
+def test_unregister_profile_drops_from_schedule(tmp_config, clean_env):
+    config_mod.schedule_profile('work')
+    config_mod.schedule_profile('personal')
+    unregister_profile('work')
+    out = load_profiles_conf()
+    assert out['OWA_SCHEDULED'] == ['personal']
     assert out['OWA_PROFILES'] == ['personal']
 
 

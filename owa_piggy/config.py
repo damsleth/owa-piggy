@@ -176,12 +176,19 @@ def list_profiles():
 # file so the registry never gets confused with a profile's own config.
 
 def load_profiles_conf():
-    """Read profiles.conf into {'OWA_DEFAULT_PROFILE': str, 'OWA_PROFILES': list[str]}.
+    """Read profiles.conf into a dict with OWA_DEFAULT_PROFILE (str),
+    OWA_PROFILES (list[str]) and OWA_SCHEDULED (list[str]).
 
     Missing file returns empty defaults. Unknown keys are ignored so a
     future addition can be forward-compatible with older binaries.
+
+    OWA_SCHEDULED is the subset of OWA_PROFILES that the single shared
+    launchd agent reseeds automatically (`reseed --scheduled`). It is a
+    separate concept from OWA_PROFILES: a profile can be enabled (gets
+    reseeded by `reseed --all`, shows in `status`) without being
+    scheduled for unattended hourly rotation.
     """
-    out = {'OWA_DEFAULT_PROFILE': '', 'OWA_PROFILES': []}
+    out = {'OWA_DEFAULT_PROFILE': '', 'OWA_PROFILES': [], 'OWA_SCHEDULED': []}
     path = profiles_conf_path()
     if not path.exists():
         return out
@@ -190,31 +197,45 @@ def load_profiles_conf():
             out['OWA_DEFAULT_PROFILE'] = v
         elif k == 'OWA_PROFILES':
             out['OWA_PROFILES'] = [p for p in v.split() if p]
+        elif k == 'OWA_SCHEDULED':
+            out['OWA_SCHEDULED'] = [p for p in v.split() if p]
     return out
+
+
+def _dedup_preserve_order(items):
+    """De-duplicate an iterable of aliases, preserving first-seen order."""
+    seen = set()
+    uniq = []
+    for p in items or []:
+        if p and p not in seen:
+            seen.add(p)
+            uniq.append(p)
+    return uniq
 
 
 def save_profiles_conf(data):
     """Atomically write profiles.conf.
 
     `data` mirrors `load_profiles_conf()`: OWA_DEFAULT_PROFILE is a str,
-    OWA_PROFILES is an iterable of alias strings. Aliases are joined
-    space-separated on disk to keep parsing trivial.
+    OWA_PROFILES and OWA_SCHEDULED are iterables of alias strings. Aliases
+    are joined space-separated on disk to keep parsing trivial. OWA_SCHEDULED
+    is intersected with OWA_PROFILES on write so the subset invariant cannot
+    drift (a scheduled alias that is no longer registered is dropped).
     """
     default = data.get('OWA_DEFAULT_PROFILE', '') or ''
     profiles = data.get('OWA_PROFILES', []) or []
     if isinstance(profiles, str):
         profiles = profiles.split()
-    # De-duplicate while preserving first-seen order so the file reads
-    # the same way it was written.
-    seen = set()
-    uniq = []
-    for p in profiles:
-        if p and p not in seen:
-            seen.add(p)
-            uniq.append(p)
+    uniq = _dedup_preserve_order(profiles)
+    scheduled = data.get('OWA_SCHEDULED', []) or []
+    if isinstance(scheduled, str):
+        scheduled = scheduled.split()
+    registered = set(uniq)
+    sched_uniq = [a for a in _dedup_preserve_order(scheduled) if a in registered]
     payload = (
         f'OWA_DEFAULT_PROFILE="{default}"\n'
         f'OWA_PROFILES="{" ".join(uniq)}"\n'
+        f'OWA_SCHEDULED="{" ".join(sched_uniq)}"\n'
     )
     atomic_write(profiles_conf_path(), payload)
 
@@ -239,13 +260,50 @@ def ensure_profile_registered(alias, make_default_if_first=True):
 def unregister_profile(alias):
     """Remove `alias` from OWA_PROFILES. If it was the default, clear
     the default pointer (caller decides what to promote next, if any).
+    Also drop it from OWA_SCHEDULED - a disabled/deleted profile must
+    not stay scheduled for unattended reseed.
     """
     data = load_profiles_conf()
     data['OWA_PROFILES'] = [p for p in data['OWA_PROFILES'] if p != alias]
+    data['OWA_SCHEDULED'] = [p for p in data['OWA_SCHEDULED'] if p != alias]
     if data['OWA_DEFAULT_PROFILE'] == alias:
         data['OWA_DEFAULT_PROFILE'] = ''
     save_profiles_conf(data)
     return data
+
+
+def schedule_profile(alias):
+    """Add `alias` to OWA_SCHEDULED (the set the shared launchd agent
+    reseeds hourly). Ensures `alias` is also registered in OWA_PROFILES
+    so the subset invariant holds. No-op if already scheduled. Returns
+    the updated registry dict.
+    """
+    ok, verr = validate_alias(alias)
+    if not ok:
+        raise ValueError(verr)
+    data = load_profiles_conf()
+    if alias not in data['OWA_PROFILES']:
+        data['OWA_PROFILES'].append(alias)
+    if alias not in data['OWA_SCHEDULED']:
+        data['OWA_SCHEDULED'].append(alias)
+    save_profiles_conf(data)
+    return data
+
+
+def unschedule_profile(alias):
+    """Remove `alias` from OWA_SCHEDULED. Leaves OWA_PROFILES untouched -
+    the profile stays enabled, it just no longer auto-reseeds. Returns
+    the updated registry dict.
+    """
+    data = load_profiles_conf()
+    data['OWA_SCHEDULED'] = [p for p in data['OWA_SCHEDULED'] if p != alias]
+    save_profiles_conf(data)
+    return data
+
+
+def is_scheduled(alias):
+    """True when `alias` is in OWA_SCHEDULED."""
+    return alias in load_profiles_conf().get('OWA_SCHEDULED', [])
 
 
 def resolve_profile(cli_profile=None, allow_missing=False):

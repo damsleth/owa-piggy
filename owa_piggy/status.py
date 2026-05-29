@@ -26,11 +26,9 @@ from .config import (
 )
 from .jwt import decode_jwt_segment
 from .launchd import (
-    LEGACY_LABEL,
-    is_installed as launchd_is_installed,
-    label_for as launchd_label,
-    legacy_plist_path,
-    plist_path as launchd_plist_path,
+    SHARED_LABEL,
+    is_scheduled as launchd_is_scheduled,
+    shared_plist_path,
 )
 from .oauth import CLIENT_ID
 from .scopes import KNOWN_AUDIENCES, resolve_audience
@@ -325,12 +323,12 @@ def do_status(alias, audience=None, scope=None, multi=False):
     if at_minutes is not None:
         at_expires = f'{at_expires} ({_humanize_minutes(at_minutes)})'
 
-    launchd_state = 'true' if launchd_is_installed(alias) else 'false'
+    scheduled_state = 'true' if launchd_is_scheduled(alias) else 'false'
     print(f'authtoken:    expires {at_expires}')
     print(f'refreshtoken: expires {rt_expires}')
     print(f'audience:     {audience_line}')
     print(f'scopes:       {scopes_line}')
-    print(f'launchd:      {launchd_state}')
+    print(f'scheduled:    {scheduled_state}')
     return 0
 
 
@@ -472,10 +470,15 @@ def do_debug(alias, audience=None, scope=None):
                 row('no', 'exchange failed - see error above')
 
     # --- Launchd agent ---
-    label = launchd_label(alias)
+    # One shared agent reseeds every profile in OWA_SCHEDULED; whether THIS
+    # profile is actually rotated by it is a registry-membership question,
+    # separate from whether the shared plist is installed/loaded.
+    label = SHARED_LABEL
     print(f'\nLaunchd refresh agent ({label}):')
-    plist_path = launchd_plist_path(alias)
-    row('ok' if plist_path.exists() else 'no', 'plist file', str(plist_path))
+    row('ok' if launchd_is_scheduled(alias) else 'no',
+        f'{alias!r} in schedule (OWA_SCHEDULED)')
+    plist_path = shared_plist_path()
+    row('ok' if plist_path.exists() else 'no', 'shared plist file', str(plist_path))
 
     uid = os.getuid()
     target = f'gui/{uid}/{label}'
@@ -506,15 +509,6 @@ def do_debug(alias, audience=None, scope=None):
         row('..', 'launchctl not found on PATH (non-macOS?)')
     except subprocess.TimeoutExpired:
         row('no', 'launchctl print timed out')
-
-    # Warn if the legacy suffix-less plist is still around; setup-refresh.sh
-    # cleans it up on first --all run, but `debug` should surface it for
-    # anyone who hasn't re-run install yet.
-    legacy_label = LEGACY_LABEL
-    legacy_plist = legacy_plist_path()
-    if legacy_plist.exists():
-        row('!!', 'legacy single-profile plist still present',
-            f'{legacy_plist} - run scripts/setup-refresh.sh --all to replace')
 
     try:
         proc = subprocess.run(['crontab', '-l'], capture_output=True,

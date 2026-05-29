@@ -20,8 +20,9 @@ from .config import (
     validate_alias,
 )
 from .launchd import (
-    is_installed as launchd_is_installed,
-    run_setup_refresh,
+    is_scheduled as launchd_is_scheduled,
+    schedule as launchd_schedule,
+    unschedule as launchd_unschedule,
 )
 from .profiles import (
     create_profile,
@@ -226,8 +227,8 @@ def _action_delete(state, current):
         print(f'About to delete profile {current!r}:')
         print(f'  - removes {profile_dir(current)}')
         print('  - unregisters from profiles.conf')
-        if launchd_is_installed(current):
-            print('  - uninstalls launchd agent')
+        if launchd_is_scheduled(current):
+            print('  - removes from launchd schedule')
         if not _confirm(f'delete {current!r}?'):
             return False
         ok, err = delete_profile(
@@ -249,33 +250,33 @@ def _action_install(state, current):
     def do():
         sys.stdout.write(CLEAR_SCREEN)
         sys.stdout.flush()
-        rc = run_setup_refresh(current, install=True)
+        rc = launchd_schedule(current)
         if rc == 0:
-            print(f'\nlaunchd agent installed for {current!r}.')
+            print(f'\n{current!r} added to launchd schedule.')
         input('press enter to continue...')
         return rc
 
     rc = state.cooked_action(do)
-    return (f'launchd installed for {current!r}.' if rc == 0
-            else f'launchd install failed for {current!r}.')
+    return (f'{current!r} scheduled.' if rc == 0
+            else f'scheduling {current!r} failed.')
 
 
 def _action_uninstall(state, current):
-    if not launchd_is_installed(current):
-        return f'no launchd agent installed for {current!r}.'
+    if not launchd_is_scheduled(current):
+        return f'{current!r} is not scheduled.'
 
     def do():
         sys.stdout.write(CLEAR_SCREEN)
         sys.stdout.flush()
-        rc = run_setup_refresh(current, install=False)
+        rc = launchd_unschedule(current)
         if rc == 0:
-            print(f'\nlaunchd agent uninstalled for {current!r}.')
+            print(f'\n{current!r} removed from launchd schedule.')
         input('press enter to continue...')
         return rc
 
     rc = state.cooked_action(do)
-    return (f'launchd uninstalled for {current!r}.' if rc == 0
-            else f'launchd uninstall failed for {current!r}.')
+    return (f'{current!r} unscheduled.' if rc == 0
+            else f'unscheduling {current!r} failed.')
 
 
 def _action_reseed(state, current):
@@ -340,8 +341,8 @@ def run_picker():
       enter          - set highlighted profile as default
       a              - add a new profile (drops into setup)
       d              - delete profile (with confirm)
-      l              - install launchd agent for highlighted profile
-      u              - uninstall launchd agent for highlighted profile
+      l              - add highlighted profile to the launchd schedule
+      u              - remove highlighted profile from the launchd schedule
       r              - reseed highlighted profile (drops out, re-enters)
       R              - reseed every profile (= `owa-piggy reseed --all`)
       e              - open Edge with the highlighted profile's sidecar session
@@ -377,10 +378,10 @@ def run_picker():
     def draw():
         profiles, default, enabled = load_state()
         clamp_cursor(profiles)
-        # Compute launchd install state once per frame rather than re-
-        # stat'ing the plist for every row on every keystroke. Small
-        # win, but it also turns N filesystem calls into 1.
-        launchd_state = {alias: launchd_is_installed(alias) for alias in profiles}
+        # Compute launchd schedule state once per frame from the registry
+        # (one profiles.conf read) rather than per-row.
+        scheduled = set(load_profiles_conf().get('OWA_SCHEDULED', []))
+        launchd_state = {alias: alias in scheduled for alias in profiles}
         # Full-screen redraw: cheaper to reason about than a partial diff,
         # and the screen is tiny.
         sys.stdout.write(CLEAR_SCREEN)
@@ -388,7 +389,7 @@ def run_picker():
         sys.stdout.write(
             f'  {DIM}'
             'up/down  navigate  ·  space toggle  ·  enter set default\r\n'
-            '  a add  ·  d delete  ·  l install launchd  ·  u uninstall  ·  r reseed  ·  R reseed all  ·  e edge  ·  q quit'
+            '  a add  ·  d delete  ·  l schedule  ·  u unschedule  ·  r reseed  ·  R reseed all  ·  e edge  ·  q quit'
             f'{RESET}\r\n\r\n'
         )
         if not profiles:
@@ -402,7 +403,7 @@ def run_picker():
                     state_marker = f'{GREEN}x{RESET}'
                 else:
                     state_marker = f'{DIM} {RESET}'
-                launchd_marker = f' {CYAN}(L){RESET}' if launchd_state[alias] else ''
+                launchd_marker = f' {CYAN}(S){RESET}' if launchd_state[alias] else ''
                 sys.stdout.write(
                     f' {cursor} [{state_marker}] {alias}{launchd_marker}{CLEAR_EOL}\r\n'
                 )
@@ -532,7 +533,9 @@ def print_plain_list():
     reg = load_profiles_conf()
     default = reg['OWA_DEFAULT_PROFILE']
     enabled = set(reg['OWA_PROFILES'])
+    scheduled = set(reg.get('OWA_SCHEDULED', []))
     for alias in profiles:
         marker = '*' if alias == default else ('x' if alias in enabled else ' ')
-        print(f' {marker} {alias}')
+        sched = ' (S)' if alias in scheduled else ''
+        print(f' {marker} {alias}{sched}')
     return 0

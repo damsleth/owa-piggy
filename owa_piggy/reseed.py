@@ -34,6 +34,49 @@ from .config import (
 from .scripts import find_reseed_script
 
 
+def _profile_cdp_port(alias):
+    """Derive a stable CDP debug port for `alias`, matching the formula
+    in scripts/setup-refresh.sh (`9222 + cksum % 10000`).
+
+    The legacy scrape backend (reseed-from-edge.sh) reads CDP_PORT from
+    the environment. The per-profile launchd plists used to inject it;
+    the single shared agent does not, so the scrape path derives it here
+    instead. Capture mode is unaffected - it picks a free port at runtime.
+    """
+    return 9222 + (_posix_cksum(alias.encode()) % 10000)
+
+
+def _posix_cksum(data):
+    """POSIX `cksum` CRC over `data`, returning the same integer the
+    `cksum` utility prints. Implements the standard CRC-32/CKSUM: the
+    byte length is appended to the stream and the CRC is final-XOR'd.
+    """
+    crc = 0
+    table = _CKSUM_TABLE
+    for byte in data:
+        crc = ((crc << 8) & 0xFFFFFFFF) ^ table[((crc >> 24) ^ byte) & 0xFF]
+    n = len(data)
+    while n:
+        crc = ((crc << 8) & 0xFFFFFFFF) ^ table[((crc >> 24) ^ (n & 0xFF)) & 0xFF]
+        n >>= 8
+    return (~crc) & 0xFFFFFFFF
+
+
+def _build_cksum_table():
+    poly = 0x04C11DB7
+    table = []
+    for i in range(256):
+        crc = i << 24
+        for _ in range(8):
+            crc = ((crc << 1) ^ poly) & 0xFFFFFFFF if crc & 0x80000000 \
+                else (crc << 1) & 0xFFFFFFFF
+        table.append(crc)
+    return table
+
+
+_CKSUM_TABLE = _build_cksum_table()
+
+
 def do_reseed(alias):
     """Run the headless reseed flow for profile <alias>.
 
@@ -166,6 +209,12 @@ def _do_reseed_scrape(alias):
     env = os.environ.copy()
     env['OWA_PIGGY_PROFILE'] = alias
     env['OWA_PIGGY_EDGE_PROFILE_DIR'] = str(_config.profile_edge_dir(alias))
+    # The single shared launchd agent no longer injects a per-profile
+    # CDP_PORT (the old per-profile plists did). Derive it here so the
+    # sidecar's debug port stays stable and collision-free per profile.
+    # An explicit CDP_PORT already in the environment wins (manual runs,
+    # debugging).
+    env.setdefault('CDP_PORT', str(_profile_cdp_port(alias)))
 
     try:
         return subprocess.call([str(script)], env=env)
@@ -214,12 +263,49 @@ def do_reseed_all():
         print('no active profiles to reseed (registry has no enabled '
               'profiles).', file=sys.stderr)
         return 1
-    profiles = active
+    return _reseed_aliases(active)
+
+
+def do_reseed_scheduled():
+    """Reseed only the profiles in OWA_SCHEDULED - the set the single
+    shared launchd agent rotates hourly (`reseed --scheduled`).
+
+    This is the launchd entry point. It is deliberately narrower than
+    do_reseed_all(): a profile can be enabled (reseeded by `--all`,
+    visible in `status`) without being scheduled for unattended hourly
+    rotation. The on-disk profile set is intersected with OWA_SCHEDULED;
+    any scheduled alias whose profile dir has gone missing is skipped
+    with a warning rather than aborting the whole run.
+
+    An empty schedule is a valid state (no profile opted in), so this
+    returns 0 - the agent fires hourly and a no-op run is not a failure.
+    """
+    on_disk = set(list_profiles())
+    scheduled = load_profiles_conf().get('OWA_SCHEDULED', [])
+    aliases = []
+    for alias in scheduled:
+        if alias in on_disk:
+            aliases.append(alias)
+        else:
+            print(f'skipping scheduled profile with no config on disk: '
+                  f'{alias}', file=sys.stderr)
+    if not aliases:
+        print('no scheduled profiles to reseed (OWA_SCHEDULED is empty).',
+              file=sys.stderr)
+        return 0
+    return _reseed_aliases(aliases)
+
+
+def _reseed_aliases(aliases):
+    """Reseed each alias in `aliases` sequentially. Returns the max exit
+    code so a partial failure is still surfaced. Shared by do_reseed_all
+    and do_reseed_scheduled.
+    """
     rc = 0
-    for i, alias in enumerate(profiles):
+    for i, alias in enumerate(aliases):
         if i:
             print(file=sys.stderr)
-        print(f'=== reseed [profile={alias}] ({i + 1}/{len(profiles)}) ===',
+        print(f'=== reseed [profile={alias}] ({i + 1}/{len(aliases)}) ===',
               file=sys.stderr)
         # set_active_profile rebinds CONFIG_PATH so the nested setup writes
         # land in the right per-profile config. do_reseed shells out to a

@@ -85,7 +85,7 @@ def test_set_default_surfaces_failure(monkeypatch):
 
 def test_delete_aborts_when_not_confirmed(monkeypatch):
     deleted = []
-    monkeypatch.setattr(profile_tui, 'launchd_is_installed', lambda a: False)
+    monkeypatch.setattr(profile_tui, 'launchd_is_scheduled', lambda a: False)
     monkeypatch.setattr(profile_tui, 'profile_dir', lambda a: f'/tmp/{a}')
     monkeypatch.setattr(profile_tui, '_confirm', lambda prompt: False)
     monkeypatch.setattr(profile_tui, 'delete_profile',
@@ -97,7 +97,7 @@ def test_delete_aborts_when_not_confirmed(monkeypatch):
 
 def test_delete_delegates_when_confirmed(monkeypatch):
     calls = []
-    monkeypatch.setattr(profile_tui, 'launchd_is_installed', lambda a: False)
+    monkeypatch.setattr(profile_tui, 'launchd_is_scheduled', lambda a: False)
     monkeypatch.setattr(profile_tui, 'profile_dir', lambda a: f'/tmp/{a}')
     monkeypatch.setattr(profile_tui, '_confirm', lambda prompt: True)
 
@@ -112,7 +112,7 @@ def test_delete_delegates_when_confirmed(monkeypatch):
 
 
 def test_delete_surfaces_failure(monkeypatch, capsys):
-    monkeypatch.setattr(profile_tui, 'launchd_is_installed', lambda a: False)
+    monkeypatch.setattr(profile_tui, 'launchd_is_scheduled', lambda a: False)
     monkeypatch.setattr(profile_tui, 'profile_dir', lambda a: f'/tmp/{a}')
     monkeypatch.setattr(profile_tui, '_confirm', lambda prompt: True)
     monkeypatch.setattr(profile_tui, 'delete_profile',
