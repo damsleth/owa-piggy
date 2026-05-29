@@ -87,7 +87,7 @@ def test_status_honors_profile_default_audience(
         }
 
     monkeypatch.setattr('owa_piggy.token_flow.exchange_token', _exchange)
-    monkeypatch.setattr(status_mod, 'launchd_is_installed', lambda _alias: False)
+    monkeypatch.setattr(status_mod, 'launchd_is_scheduled', lambda _alias: False)
 
     rc = status_mod.do_status('work')
 

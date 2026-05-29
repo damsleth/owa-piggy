@@ -816,7 +816,7 @@ def test_interactive_profile_picker_ctrl_c_restores_terminal(monkeypatch):
         'load_profiles_conf',
         lambda: {'OWA_DEFAULT_PROFILE': 'work', 'OWA_PROFILES': ['work', 'personal']},
     )
-    monkeypatch.setattr(profile_tui, 'launchd_is_installed', lambda alias: False)
+    monkeypatch.setattr(profile_tui, 'launchd_is_scheduled', lambda alias: False)
     monkeypatch.setattr(termios, 'tcgetattr', lambda fd: ['old-state'])
     monkeypatch.setattr(tty, 'setraw', lambda fd: None)
     monkeypatch.setattr(
@@ -870,7 +870,7 @@ def _stub_picker_environment(monkeypatch, *, profiles, default,
         lambda: {'OWA_DEFAULT_PROFILE': default,
                  'OWA_PROFILES': list(enabled)},
     )
-    monkeypatch.setattr(tui, 'launchd_is_installed', lambda alias: False)
+    monkeypatch.setattr(tui, 'launchd_is_scheduled', lambda alias: False)
     monkeypatch.setattr(termios, 'tcgetattr', lambda fd: ['old-state'])
     monkeypatch.setattr(tty, 'setraw', lambda fd: None)
     monkeypatch.setattr(termios, 'tcsetattr', lambda *a, **kw: None)
@@ -1062,3 +1062,92 @@ def test_cache_hit_remaining_mode(monkeypatch, capsys, tmp_config, clean_env,
     assert out.endswith('min')
     minutes = int(out[:-3])
     assert 58 <= minutes <= 60
+
+
+# --- reseed selectors (--all / --scheduled / --profile mutual exclusion) ---
+
+
+def test_reseed_all_and_scheduled_mutually_exclusive(monkeypatch, capsys,
+                                                     tmp_config, clean_env):
+    rc = _run(monkeypatch, ['reseed', '--all', '--scheduled'])
+    assert rc != 0
+    assert '--all and --scheduled are mutually exclusive' in capsys.readouterr().err
+
+
+def test_reseed_scheduled_and_profile_mutually_exclusive(monkeypatch, capsys,
+                                                         tmp_config, clean_env):
+    rc = _run(monkeypatch, ['reseed', '--scheduled', '--profile', 'work'])
+    assert rc != 0
+    assert '--scheduled and --profile are mutually exclusive' in capsys.readouterr().err
+
+
+def test_reseed_scheduled_dispatches_to_do_reseed_scheduled(monkeypatch, capsys,
+                                                            tmp_config, clean_env):
+    called = []
+    monkeypatch.setattr(cli_mod, 'do_reseed_scheduled',
+                        lambda: called.append(True) or 0)
+    rc = _run(monkeypatch, ['reseed', '--scheduled'])
+    assert rc == 0
+    assert called == [True]
+
+
+def test_reseed_scheduled_json_envelope_scope(monkeypatch, capsys,
+                                              tmp_config, clean_env):
+    monkeypatch.setattr(cli_mod, 'do_reseed_scheduled', lambda: 0)
+    rc = _run(monkeypatch, ['reseed', '--scheduled', '--json'])
+    assert rc == 0
+    env = json.loads(capsys.readouterr().out)
+    assert env['ok'] is True
+    assert env['stats']['scope'] == 'scheduled'
+
+
+# --- profiles schedule / unschedule -----------------------------------
+
+
+def test_profiles_schedule_unknown_profile_fails(monkeypatch, capsys,
+                                                 tmp_config, clean_env):
+    rc = _run(monkeypatch, ['profiles', 'schedule', 'ghost'])
+    assert rc != 0
+    assert 'not found' in capsys.readouterr().err
+
+
+def test_profiles_schedule_adds_to_registry(monkeypatch, capsys,
+                                            tmp_config, clean_env):
+    """`profiles schedule` edits OWA_SCHEDULED; the one-time shared-agent
+    install is stubbed so the test never touches launchctl."""
+    from owa_piggy import launchd as launchd_mod
+    from owa_piggy.config import (
+        ensure_profile_registered, load_profiles_conf, profile_dir,
+    )
+
+    profile_dir('work').mkdir(parents=True)
+    ensure_profile_registered('work')
+    monkeypatch.setattr(launchd_mod, '_run_setup_refresh_script',
+                        lambda *a: 0)
+    monkeypatch.setattr(launchd_mod, 'shared_agent_installed', lambda: True)
+
+    rc = _run(monkeypatch, ['profiles', 'schedule', 'work'])
+    assert rc == 0
+    assert load_profiles_conf()['OWA_SCHEDULED'] == ['work']
+
+
+def test_profiles_unschedule_removes_from_registry(monkeypatch, capsys,
+                                                   tmp_config, clean_env):
+    from owa_piggy import launchd as launchd_mod
+    from owa_piggy.config import (
+        ensure_profile_registered, load_profiles_conf, profile_dir,
+        schedule_profile,
+    )
+
+    profile_dir('work').mkdir(parents=True)
+    ensure_profile_registered('work')
+    schedule_profile('work')
+    # Stub the uninstall so emptying the schedule doesn't shell out.
+    monkeypatch.setattr(launchd_mod, '_run_setup_refresh_script', lambda *a: 0)
+    monkeypatch.setattr(launchd_mod, 'shared_agent_installed', lambda: True)
+
+    rc = _run(monkeypatch, ['profiles', 'unschedule', 'work'])
+    assert rc == 0
+    out = load_profiles_conf()
+    assert out['OWA_SCHEDULED'] == []
+    assert out['OWA_PROFILES'] == ['work']

@@ -53,8 +53,11 @@ owa_piggy/
                      # scope resolve, RT shape check, rotated-RT persist
   setup.py           # interactive_setup(alias), read_input (raw-tty paste safety)
   scripts.py         # find_packaged_script + per-script wrappers (reseed, setup-refresh)
-  launchd.py         # label_for, plist_path, is_installed, run_setup_refresh
-  reseed.py          # do_reseed(alias) (legacy scrape + capture-mode dispatch)
+  launchd.py         # SHARED_LABEL + shared_plist_path, is_scheduled,
+                     # schedule/unschedule (single shared agent); label_for/
+                     # plist_path retained for migration of old per-profile plists
+  reseed.py          # do_reseed(alias), do_reseed_all, do_reseed_scheduled
+                     # (launchd entry point: reseeds OWA_SCHEDULED only)
   capture.py         # headless Edge /token interception (capture-mode setup + reseed)
   cdp.py             # tiny Chrome DevTools Protocol websocket client used by capture.py
   profiles.py        # registry lifecycle: create/delete/enable/disable/set_default_profile
@@ -67,7 +70,8 @@ owa_piggy/
 scripts/
   reseed-from-edge.sh  # headless Edge sidecar; reads OWA_PIGGY_EDGE_PROFILE_DIR
   scrape_edge.py
-  setup-refresh.sh     # launchd agent installer, one plist per profile
+  setup-refresh.sh     # shared launchd agent installer (--install-shared /
+                       # --uninstall-shared); one plist for the whole tool
   add-to-path.sh       # pipx-based installer shim
 tests/                # pytest suite: pure functions + CLI smoke + profile suite
 pyproject.toml
@@ -79,13 +83,14 @@ SECURITY.md
 On-disk layout at `~/.config/owa-piggy/`:
 
 ```
-profiles.conf                     OWA_DEFAULT_PROFILE + OWA_PROFILES
+profiles.conf                     OWA_DEFAULT_PROFILE + OWA_PROFILES + OWA_SCHEDULED
+refresh.log                       shared launchd agent stderr (all scheduled
+                                  profiles; lines are [alias]-prefixed)
 profiles/
   <alias>/
     config                        per-profile KV (OWA_REFRESH_TOKEN, ...)
     cache.json                    access-token cache for this profile
     edge-profile/                 Edge sidecar userdata dir for this profile
-    refresh.log                   per-profile launchd stderr
 ```
 
 The single-file layout (`~/.config/owa-piggy/config`) is auto-migrated into

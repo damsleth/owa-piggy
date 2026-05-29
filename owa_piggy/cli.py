@@ -40,7 +40,7 @@ from .jwt import decode_jwt, decode_jwt_segment, token_minutes_remaining
 from .migration import migrate_if_needed
 from .oauth import CLIENT_ID
 from .profiles import create_profile, delete_profile, set_default_profile
-from .reseed import do_reseed, do_reseed_all
+from .reseed import do_reseed, do_reseed_all, do_reseed_scheduled
 from .scopes import KNOWN_AUDIENCES, resolve_audience
 from .status import do_debug, do_status, do_status_all, status_all_report, status_report
 from .token_flow import exchange_fresh
@@ -84,6 +84,7 @@ examples:
   owa-piggy debug                                  # full diagnostics
   owa-piggy reseed --profile work                  # recover from 24h hard-expiry
   owa-piggy reseed --all                           # reseed every configured profile
+  owa-piggy reseed --scheduled                      # reseed only OWA_SCHEDULED (launchd uses this)
   owa-piggy edge --profile work                    # open Edge with the profile's sidecar session
   owa-piggy setup --profile new                    # paste-flow setup
   owa-piggy setup --profile new --email me@x.org   # network-capture setup (Okta etc.)
@@ -203,6 +204,11 @@ def _build_parser():
     _add_common_options(p_reseed, audience_scope=False)
     p_reseed.add_argument('--all', action='store_true', dest='all_profiles',
                           help='reseed every configured profile sequentially')
+    p_reseed.add_argument('--scheduled', action='store_true',
+                          dest='scheduled_profiles',
+                          help='reseed only profiles in OWA_SCHEDULED (the set '
+                               'the shared launchd agent rotates); used by the '
+                               'launchd agent itself')
     p_reseed.add_argument('--json', action='store_true',
                           help='emit action envelope on stdout')
 
@@ -260,6 +266,18 @@ def _build_parser():
                        help='skip TTY confirmation (required when stdin is not a TTY)')
     p_del.add_argument('--json', action='store_true',
                        help='emit action envelope on stdout')
+
+    p_sched = profiles_sub.add_parser(
+        'schedule', help='add <alias> to the shared launchd reseed schedule')
+    p_sched.add_argument('alias', metavar='<alias>')
+    p_sched.add_argument('--json', action='store_true',
+                         help='emit action envelope on stdout')
+
+    p_unsched = profiles_sub.add_parser(
+        'unschedule', help='remove <alias> from the shared launchd reseed schedule')
+    p_unsched.add_argument('alias', metavar='<alias>')
+    p_unsched.add_argument('--json', action='store_true',
+                           help='emit action envelope on stdout')
 
     return parser
 
@@ -515,37 +533,44 @@ def _cmd_setup(args):
 def _cmd_reseed(args):
     as_json = bool(getattr(args, 'json', False))
     t0 = time.monotonic()
+    all_profiles = bool(getattr(args, 'all_profiles', False))
+    scheduled = bool(getattr(args, 'scheduled_profiles', False))
 
-    if getattr(args, 'all_profiles', False):
-        if args.profile:
-            if as_json:
-                from owa_piggy.conventions import (
-                    EXIT_USER_ERROR, action_envelope, emit_action,
-                )
-                emit_action(action_envelope(
-                    command='reseed', ok=False,
-                    error={
-                        'code': 'usage',
-                        'message': '--all and --profile are mutually exclusive',
-                    },
-                    duration_ms=(time.monotonic() - t0) * 1000.0,
-                ))
-                return EXIT_USER_ERROR
-            print('ERROR: --all and --profile are mutually exclusive',
-                  file=sys.stderr)
-            return 1
-        # Per-profile cache clearing happens inside do_reseed_all via
+    def _usage_error(message):
+        if as_json:
+            from owa_piggy.conventions import (
+                EXIT_USER_ERROR, action_envelope, emit_action,
+            )
+            emit_action(action_envelope(
+                command='reseed', ok=False,
+                error={'code': 'usage', 'message': message},
+                duration_ms=(time.monotonic() - t0) * 1000.0,
+            ))
+            return EXIT_USER_ERROR
+        print(f'ERROR: {message}', file=sys.stderr)
+        return 1
+
+    # --all, --scheduled and --profile are mutually exclusive selectors.
+    if all_profiles and scheduled:
+        return _usage_error('--all and --scheduled are mutually exclusive')
+    if (all_profiles or scheduled) and args.profile:
+        flag = '--all' if all_profiles else '--scheduled'
+        return _usage_error(f'{flag} and --profile are mutually exclusive')
+
+    if all_profiles or scheduled:
+        # Per-profile cache clearing happens inside the reseed loop via
         # set_active_profile + the nested `owa-piggy setup` call's own
         # clear_cache, so we do not pre-clear here.
-        rc = do_reseed_all()
+        scope = 'all' if all_profiles else 'scheduled'
+        rc = do_reseed_all() if all_profiles else do_reseed_scheduled()
         if as_json:
             from owa_piggy.conventions import action_envelope, emit_action
             emit_action(action_envelope(
                 command='reseed', ok=(rc == 0),
-                stats={'scope': 'all', 'exit_code': int(rc or 0)},
+                stats={'scope': scope, 'exit_code': int(rc or 0)},
                 error=None if rc == 0 else {
                     'code': 'reseed_failed',
-                    'message': 'do_reseed_all returned nonzero',
+                    'message': f'reseed --{scope} returned nonzero',
                 },
                 duration_ms=(time.monotonic() - t0) * 1000.0,
             ))
@@ -700,6 +725,10 @@ def _cmd_profiles(args):
             yes=bool(getattr(args, 'yes', False)),
             as_json=as_json,
         )
+    if sub == 'schedule':
+        return _do_profiles_schedule(args.alias, schedule=True, as_json=as_json)
+    if sub == 'unschedule':
+        return _do_profiles_schedule(args.alias, schedule=False, as_json=as_json)
     if as_json:
         # Data class: raw doc on stdout. No top-level `ok` per the
         # reserved-key contract. Shared by bare `profiles --json` and
@@ -722,6 +751,7 @@ def _cmd_profiles(args):
 def _profiles_report():
     reg = load_profiles_conf()
     enabled = set(reg['OWA_PROFILES'])
+    scheduled = set(reg.get('OWA_SCHEDULED', []))
     default = reg['OWA_DEFAULT_PROFILE']
     return {
         'default': default or None,
@@ -730,6 +760,7 @@ def _profiles_report():
                 'alias': alias,
                 'default': alias == default,
                 'registered': alias in enabled,
+                'scheduled': alias in scheduled,
                 'has_config': profile_config_path(alias).is_file(),
             }
             for alias in list_profiles()
@@ -847,6 +878,56 @@ def _do_profiles_delete(alias, force=False, yes=False, as_json=False):
         ))
         return 0
     print(f'removed profile {alias!r}.')
+    return 0
+
+
+def _do_profiles_schedule(alias, schedule, as_json=False):
+    """Add or remove `alias` from the shared launchd reseed schedule.
+
+    `schedule=True` ensures the shared agent exists and adds `alias` to
+    OWA_SCHEDULED; `schedule=False` removes it (and removes the shared
+    agent if the schedule empties). Both are pure config edits except for
+    the one-time install/uninstall of the single shared plist.
+    """
+    from .launchd import schedule as launchd_schedule
+    from .launchd import unschedule as launchd_unschedule
+    t0 = time.monotonic()
+    verb = 'profiles schedule' if schedule else 'profiles unschedule'
+
+    def _fail(code, message):
+        if as_json:
+            from owa_piggy.conventions import action_envelope, emit_action
+            emit_action(action_envelope(
+                command=verb, ok=False,
+                error={'code': code, 'message': message},
+                duration_ms=(time.monotonic() - t0) * 1000.0,
+            ))
+        else:
+            print(f'ERROR: {message}', file=sys.stderr)
+        return 1
+
+    ok, verr = validate_alias(alias)
+    if not ok:
+        return _fail('invalid_alias', str(verr))
+    if alias not in list_profiles():
+        return _fail('profile_not_found', f'profile {alias!r} not found')
+
+    rc = launchd_schedule(alias) if schedule else launchd_unschedule(alias)
+    if rc != 0:
+        return _fail('launchd_failed',
+                     f'{verb} for {alias!r} failed (launchd error)')
+    if as_json:
+        from owa_piggy.conventions import action_envelope, emit_action
+        emit_action(action_envelope(
+            command=verb, ok=True,
+            stats={'alias': alias, 'scheduled': schedule},
+            duration_ms=(time.monotonic() - t0) * 1000.0,
+        ))
+        return 0
+    if schedule:
+        print(f'{alias!r} added to the launchd reseed schedule.')
+    else:
+        print(f'{alias!r} removed from the launchd reseed schedule.')
     return 0
 
 

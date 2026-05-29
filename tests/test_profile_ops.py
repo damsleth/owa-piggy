@@ -6,8 +6,8 @@ Covers:
   - disable_profile + default-promotion
   - delete_profile end-to-end (registry, disk, default promotion)
 
-Each test stubs `is_installed`/`run_setup_refresh` to keep launchd off
-the wire - we never want a test to touch ~/Library/LaunchAgents.
+Each test stubs `is_scheduled`/`unschedule` to keep launchd off the wire
+- we never want a test to touch ~/Library/LaunchAgents.
 """
 from owa_piggy import launchd, profiles
 from owa_piggy.config import (
@@ -115,15 +115,14 @@ def test_disable_profile_idempotent_when_missing(tmp_config, clean_env):
 
 
 def _stub_launchd(monkeypatch, *, installed=False, run_rc=0):
-    """Replace launchd.is_installed / run_setup_refresh so tests stay
-    away from the real launchd. Returns a list that captures every
-    run_setup_refresh call for assertions."""
+    """Replace launchd.is_scheduled / unschedule so tests stay away from
+    the real launchd. Returns a list that captures every unschedule call
+    for assertions. `installed` here means "this profile is scheduled"."""
     calls = []
-    monkeypatch.setattr(profiles, 'launchd_is_installed',
+    monkeypatch.setattr(profiles, 'launchd_is_scheduled',
                         lambda alias: installed)
-    monkeypatch.setattr(profiles, 'run_setup_refresh',
-                        lambda alias, *, install: (calls.append((alias, install))
-                                                   or run_rc))
+    monkeypatch.setattr(profiles, 'launchd_unschedule',
+                        lambda alias: (calls.append((alias, False)) or run_rc))
     return calls
 
 

@@ -25,8 +25,8 @@ from .config import (
     unregister_profile,
     validate_alias,
 )
-from .launchd import is_installed as launchd_is_installed
-from .launchd import run_setup_refresh
+from .launchd import is_scheduled as launchd_is_scheduled
+from .launchd import unschedule as launchd_unschedule
 from .setup import interactive_setup
 
 
@@ -142,8 +142,8 @@ def delete_profile(alias, *, uninstall_launchd=True, promote_default=True):
     while a registry pointing at a deleted secret-bearing directory is more
     confusing for the next command.
     """
-    if uninstall_launchd and launchd_is_installed(alias):
-        run_setup_refresh(alias, install=False)
+    if uninstall_launchd and launchd_is_scheduled(alias):
+        launchd_unschedule(alias)
 
     try:
         unregister_profile(alias)
