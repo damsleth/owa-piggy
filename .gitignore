@@ -1,6 +1,7 @@
 # temporary docs
 .plans/
 .docs/
+.tmp/
 # claude specifics
 .claude/
 
