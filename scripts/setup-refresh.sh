@@ -1,7 +1,14 @@
 #!/bin/bash
-# Installs a macOS LaunchAgent that keeps an owa-piggy profile's refresh
-# token alive. One plist per profile, labelled
-# `com.damsleth.owa-piggy.<alias>`.
+# Installs a single macOS LaunchAgent that keeps the *scheduled* owa-piggy
+# profiles' refresh tokens alive. One plist for the whole tool, labelled
+# `com.damsleth.owa-piggy.scheduled`, running `owa-piggy reseed --scheduled`.
+#
+# Which profiles actually get reseeded is the OWA_SCHEDULED set in
+# ~/.config/owa-piggy/profiles.conf, read at run time - the plist itself is
+# static and is only written once. This keeps a single row in macOS's Login
+# Items & Extensions regardless of profile count, and means toggling a
+# profile's schedule (owa-piggy schedule/unschedule, or the `profiles` TUI)
+# is a pure config edit that never re-pokes launchd.
 #
 # Why launchd instead of cron:
 #   cron on macOS does not fire missed jobs when the Mac was asleep. If the
@@ -15,12 +22,8 @@
 # boot/login.
 #
 # Usage:
-#   setup-refresh.sh --profile <alias>            install/update one profile
-#   setup-refresh.sh --all                        install/update every profile
-#                                                 listed in profiles.conf
-#   setup-refresh.sh --uninstall --profile <a>    bootout + delete one plist
-#   setup-refresh.sh --uninstall --all            uninstall every profile's
-#                                                 plist
+#   setup-refresh.sh --install-shared      write + load the shared agent
+#   setup-refresh.sh --uninstall-shared    bootout + delete the shared agent
 
 set -e
 
@@ -28,28 +31,16 @@ REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 CONFIG_DIR="$HOME/.config/owa-piggy"
 AGENTS_DIR="$HOME/Library/LaunchAgents"
 LABEL_PREFIX="com.damsleth.owa-piggy"
+SHARED_LABEL="$LABEL_PREFIX.scheduled"
 
 # --- Arg parsing ---
-MODE="install"
-TARGET_PROFILE=""
-ALL_MODE=false
+MODE=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --profile)
-      shift
-      TARGET_PROFILE="${1:-}"
-      ;;
-    --profile=*)
-      TARGET_PROFILE="${1#--profile=}"
-      ;;
-    --all)
-      ALL_MODE=true
-      ;;
-    --uninstall)
-      MODE="uninstall"
-      ;;
+    --install-shared)   MODE="install" ;;
+    --uninstall-shared) MODE="uninstall" ;;
     -h|--help)
-      sed -n '2,25p' "$0"
+      sed -n '2,27p' "$0"
       exit 0
       ;;
     *)
@@ -60,8 +51,8 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-if [ "$ALL_MODE" = false ] && [ -z "$TARGET_PROFILE" ]; then
-  echo "ERROR: pass --profile <alias> or --all" >&2
+if [ -z "$MODE" ]; then
+  echo "ERROR: pass --install-shared or --uninstall-shared" >&2
   exit 1
 fi
 
@@ -94,116 +85,70 @@ resolve_program_args() {
   fi
 }
 
-# List every profile registered in profiles.conf, falling back to disk
-# directory listing if the registry isn't set up yet.
-list_all_profiles() {
-  local conf="$CONFIG_DIR/profiles.conf"
-  if [ -f "$conf" ]; then
-    awk -F'=' '
-      /^OWA_PROFILES=/ {
-        val = $2
-        gsub(/^[[:space:]"\047]+|[[:space:]"\047]+$/, "", val)
-        print val
-      }
-    ' "$conf"
-  elif [ -d "$CONFIG_DIR/profiles" ]; then
-    (cd "$CONFIG_DIR/profiles" && /bin/ls -1)
-  fi
-}
-
-profile_cdp_port() {
-  local alias="$1"
-  local sum
-  sum="$(printf '%s' "$alias" | cksum | awk '{print $1}')"
-  echo $((9222 + (sum % 10000)))
-}
-
-uninstall_plist() {
-  local alias="$1"
-  local label="$LABEL_PREFIX.$alias"
-  local plist="$AGENTS_DIR/$label.plist"
+bootout_label() {
+  local label="$1"
   local domain target
   domain="gui/$(id -u)"
   target="$domain/$label"
   if launchctl print "$target" >/dev/null 2>&1; then
     launchctl bootout "$target" 2>/dev/null || true
   fi
-  if [ -f "$plist" ]; then
-    rm -f "$plist"
-    echo "Removed $plist"
+}
+
+# Remove the suffix-less legacy plist from pre-profile installs, if any, and
+# any pre-consolidation per-profile plists (com.damsleth.owa-piggy.<alias>),
+# but never the shared agent itself.
+uninstall_old_plists() {
+  bootout_label "$LABEL_PREFIX"
+  rm -f "$AGENTS_DIR/$LABEL_PREFIX.plist"
+  if [ -d "$AGENTS_DIR" ]; then
+    for plist in "$AGENTS_DIR/$LABEL_PREFIX".*.plist; do
+      [ -e "$plist" ] || continue
+      case "$plist" in
+        "$AGENTS_DIR/$SHARED_LABEL.plist") continue ;;
+      esac
+      local base label
+      base="$(basename "$plist")"
+      label="${base%.plist}"
+      echo "Removing pre-consolidation agent: $label"
+      bootout_label "$label"
+      rm -f "$plist"
+    done
   fi
 }
 
-# Remove the suffix-less legacy plist from pre-profile installs, if any.
-# One-shot cleanup so the old com.damsleth.owa-piggy agent doesn't keep
-# running against a config path that no longer exists post-migration.
-uninstall_legacy_plist() {
-  local label="$LABEL_PREFIX"
-  local plist="$AGENTS_DIR/$label.plist"
-  local domain target
-  domain="gui/$(id -u)"
-  target="$domain/$label"
-  if launchctl print "$target" >/dev/null 2>&1; then
-    echo "Removing legacy single-profile plist..."
-    launchctl bootout "$target" 2>/dev/null || true
-  fi
-  if [ -f "$plist" ]; then
-    rm -f "$plist"
+uninstall_shared() {
+  bootout_label "$SHARED_LABEL"
+  if [ -f "$AGENTS_DIR/$SHARED_LABEL.plist" ]; then
+    rm -f "$AGENTS_DIR/$SHARED_LABEL.plist"
+    echo "Removed $AGENTS_DIR/$SHARED_LABEL.plist"
   fi
 }
 
-install_plist_for_profile() {
-  local alias="$1"
-  local config="$CONFIG_DIR/profiles/$alias/config"
-  local log="$CONFIG_DIR/profiles/$alias/refresh.log"
-  local label="$LABEL_PREFIX.$alias"
-  local plist="$AGENTS_DIR/$label.plist"
+install_shared() {
+  local log="$CONFIG_DIR/refresh.log"
+  local plist="$AGENTS_DIR/$SHARED_LABEL.plist"
 
-  # launchd runs agents without the user's shell profile, so OWA_REFRESH_TOKEN
-  # and OWA_TENANT_ID exported there are invisible. The profile's config
-  # file is always readable by the agent. Block install if credentials
-  # aren't on disk.
-  if [ ! -f "$config" ]; then
-    echo "ERROR: profile $alias has no config at $config"
-    echo "  Run: owa-piggy setup --profile $alias"
-    return 1
-  fi
-  local has_token=false has_tenant=false
-  grep -q '^OWA_REFRESH_TOKEN=' "$config" && has_token=true
-  grep -q '^OWA_TENANT_ID=' "$config" && has_tenant=true
-  if ! $has_token || ! $has_tenant; then
-    echo "ERROR: profile $alias is missing OWA_REFRESH_TOKEN and/or OWA_TENANT_ID in $config"
-    echo "  Re-run: owa-piggy setup --profile $alias"
-    return 1
-  fi
-
-  mkdir -p "$(dirname "$log")" "$AGENTS_DIR"
+  mkdir -p "$CONFIG_DIR" "$AGENTS_DIR"
 
   local domain target
   domain="gui/$(id -u)"
-  target="$domain/$label"
+  target="$domain/$SHARED_LABEL"
 
-  # Bootout any previously installed agent before rewriting the plist. If the
-  # agent is not currently bootstrapped, bootout exits non-zero - swallow it.
-  if launchctl print "$target" >/dev/null 2>&1; then
-    launchctl bootout "$target" 2>/dev/null || true
-  fi
+  # Bootout any previously installed shared agent before rewriting the plist.
+  bootout_label "$SHARED_LABEL"
 
-  # Build the ProgramArguments list, appending the `reseed` subcommand
-  # + `--profile <alias>` so the agent runs against this profile
-  # specifically.
-  local full_args=("${PROGRAM_ARGS[@]}" "reseed" "--profile" "$alias")
-  local cdp_port
-  cdp_port="$(profile_cdp_port "$alias")"
+  # The shared agent runs `owa-piggy reseed --scheduled`, which reads the
+  # OWA_SCHEDULED set from profiles.conf at run time. No per-profile args,
+  # no per-profile CDP_PORT (the scrape backend derives its port from the
+  # alias itself; capture mode picks a free port).
+  local full_args=("${PROGRAM_ARGS[@]}" "reseed" "--scheduled")
 
-  # Emit one <string> per ProgramArguments element (handles python3 + script path)
+  # Emit one <string> per ProgramArguments element.
   local program_args_xml="" arg escaped
   for arg in "${full_args[@]}"; do
     # Escape all five XML-predefined entities. `&` must go first so we do
     # not double-escape the ampersands introduced by the other replacements.
-    # Content position inside <string> only strictly requires `&<>` but we
-    # also escape `"` and `'` so the emitted XML stays well-formed if a
-    # refactor ever moves these values into an attribute.
     escaped="${arg//&/&amp;}"
     escaped="${escaped//</&lt;}"
     escaped="${escaped//>/&gt;}"
@@ -219,15 +164,10 @@ install_plist_for_profile() {
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>$label</string>
+  <string>$SHARED_LABEL</string>
   <key>ProgramArguments</key>
   <array>
 ${program_args_xml}  </array>
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>CDP_PORT</key>
-    <string>$cdp_port</string>
-  </dict>
   <key>StartCalendarInterval</key>
   <dict>
     <key>Minute</key>
@@ -251,61 +191,32 @@ EOF
   # RunAtLoad semantics (which differ subtly between bootstrap and load).
   launchctl kickstart "$target" >/dev/null 2>&1 || true
 
-  echo "LaunchAgent installed: $label"
+  echo "Shared LaunchAgent installed: $SHARED_LABEL"
   echo "  plist:    $plist"
   echo "  command:  ${full_args[*]}"
-  echo "  cdp port: $cdp_port"
   echo "  schedule: hourly (top of each hour, catches up on wake)"
+  echo "  profiles: OWA_SCHEDULED in $CONFIG_DIR/profiles.conf"
   echo "  logs:     $log"
   echo "  verify:   launchctl print $target"
-  echo "  remove:   $0 --uninstall --profile $alias"
+  echo "  remove:   $0 --uninstall-shared"
   echo ""
 }
 
 # --- Dispatch ---
 
-# Remove any legacy cron entry from the old setup script (applies to both
-# install and uninstall modes).
+# Remove any legacy cron entry from the old setup script (applies to all modes).
 if crontab -l 2>/dev/null | grep -q "owa-piggy"; then
   echo "Removing legacy cron entry..."
   crontab -l 2>/dev/null | grep -v "owa-piggy" | crontab -
 fi
 
-# Always clean up the pre-profile single-label plist on install runs so
-# we never leave a zombie agent pointed at the old layout.
-if [ "$MODE" = "install" ]; then
-  uninstall_legacy_plist
-  resolve_program_args
-fi
-
-if [ "$MODE" = "uninstall" ]; then
-  if [ "$ALL_MODE" = true ]; then
-    profiles="$(list_all_profiles)"
-    if [ -z "$profiles" ]; then
-      echo "No profiles registered; nothing to uninstall."
-      exit 0
-    fi
-    for alias in $profiles; do
-      uninstall_plist "$alias"
-    done
-  else
-    uninstall_plist "$TARGET_PROFILE"
-  fi
-  exit 0
-fi
-
-# Install path.
-if [ "$ALL_MODE" = true ]; then
-  profiles="$(list_all_profiles)"
-  if [ -z "$profiles" ]; then
-    echo "ERROR: no profiles registered. Run: owa-piggy setup --profile <alias>"
-    exit 1
-  fi
-  rc=0
-  for alias in $profiles; do
-    install_plist_for_profile "$alias" || rc=1
-  done
-  exit "$rc"
-else
-  install_plist_for_profile "$TARGET_PROFILE"
-fi
+case "$MODE" in
+  install)
+    resolve_program_args
+    uninstall_old_plists
+    install_shared
+    ;;
+  uninstall)
+    uninstall_shared
+    ;;
+esac
