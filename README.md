@@ -160,14 +160,16 @@ The token comes back with a broad set of delegated scopes: `Calendars.ReadWrite`
 
 The sliding window renews on every exchange. The hard-cap does not - after 24h AAD returns `AADSTS700084` and the token is unrecoverable via rotation. The launchd agent handles the sliding window; `owa-piggy reseed` handles the hard-cap.
 
-The rotated refresh token is saved automatically to `~/.config/owa-piggy/profiles/<alias>/config` after every exchange (only when the token originally came from the config file - env-only callers keep env-only semantics and get a rotation notice on stderr). Install a LaunchAgent per profile to keep each sliding window fresh without thinking about it:
+The rotated refresh token is saved automatically to `~/.config/owa-piggy/profiles/<alias>/config` after every exchange (only when the token originally came from the config file - env-only callers keep env-only semantics and get a rotation notice on stderr). A single shared LaunchAgent keeps the sliding window fresh for whichever profiles you opt in:
 
 ```sh
-./scripts/setup-refresh.sh --profile default     # one profile
-./scripts/setup-refresh.sh --all                 # every configured profile
+owa-piggy profiles schedule default     # add 'default' to the hourly schedule
+owa-piggy profiles unschedule default   # remove it again
 ```
 
-The agents run hourly via `launchd`'s `StartCalendarInterval` and, unlike cron, fire on wake for any hour that was missed while the Mac was asleep - so an overnight-closed laptop still rotates each profile's token before the 24h sliding window closes.
+There is **one** LaunchAgent for the whole tool (`com.damsleth.owa-piggy.scheduled`), so macOS's Login Items & Extensions shows a single row no matter how many profiles you run. Which profiles it actually reseeds is the `OWA_SCHEDULED` set in `profiles.conf`, read at run time - so scheduling/unscheduling a profile is a pure config edit that never re-pokes launchd (and never re-prompts for background-item approval). You can also toggle the schedule from the `owa-piggy profiles` TUI (`l` / `u`).
+
+The agent runs hourly via `launchd`'s `StartCalendarInterval` and, unlike cron, fires on wake for any hour that was missed while the Mac was asleep - so an overnight-closed laptop still rotates each scheduled profile's token before the 24h sliding window closes.
 
 ---
 
@@ -291,12 +293,15 @@ owa-piggy profiles set-default work           # change the default pointer
 owa-piggy status --profile personal           # health check, per profile
 owa-piggy reseed --profile work               # recover one profile after 24h
 owa-piggy profiles delete personal            # remove a profile (config + Edge)
-./scripts/setup-refresh.sh --all              # install a plist for each profile
+owa-piggy profiles schedule work              # add 'work' to the shared hourly agent
+owa-piggy profiles unschedule work            # stop auto-reseeding 'work'
 ```
 
 Selection precedence when `--profile` is omitted: `OWA_PROFILE` env var > `OWA_DEFAULT_PROFILE` in `profiles.conf` > lone profile on disk > `default` on fresh installs. If multiple profiles exist but none is marked default, the command errors out rather than guessing.
 
-Legacy single-config installs auto-migrate on first run: `~/.config/owa-piggy/{config,cache.json,edge-profile}` move into `profiles/default/` atomically and a `profiles.conf` is written that marks `default` as the active profile. The legacy launchd plist (`com.damsleth.owa-piggy`) keeps running until you re-install via `./scripts/setup-refresh.sh --all`, which replaces it with per-profile plists labelled `com.damsleth.owa-piggy.<alias>`.
+Legacy single-config installs auto-migrate on first run: `~/.config/owa-piggy/{config,cache.json,edge-profile}` move into `profiles/default/` atomically and a `profiles.conf` is written that marks `default` as the active profile.
+
+There is a single shared launchd agent (`com.damsleth.owa-piggy.scheduled`) that reseeds the `OWA_SCHEDULED` set, so macOS's Login Items & Extensions shows one row regardless of profile count. Add profiles to the schedule with `owa-piggy profiles schedule <alias>` (or the `profiles` TUI). Installing the agent boots out any older per-profile plists (`com.damsleth.owa-piggy.<alias>`) and the pre-profile single plist.
 
 ---
 
