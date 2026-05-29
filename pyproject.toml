@@ -42,4 +42,5 @@ packages = ["owa_piggy"]
   "scripts/reseed-from-edge.sh",
   "scripts/scrape_edge.py",
   "scripts/setup-refresh.sh",
+  "scripts/owa-piggy.png",
 ]
