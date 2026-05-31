@@ -196,6 +196,29 @@ def _build_parser():
                          help='use Edge network-capture flow (required for '
                               'encrypted-MSAL/Okta tenants); validates '
                               'captured token belongs to this account')
+    p_setup.add_argument('--from-trough', metavar='<url>', default=None,
+                         dest='from_trough',
+                         help='seed from a tailnet-side trough appliance '
+                              '(e.g. http://100.x.y.z:8765). Pulls the '
+                              'freshest FOCI RT from its store. Honors '
+                              'OWA_TROUGH_URL as a default. Mutually '
+                              'exclusive with --email.')
+    p_setup.add_argument('--trough-tenant', metavar='<tid>', default=None,
+                         dest='trough_tenant',
+                         help='filter trough RTs by AAD tenant id GUID; '
+                              'use when multiple tenants are present in '
+                              'the trough store')
+    p_setup.add_argument('--trough-sub', metavar='<oid>', default=None,
+                         dest='trough_sub',
+                         help='filter trough RTs by AAD user object id; '
+                              'narrower than --trough-tenant for shared '
+                              'tenants')
+    p_setup.add_argument('--user-agent', metavar='<ua>', default=None,
+                         dest='user_agent',
+                         help='spoof the Edge sidecar User-Agent at sign-in '
+                              '(e.g. iOS Teams UA to bypass tenant CA that '
+                              'gates on platform). Persisted as '
+                              'OWA_USER_AGENT and reused on every reseed.')
     p_setup.add_argument('--json', action='store_true',
                          help='(rejected) setup is interactive; use status --json instead')
 
@@ -519,14 +542,25 @@ def _cmd_setup(args):
             file=sys.stderr,
         )
         return 1
+    email = getattr(args, 'email', None)
+    trough_url = getattr(args, 'from_trough', None) or os.environ.get('OWA_TROUGH_URL') or None
+    if email and trough_url:
+        print('ERROR: --email and --from-trough are mutually exclusive '
+              '(pick one capture source).', file=sys.stderr)
+        return 1
     alias, rc = _resolve_and_activate(args, allow_missing=True)
     if rc:
         return rc
     return create_profile(
         alias,
-        email=getattr(args, 'email', None),
+        email=email,
         audience=None,
         full_banner=True,
+        trough_url=trough_url,
+        trough_tenant=getattr(args, 'trough_tenant', None),
+        trough_sub=getattr(args, 'trough_sub', None),
+        user_agent=(getattr(args, 'user_agent', None)
+                    or os.environ.get('OWA_USER_AGENT') or None),
     )
 
 

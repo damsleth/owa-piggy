@@ -77,7 +77,7 @@ def find_free_port():
 
 
 def launch_edge(edge_dir, port, *, headless, url, edge_path=None,
-                offscreen=False):
+                offscreen=False, user_agent=None):
     """Launch Edge with a per-profile userdata dir + CDP listening on
     `port`. Returns the Popen handle.
 
@@ -115,6 +115,12 @@ def launch_edge(edge_dir, port, *, headless, url, edge_path=None,
         args += ['--window-position=-32000,-32000', '--window-size=1,1']
     else:
         args += ['--window-position=100,100', '--window-size=900,750']
+    if user_agent:
+        # Spoof the UA before any navigation so AAD's first request hits
+        # the override. Tenant CA policies that gate on platform (e.g.
+        # "compliant device required except iOS Teams") can be satisfied
+        # by claiming to be TeamsMobile-iOS from a desktop Edge.
+        args.append(f'--user-agent={user_agent}')
     args.append(url)
     # Detach stdout/stderr so a slow CDP consumer can't backpressure
     # Edge into a hang; Edge's own crash logs land in the userdata dir.
@@ -378,7 +384,7 @@ def _capture_headless_default():
     return os.environ.get('OWA_CAPTURE_HEADLESS', '1').strip() != '0'
 
 
-def capture_signin(alias, email, *, timeout=300):
+def capture_signin(alias, email, *, timeout=300, user_agent=None):
     """Visible Edge for first-time setup. Returns a config dict on
     success, or raises RuntimeError with a user-facing message.
 
@@ -398,8 +404,10 @@ def capture_signin(alias, email, *, timeout=300):
     edge_dir = _config.profile_edge_dir(alias)
     edge_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     port = find_free_port()
-    log(f'launching Edge visibly on port {port}, userdata={edge_dir}')
-    proc = launch_edge(edge_dir, port, headless=False, url=OWA_URL)
+    log(f'launching Edge visibly on port {port}, userdata={edge_dir}'
+        + (f', ua={user_agent!r}' if user_agent else ''))
+    proc = launch_edge(edge_dir, port, headless=False, url=OWA_URL,
+                       user_agent=user_agent)
     session = None
     try:
         session = _open_session(port)
@@ -455,7 +463,7 @@ def capture_signin(alias, email, *, timeout=300):
     return _build_config(token_response, email=email, mode='capture')
 
 
-def capture_silent(alias, *, timeout=None, headless=None):
+def capture_silent(alias, *, timeout=None, headless=None, user_agent=None):
     """Headless Edge for scheduled reseed. Returns (status, config_dict):
 
       ('ok', dict)              success - dict has OWA_REFRESH_TOKEN/OWA_TENANT_ID
@@ -499,7 +507,7 @@ def capture_silent(alias, *, timeout=None, headless=None):
         # -32000,-32000 so the user doesn't see a window pop onscreen
         # and assume it's interactive - capture_silent never is.
         proc = launch_edge(edge_dir, port, headless=headless, url=OWA_URL,
-                           offscreen=True)
+                           offscreen=True, user_agent=user_agent)
     except RuntimeError as e:
         print(f'ERROR: {e}', file=sys.stderr)
         return 'error', None
