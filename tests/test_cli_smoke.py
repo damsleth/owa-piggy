@@ -472,7 +472,7 @@ def test_status_bypasses_cache(monkeypatch, tmp_config, clean_env, make_jwt):
 
     called = {'n': 0}
 
-    def _fake_status_all(audience=None, scope=None):
+    def _fake_status_all(audience=None, scope=None, verbose=False):
         called['n'] += 1
         return 0
     monkeypatch.setattr(cli_mod, 'do_status_all', _fake_status_all)
