@@ -183,7 +183,7 @@ def status_all_report(audience=None, scope=None):
     return {'profiles': reports, 'summary': summary}
 
 
-def do_status(alias, audience=None, scope=None, multi=False):
+def do_status(alias, audience=None, scope=None, multi=False, verbose=False):
     """Compact health summary for profile <alias>. Does a live exchange
     probe to verify the RT actually works (rotates it as a side effect,
     which is fine - the RT rotates on every use anyway). Prints three
@@ -326,13 +326,16 @@ def do_status(alias, audience=None, scope=None, multi=False):
     scheduled_state = 'true' if launchd_is_scheduled(alias) else 'false'
     print(f'authtoken:    expires {at_expires}')
     print(f'refreshtoken: expires {rt_expires}')
-    print(f'audience:     {audience_line}')
-    print(f'scopes:       {scopes_line}')
+    # audience and scopes are stable noise (OWA always mints the same dense
+    # scope set against the same audience), so they're verbose-only.
+    if verbose:
+        print(f'audience:     {audience_line}')
+        print(f'scopes:       {scopes_line}')
     print(f'scheduled:    {scheduled_state}')
     return 0
 
 
-def do_status_all(audience=None, scope=None):
+def do_status_all(audience=None, scope=None, verbose=False):
     """Run do_status() against every configured profile.
 
     Used when `status` is invoked with no explicit --profile / no
@@ -349,7 +352,8 @@ def do_status_all(audience=None, scope=None):
     for i, alias in enumerate(profiles):
         if i:
             print()
-        rc = max(rc, do_status(alias, audience=audience, scope=scope, multi=True))
+        rc = max(rc, do_status(alias, audience=audience, scope=scope, multi=True,
+                               verbose=verbose))
     return rc
 
 
