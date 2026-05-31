@@ -83,7 +83,9 @@ def enable_profile(alias):
     return True, ''
 
 
-def create_profile(alias, *, email=None, audience=None, full_banner=False):
+def create_profile(alias, *, email=None, audience=None, full_banner=False,
+                    trough_url=None, trough_tenant=None, trough_sub=None,
+                    user_agent=None):
     """Run interactive_setup for a profile, persist its preferred audience,
     and register the profile in profiles.conf.
 
@@ -105,7 +107,11 @@ def create_profile(alias, *, email=None, audience=None, full_banner=False):
         # interactive_setup's save_config call writes it alongside the
         # tokens in one disk write.
         config['OWA_DEFAULT_AUDIENCE'] = audience
-    if not interactive_setup(config, alias, email=email):
+    if not interactive_setup(config, alias, email=email,
+                              trough_url=trough_url,
+                              trough_tenant=trough_tenant,
+                              trough_sub=trough_sub,
+                              user_agent=user_agent):
         return 1
     ensure_profile_registered(alias, make_default_if_first=True)
     print(f'\n\tOWA-PIGGY 🐽  CONFIGURED [{alias}]', file=sys.stderr)
