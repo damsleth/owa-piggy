@@ -171,6 +171,8 @@ def _build_parser():
     _add_common_options(p_status)
     p_status.add_argument('--json', action='store_true',
                           help='print token health as JSON without token values')
+    p_status.add_argument('--verbose', '-v', action='store_true',
+                          help='include audience and scopes lines')
 
     p_debug = sub.add_parser(
         'debug', help='dump full setup diagnostics for one profile')
@@ -680,7 +682,8 @@ def _cmd_status(args):
         if getattr(args, 'json', False):
             print(json.dumps(status_all_report(audience=args.audience, scope=args.scope), indent=2))
             return 0
-        return do_status_all(audience=args.audience, scope=args.scope)
+        return do_status_all(audience=args.audience, scope=args.scope,
+                              verbose=getattr(args, 'verbose', False))
 
     alias, rc = _resolve_and_activate(args)
     if rc:
@@ -689,7 +692,8 @@ def _cmd_status(args):
         report = status_report(alias, audience=args.audience, scope=args.scope)
         print(json.dumps(report, indent=2))
         return 0 if report.get('state') in ('ok', 'warn', 'disabled') else 1
-    return do_status(alias, audience=args.audience, scope=args.scope)
+    return do_status(alias, audience=args.audience, scope=args.scope,
+                     verbose=getattr(args, 'verbose', False))
 
 
 def _cmd_debug(args):
