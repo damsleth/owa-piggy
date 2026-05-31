@@ -89,7 +89,7 @@ def test_status_honors_profile_default_audience(
     monkeypatch.setattr('owa_piggy.token_flow.exchange_token', _exchange)
     monkeypatch.setattr(status_mod, 'launchd_is_scheduled', lambda _alias: False)
 
-    rc = status_mod.do_status('work')
+    rc = status_mod.do_status('work', verbose=True)
 
     assert rc == 0
     assert seen['scope'].startswith('https://api.spaces.skype.com/.default ')
