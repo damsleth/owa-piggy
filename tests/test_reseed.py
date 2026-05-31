@@ -150,7 +150,7 @@ def test_capture_reseed_clears_cache(monkeypatch, tmp_config, clean_env):
     monkeypatch.setattr(
         capture_mod,
         'capture_silent',
-        lambda alias: ('ok', {
+        lambda alias, **kwargs: ('ok', {
             'OWA_REFRESH_TOKEN': '1.AQ_fake-rotated',
             'OWA_TENANT_ID': 'tid-1',
         }),

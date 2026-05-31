@@ -104,7 +104,8 @@ def read_input(prompt, secret=False):
         return input().strip()
 
 
-def interactive_setup(config, alias='default', *, email=None):
+def interactive_setup(config, alias='default', *, email=None, trough_url=None,
+                       trough_tenant=None, trough_sub=None, user_agent=None):
     """Run the setup flow for profile <alias>. `CONFIG_PATH` must already
     be pointing at that profile's config file (caller's job, typically
     via `config.set_active_profile(alias)`).
@@ -118,9 +119,25 @@ def interactive_setup(config, alias='default', *, email=None):
     response. This is the only way to onboard tenants whose MSAL.js
     cache is encrypted, since the localStorage paste path can no longer
     read the RT in plaintext there.
+
+    When `trough_url` is set, route to the tailnet-capture path: pull
+    the freshest FOCI refresh token for `trough_tenant` (or `trough_sub`,
+    or the most recent overall) from a trough appliance's HTTP API and
+    seed the profile non-interactively. This is the consumer half of the
+    iPhone-routed-through-trough flow - no browser involvement on this
+    machine.
     """
+    # Persist the UA up front so all three branches (trough/email/paste)
+    # write it alongside any tokens they capture; reseed.py later reads
+    # OWA_USER_AGENT to keep silent refresh runs UA-consistent with the
+    # original sign-in.
+    if user_agent:
+        config['OWA_USER_AGENT'] = user_agent
+    if trough_url is not None:
+        return _trough_setup(config, alias, trough_url,
+                             tenant=trough_tenant, sub=trough_sub)
     if email is not None:
-        return _capture_setup(config, alias, email)
+        return _capture_setup(config, alias, email, user_agent=user_agent)
 
     # Non-interactive path: if stdin is piped, parse KEY=value lines from it.
     # This avoids the bracketed-paste corruption that raw-tty input is prone
@@ -190,7 +207,7 @@ def _ensure_edge_profile_dir(alias):
     d.mkdir(parents=True, exist_ok=True, mode=0o700)
 
 
-def _capture_setup(config, alias, email):
+def _capture_setup(config, alias, email, *, user_agent=None):
     """Drive Edge visibly, capture the FOCI refresh token off the wire,
     and persist it to the profile config.
 
@@ -214,7 +231,7 @@ def _capture_setup(config, alias, email):
           file=sys.stderr)
 
     try:
-        captured = capture.capture_signin(alias, email)
+        captured = capture.capture_signin(alias, email, user_agent=user_agent)
     except TimeoutError:
         print('ERROR: timed out waiting for sign-in to complete. '
               'Re-run setup --email to try again.', file=sys.stderr)
@@ -229,6 +246,47 @@ def _capture_setup(config, alias, email):
     config.update(captured)
     config['OWA_RT_ISSUED_AT'] = iso_utc_now()
     save_config(config)
+    print(f'Config saved to {_config.CONFIG_PATH} [profile={alias}]',
+          file=sys.stderr)
+    return True
+
+
+def _trough_setup(config, alias, trough_url, *, tenant=None, sub=None):
+    """Seed the profile from a tailnet-side trough appliance.
+
+    Imported lazily so a `setup` invocation that does not touch the
+    network adapter does not pay the import cost.
+    """
+    from . import trough
+
+    print(f'owa-piggy setup [profile={alias}, trough={trough_url}]\n',
+          file=sys.stderr)
+    filt = []
+    if tenant:
+        filt.append(f'tenant={tenant}')
+    if sub:
+        filt.append(f'sub={sub}')
+    if filt:
+        print(f'Filtering by {" ".join(filt)}.', file=sys.stderr)
+    else:
+        print('No tenant/sub filter - taking the freshest FOCI RT in the trough.',
+              file=sys.stderr)
+
+    try:
+        rt, tid, info = trough.fetch_foci(trough_url, tenant=tenant, sub=sub)
+    except RuntimeError as e:
+        print(f'ERROR: {e}', file=sys.stderr)
+        return False
+
+    print(f'Captured FOCI RT: tid={tid} sub={info["sub"]} '
+          f'src_host={info["src_host"]} bytes={info["token_len"]} '
+          f'last_seen={info["last_seen"]}', file=sys.stderr)
+
+    config['OWA_REFRESH_TOKEN'] = rt
+    config['OWA_TENANT_ID'] = tid
+    config['OWA_RT_ISSUED_AT'] = iso_utc_now()
+    save_config(config)
+    _ensure_edge_profile_dir(alias)
     print(f'Config saved to {_config.CONFIG_PATH} [profile={alias}]',
           file=sys.stderr)
     return True
