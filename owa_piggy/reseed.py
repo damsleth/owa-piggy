@@ -118,7 +118,12 @@ def _do_reseed_capture(alias, config):
     print(f'[{alias}] reseed via network capture (OWA_AUTH_MODE=capture)',
           file=sys.stderr)
     is_tty = sys.stdin.isatty()
-    status, captured = capture.capture_silent(alias)
+    # Env override wins so an operator can experiment with a UA without
+    # rewriting the profile config; otherwise the persisted per-profile
+    # UA (set at `setup --user-agent ...`) is what keeps silent reseed
+    # consistent with the original sign-in.
+    user_agent = os.environ.get('OWA_USER_AGENT') or config.get('OWA_USER_AGENT') or None
+    status, captured = capture.capture_silent(alias, user_agent=user_agent)
     # Transient 'error' on the first attempt (CDP hiccup, slow /token
     # round-trip past the timeout, etc.) is the most common cause of
     # hourly cron failures in the refresh.log. One retry recovers nearly
@@ -128,7 +133,7 @@ def _do_reseed_capture(alias, config):
     if status == 'error':
         print(f'[{alias}] capture returned transient error; retrying once...',
               file=sys.stderr)
-        status, captured = capture.capture_silent(alias)
+        status, captured = capture.capture_silent(alias, user_agent=user_agent)
     if status == 'headless_blocked' and not is_tty:
         # No human present (launchd) - try the offscreen-non-headless
         # silent path before giving up, since we can't fall back to
@@ -136,7 +141,8 @@ def _do_reseed_capture(alias, config):
         # -32000,-32000 so the user's display stays clean.
         print(f'[{alias}] headless Edge blocked by tenant; retrying '
               f'non-headless (offscreen)...', file=sys.stderr)
-        status, captured = capture.capture_silent(alias, headless=False)
+        status, captured = capture.capture_silent(alias, headless=False,
+                                                   user_agent=user_agent)
     if status == 'reauth' or (status == 'headless_blocked' and is_tty):
         # 'headless_blocked' on a TTY skips straight here - the
         # offscreen-silent retry leaves stale in-flight auth state in
@@ -148,7 +154,8 @@ def _do_reseed_capture(alias, config):
                   f'interactive sign-in (complete MFA in the window)...',
                   file=sys.stderr)
             try:
-                captured = capture.capture_signin(alias, email, timeout=300)
+                captured = capture.capture_signin(alias, email, timeout=300,
+                                                   user_agent=user_agent)
                 status = 'ok'
             except (RuntimeError, TimeoutError, ConnectionError,
                     KeyboardInterrupt) as e:
