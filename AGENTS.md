@@ -199,28 +199,25 @@ When the user says "cut a release" / "new patch version" / "ship it":
    here are live in launchd the moment they hit disk - you do not
    need to reinstall after editing `scripts/scrape_edge.py` or any
    Python module. The brew copy is what end users get.
-9. Publish the sdist + wheel to PyPI. The old pipx build venv is gone
-   and `uv` is not installed on this machine; build and upload from
-   the repo's `.venv` with `twine`. The PyPI API token lives in
-   `UV_PUBLISH_TOKEN` in `./.env` at the repo root (do NOT commit it;
-   `.gitignore` already excludes it) - twine consumes it as
-   `__token__` / `TWINE_PASSWORD`.
+9. Publish the sdist + wheel to PyPI **locally** with `uv`. The PyPI API
+   token lives in `UV_PUBLISH_TOKEN` in `./.env` at the repo root (do NOT
+   commit it; `.gitignore` already excludes it). `uv publish` reads that
+   exact env var, so sourcing `.env` is enough:
    ```
    rm -rf dist build
-   .venv/bin/python -m pip install -q build twine   # first time only
-   .venv/bin/python -m build
-   .venv/bin/python -m twine check dist/*
-   set -a && . ./.env && set +a && \
-     TWINE_USERNAME=__token__ TWINE_PASSWORD="$UV_PUBLISH_TOKEN" \
-     .venv/bin/python -m twine upload --skip-existing dist/owa_piggy-X.Y.Z*
+   uv build
+   set -a && . ./.env && set +a && uv publish dist/owa_piggy-X.Y.Z*
    ```
-   Use `--skip-existing`: twine uploads the wheel first, so if a retry
-   happens after that part succeeded it returns a confusing `400 File
-   already exists` for the wheel while the sdist still needs uploading.
-   Confirm success at `pypi.org/pypi/owa-piggy/X.Y.Z/json` (200 =
-   live). That JSON index lags a few minutes, so a stale 404 right
-   after a successful upload is not a failure - don't re-tag or
-   re-build to "fix" it.
+   `uv publish` is idempotent on retry: if it reports "File already exists"
+   but `pypi.org/pypi/owa-piggy/X.Y.Z/json` returns 200, the upload
+   succeeded and the JSON index is just lagging (it can run a few minutes
+   behind) - don't re-tag or re-build to "fix" it.
+
+   The tag push from step 4 also triggers `.github/workflows/release.yml`,
+   which re-runs the ci.yml gates, rebuilds the wheel + sdist with `uv
+   build`, and creates the GitHub Release at the tag with both artifacts
+   attached. That workflow does **not** touch PyPI - the local `uv publish`
+   above is the only thing that uploads there.
 
 If any step fails midway (tag push rejected, sha mismatch, tap push
 rejected, PyPI 4xx that isn't "File already exists"), stop and
