@@ -1,0 +1,77 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+# Mirrors the gates in ci.yml so a tag never advertises a build that would
+# fail mainline CI. PyPI publishing happens locally with `uv publish` against
+# UV_PUBLISH_TOKEN from ./.env (see AGENTS.md "Cutting a release"). This
+# workflow only re-runs the gates, rebuilds the artifacts with `uv build`, and
+# creates the GitHub Release with the wheel + sdist attached - it does not
+# touch PyPI.
+
+permissions:
+  contents: write    # create the GitHub Release and upload artifacts
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.8", "3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - name: Install
+        run: pip install -e '.[test]'
+      - name: Syntax check
+        run: python -m compileall -q owa_piggy
+      - name: Tests
+        run: pytest -q
+      - name: Shellcheck
+        run: shellcheck scripts/*.sh
+
+  build:
+    needs: gates
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Resolve version from tag
+        id: version
+        run: |
+          ref="${GITHUB_REF##*/}"
+          echo "version=${ref#v}" >> "$GITHUB_OUTPUT"
+      - name: Build sdist + wheel
+        run: uv build
+      - name: Upload built distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  github-release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download built distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: owa-piggy v${{ needs.build.outputs.version }}
+          generate_release_notes: true
+          files: dist/*
+          fail_on_unmatched_files: true
