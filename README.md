@@ -68,6 +68,16 @@ curl -s -H "Authorization: Bearer $(owa-piggy --audience outlook)" \
   "https://outlook.office.com/api/v2.0/me/messages?\$top=1" | jq -r '.value[0].Subject'
 ```
 
+For SharePoint tenant admin (CSOM / REST against `<tenant>-admin.sharepoint.com`):
+
+```sh
+curl -s -H "Authorization: Bearer $(owa-piggy --audience sharepoint-admin)" \
+  -H "Accept: application/json;odata=nometadata" \
+  "https://contoso365-admin.sharepoint.com/_api/web/title" | jq -r .value
+```
+
+The tenant host is auto-resolved on first use (see [SharePoint](#sharepoint-tenant-admin) below) - no flag needed.
+
 Raw token on stdout, logs on stderr - pipe-friendly by design.
 
 ---
@@ -119,6 +129,8 @@ consumer CLIs, so one agent can drive the whole suite uniformly:
 owa-piggy                              # Graph token (default audience)
 owa-piggy --audience outlook           # Outlook REST audience
 owa-piggy --audience teams             # Teams audience
+owa-piggy --audience sharepoint        # SharePoint site collections / content (host auto-resolved)
+owa-piggy --audience sharepoint-admin  # SharePoint tenant admin
 owa-piggy remaining                    # minutes left on current token
 owa-piggy token --json | jq .scope     # inspect granted scopes
 eval $(owa-piggy token --env)          # export ACCESS_TOKEN= / EXPIRES_IN=
@@ -144,6 +156,56 @@ az rest --headers "Authorization=Bearer $TOKEN" --url "https://graph.microsoft.c
 ```
 
 Default audience is **Microsoft Graph**, which covers everything Outlook REST exposes plus OneDrive, Teams, SharePoint, directory, and more. Override persistently with `OWA_DEFAULT_AUDIENCE=<short-name-or-https-url>`, or per-call with `--audience <name>` (see `owa-piggy audiences`) or `--scope <explicit>`.
+
+### SharePoint tenant admin
+
+SharePoint's resource URL is tenant-specific (`https://<tenant>-admin.sharepoint.com`), unlike the globally-fixed audiences. The same FOCI refresh token captured from the Outlook sign-in works for SharePoint unchanged - only the requested scope differs - so no separate sign-in is needed. Two templated audiences:
+
+| audience | resource | use |
+| --- | --- | --- |
+| `sharepoint` | `https://<tenant>.sharepoint.com` | site collections / content (the token is valid for every `/sites/...` and `/teams/...` under the host) |
+| `sharepoint-admin` | `https://<tenant>-admin.sharepoint.com` | tenant admin CSOM / REST (site-collection admins, tenant settings) |
+
+A token's audience is the **host**, not a specific site - so one `sharepoint` token works across all site collections, while tenant-admin cmdlets need the separate `sharepoint-admin` host.
+
+The `<tenant>` host prefix (the tenant's initial `.onmicrosoft.com` name, e.g. `contoso365`) isn't derivable from your email domain or tenant GUID. owa-piggy resolves it for you: on first use it mints a Graph token, reads the hostname from `GET /sites/root`, and persists it as `OWA_SHAREPOINT_TENANT` on the profile - every later call skips the round-trip. You can also set it explicitly:
+
+```sh
+owa-piggy --audience sharepoint                          # content host, tenant auto-resolved + persisted on first use
+owa-piggy --audience sharepoint-admin                    # tenant admin host
+owa-piggy --audience sharepoint --sharepoint-tenant contoso365   # set explicitly (also persists via setup/profiles new)
+owa-piggy profiles new admin --email me@contoso.com --sharepoint-tenant contoso365
+
+# Inspect the token's audience and scopes (look for Sites.FullControl.All):
+owa-piggy debug --audience sharepoint-admin | grep -i scp
+
+# Tenant admin REST call - e.g. read a site collection's owner:
+TOKEN=$(owa-piggy --audience sharepoint-admin)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  -H "Accept: application/json;odata=nometadata" \
+  "https://contoso365-admin.sharepoint.com/_api/web/title"
+```
+
+Whether you get tenant-admin capability (e.g. `Sites.FullControl.All` in the token's `scp` claim) depends on the FOCI client's pre-consented delegated permissions **and** your directory roles - check with `owa-piggy debug --audience sharepoint-admin`.
+
+### PnP PowerShell
+
+Pass the token straight into `Connect-PnPOnline -AccessToken` - no app registration or `-ClientId` needed. Match the audience to the URL host: `sharepoint-admin` for tenant cmdlets, `sharepoint` for site work.
+
+```powershell
+# Tenant admin
+Connect-PnPOnline -Url "https://contoso365-admin.sharepoint.com" -AccessToken (owa-piggy --audience sharepoint-admin)
+Get-PnPTenantSite | Select-Object Url, Owner
+
+# One content-host token reused across many site collections (~60 min lifetime; re-mint when it expires)
+$token = owa-piggy --audience sharepoint
+foreach ($u in Get-Content ./legacy-sites.txt) {
+    Connect-PnPOnline -Url $u -AccessToken $token
+    Add-PnPSiteCollectionAdmin -Owners "svc-admin@contoso.com"
+}
+```
+
+Pure CSOM/REST cmdlets work with the SharePoint token; the few Graph-backed PnP cmdlets need a separate `owa-piggy --audience graph` connection instead.
 
 ---
 
@@ -269,6 +331,7 @@ Writes are atomic (temp file + fsync + rename) so a crash mid-rotation cannot co
 - `OWA_REFRESH_TOKEN`, `OWA_TENANT_ID` - override the corresponding config values (when `OWA_REFRESH_TOKEN` is env-supplied, rotated tokens are kept env-only and not written back to disk)
 - `OWA_CLIENT_ID` - override the default OWA client ID
 - `OWA_DEFAULT_AUDIENCE` - change the default audience (a short name from `owa-piggy audiences` like `outlook`, or a full https URL). Command-line `--audience` / `--scope` still wins.
+- `OWA_SHAREPOINT_TENANT` - SharePoint tenant name (the `.onmicrosoft.com` prefix, e.g. `contoso365`) used to fill the `{tenant}` placeholder for the `sharepoint` / `sharepoint-admin` audiences. Auto-derived and persisted on first use; `--sharepoint-tenant` overrides it. See [SharePoint](#sharepoint-tenant-admin).
 - `OWA_PROFILE` - select the active profile, overriding `OWA_DEFAULT_PROFILE`. Equivalent to `--profile <alias>`.
 - `OWA_AUTH_MODE` - stamped on the profile config by `setup` (`scrape` for legacy MSAL paste flow, `capture` for the network-capture flow used by encrypted-MSAL / Okta-federated tenants). `reseed` branches on this to pick the right mechanism.
 - `OWA_EMAIL` - account hint stamped on the profile when `setup --email` is used; reseed validates captured tokens against it.

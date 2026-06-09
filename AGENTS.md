@@ -40,7 +40,10 @@ owa_piggy/
   __init__.py        # re-exports `main` so `owa-piggy = "owa_piggy:main"` resolves
   __main__.py        # `python -m owa_piggy`
   cli.py             # arg parsing + dispatch (argparse subparsers: token, status, ...)
-  scopes.py          # KNOWN_AUDIENCES, resolve_audience
+  scopes.py          # KNOWN_AUDIENCES, KNOWN_AUDIENCE_TEMPLATES (tenant-
+                     # templated SharePoint), resolve_audience, templated_audience_name
+  sharepoint.py      # derive_sharepoint_tenant: Graph /sites/root lookup that
+                     # auto-resolves + persists OWA_SHAREPOINT_TENANT (stdlib only)
   jwt.py             # decode_jwt_segment, decode_jwt, token_minutes_remaining
   config.py          # ROOT_DIR, CONFIG_PATH, profile path helpers,
                      # resolve_profile, profiles.conf I/O, load/save_config
@@ -156,12 +159,12 @@ When the user says "cut a release" / "new patch version" / "ship it":
 2. Commit the feature work separately from the version bump. Recent
    history: one `Bump version to X.Y.Z` commit sitting on top of the
    feature commit. Keep that pattern so `git log` reads cleanly.
-3. Update `pyproject.toml` `version = "X.Y.Z"`. No other file tracks
-   the version today.
+3. Update `pyproject.toml` `version = "X.Y.Z"` (the only file that
+   tracks the version) and add a `## [X.Y.Z]` section to the top of
+   `CHANGELOG.md` (Keep a Changelog style).
 4. Push `main`, then create an **annotated** tag whose message is the
    release notes (a short prose summary + bullet list of changes
-   since the previous tag - this is the canonical place for them,
-   since there's no CHANGELOG.md):
+   since the previous tag - mirror the `CHANGELOG.md` entry):
    ```
    git tag -a vX.Y.Z -m "vX.Y.Z - <one-line headline>
 
