@@ -391,6 +391,10 @@ def parse_kv_stream(text):
         # picked up by resolve_audience as a tier between env and the
         # built-in graph default.
         'OWA_DEFAULT_AUDIENCE', 'OWA_RT_ISSUED_AT',
+        # SharePoint tenant name (the `.onmicrosoft.com` prefix, e.g.
+        # `norconsult365`) used to fill the {tenant} placeholder for the
+        # tenant-templated `sharepoint` / `sharepoint-admin` audiences.
+        'OWA_SHAREPOINT_TENANT',
     }
     return {k: v for k, v in _iter_kv(text) if k in allowed and v}
 

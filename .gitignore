@@ -77,3 +77,4 @@ Thumbs.db
 
 # Project-local
 .pycache_local/
+.serena/
