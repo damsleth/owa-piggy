@@ -165,7 +165,7 @@ def _build_parser():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=_EPILOG,
     )
-    parser.add_argument('--version', action='version',
+    parser.add_argument('--version', '-v', action='version',
                         version=f'owa-piggy {__version__}')
 
     sub = parser.add_subparsers(dest='command', metavar='<command>')
@@ -361,7 +361,7 @@ def _inject_default_command(argv):
         return ['--help']
     if head in COMMANDS:
         return list(argv)
-    if head in ('-h', '--help', '--version'):
+    if head in ('-h', '--help', '--version', '-v'):
         return list(argv)
     return ['token'] + list(argv)
 

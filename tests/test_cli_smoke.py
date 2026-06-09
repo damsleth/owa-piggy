@@ -41,6 +41,16 @@ def test_version_prints_version(monkeypatch, capsys):
     assert f'owa-piggy {__version__}' in out
 
 
+def test_short_version_flag(monkeypatch, capsys):
+    """`-v` is a short alias for `--version` at the top level."""
+    from owa_piggy import __version__
+    with pytest.raises(SystemExit) as excinfo:
+        _run(monkeypatch, ['-v'])
+    assert excinfo.value.code == 0
+    out = capsys.readouterr().out
+    assert f'owa-piggy {__version__}' in out
+
+
 def test_version_json(monkeypatch, capsys):
     from owa_piggy import __version__
     rc = _run(monkeypatch, ['version', '--json'])
