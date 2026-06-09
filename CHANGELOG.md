@@ -8,7 +8,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 Releases before v0.12.0 are recorded only in the annotated git tags
 (`git tag -n99`).
 
-## [0.15.0] - 2026-06-09
+## [0.15.1] - 2026-06-09
+
+First public release of the SharePoint work. (v0.15.0 was tagged but never
+released - a CI shellcheck gate failed on a pre-existing line - so the
+SharePoint feature ships under 0.15.1.)
+
+### Fixed
+- `scripts/setup-refresh.sh`: rewrite the best-effort `lsregister` call as an
+  explicit `if`-block (newer shellcheck flagged the `A && B || C` form,
+  SC2015); behavior unchanged.
 
 ### Added
 - Tenant-templated SharePoint audiences: `--audience sharepoint`
@@ -74,7 +83,7 @@ Releases before v0.12.0 are recorded only in the annotated git tags
   leak guard); `audiences`/`decode`/`remaining` declared text-only.
 - Internal: token-flow extracted into `token_flow.py` (no behavior change).
 
-[0.15.0]: https://github.com/damsleth/owa-piggy/releases/tag/v0.15.0
+[0.15.1]: https://github.com/damsleth/owa-piggy/releases/tag/v0.15.1
 [0.14.1]: https://github.com/damsleth/owa-piggy/releases/tag/v0.14.1
 [0.14.0]: https://github.com/damsleth/owa-piggy/releases/tag/v0.14.0
 [0.13.0]: https://github.com/damsleth/owa-piggy/releases/tag/v0.13.0
