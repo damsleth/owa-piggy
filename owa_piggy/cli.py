@@ -41,7 +41,14 @@ from .migration import migrate_if_needed
 from .oauth import CLIENT_ID
 from .profiles import create_profile, delete_profile, set_default_profile
 from .reseed import do_reseed, do_reseed_all, do_reseed_scheduled
-from .scopes import KNOWN_AUDIENCES, resolve_audience
+from .scopes import (
+    KNOWN_AUDIENCES,
+    KNOWN_AUDIENCE_TEMPLATES,
+    _resolve_sharepoint_tenant,
+    resolve_audience,
+    templated_audience_name,
+)
+from .sharepoint import derive_sharepoint_tenant
 from .status import do_debug, do_status, do_status_all, status_all_report, status_report
 from .token_flow import exchange_fresh
 
@@ -138,10 +145,15 @@ def _add_common_options(p, *, audience_scope=True):
                    help='target a specific profile (also honored via OWA_PROFILE)')
     if audience_scope:
         p.add_argument('--audience', metavar='<name>', default=None,
-                       choices=sorted(KNOWN_AUDIENCES.keys()),
+                       choices=sorted(set(KNOWN_AUDIENCES) | set(KNOWN_AUDIENCE_TEMPLATES)),
                        help='named FOCI audience (see `owa-piggy audiences`)')
         p.add_argument('--scope', metavar='<scope>', default=None,
                        help='override scope explicitly (takes precedence)')
+        p.add_argument('--sharepoint-tenant', metavar='<name>', default=None,
+                       dest='sharepoint_tenant',
+                       help='SharePoint tenant name (e.g. norconsult365) for '
+                            'the templated `sharepoint` audience; overrides '
+                            'OWA_SHAREPOINT_TENANT')
 
 
 def _build_parser():
@@ -221,6 +233,11 @@ def _build_parser():
                               '(e.g. iOS Teams UA to bypass tenant CA that '
                               'gates on platform). Persisted as '
                               'OWA_USER_AGENT and reused on every reseed.')
+    p_setup.add_argument('--sharepoint-tenant', metavar='<name>', default=None,
+                         dest='sharepoint_tenant',
+                         help='SharePoint tenant name (e.g. norconsult365) to '
+                              'persist as OWA_SHAREPOINT_TENANT, enabling '
+                              '`--audience sharepoint` on this profile')
     p_setup.add_argument('--json', action='store_true',
                          help='(rejected) setup is interactive; use status --json instead')
 
@@ -281,6 +298,11 @@ def _build_parser():
                        help='use Edge network-capture flow (required for '
                             'encrypted-MSAL/Okta tenants); validates '
                             'captured token belongs to this account')
+    p_new.add_argument('--sharepoint-tenant', metavar='<name>', default=None,
+                       dest='sharepoint_tenant',
+                       help='SharePoint tenant name (e.g. norconsult365) to '
+                            'persist as OWA_SHAREPOINT_TENANT, enabling '
+                            '`--audience sharepoint` on this profile')
 
     p_del = profiles_sub.add_parser(
         'delete', help='remove a profile config + Edge sidecar dir')
@@ -395,9 +417,32 @@ def _mint_and_emit(args, *, mode):
     tenant_id = config.get('OWA_TENANT_ID', '').strip()
     client_id = config.get('OWA_CLIENT_ID', CLIENT_ID).strip()
 
+    profile_default = config.get('OWA_DEFAULT_AUDIENCE', '').strip()
+    sp_flag = getattr(args, 'sharepoint_tenant', None)
+    sp_cfg = config.get('OWA_SHAREPOINT_TENANT', '').strip()
+
+    # Auto-derive the SharePoint tenant on first use so --sharepoint-tenant
+    # is never required: if a templated audience is selected and no tenant
+    # is available from flag/env/config, mint a Graph token and read it from
+    # /sites/root, persisting it to the profile for next time.
+    if (templated_audience_name(args.audience, args.scope, profile_default)
+            and not _resolve_sharepoint_tenant(sp_flag, sp_cfg)):
+        derived, derive_err = derive_sharepoint_tenant(config, persist=persist)
+        if derived:
+            sp_flag = derived
+            if persist:
+                print(f'NOTE: derived SharePoint tenant {derived!r} via Graph; '
+                      f'saved as OWA_SHAREPOINT_TENANT.', file=sys.stderr)
+        else:
+            print(f'WARNING: {derive_err}', file=sys.stderr)
+            # Fall through: resolve_audience emits the actionable
+            # needs-a-tenant error below.
+
     scope, err = resolve_audience(
         args.audience, args.scope,
-        profile_default=config.get('OWA_DEFAULT_AUDIENCE', '').strip(),
+        profile_default=profile_default,
+        sharepoint_tenant=sp_flag,
+        profile_sharepoint_tenant=sp_cfg,
     )
     if err:
         print(f'ERROR: {err}', file=sys.stderr)
@@ -563,6 +608,7 @@ def _cmd_setup(args):
         trough_sub=getattr(args, 'trough_sub', None),
         user_agent=(getattr(args, 'user_agent', None)
                     or os.environ.get('OWA_USER_AGENT') or None),
+        sharepoint_tenant=getattr(args, 'sharepoint_tenant', None),
     )
 
 
@@ -678,21 +724,26 @@ def _cmd_status(args):
     # This bypasses resolve_profile()'s ambiguity error (multiple
     # profiles / no default) which would otherwise make the informational
     # path unusable on the very installs where it is most useful.
+    sp_tenant = getattr(args, 'sharepoint_tenant', None)
     if not args.profile and not os.environ.get('OWA_PROFILE', '').strip():
         if getattr(args, 'json', False):
-            print(json.dumps(status_all_report(audience=args.audience, scope=args.scope), indent=2))
+            print(json.dumps(status_all_report(audience=args.audience, scope=args.scope,
+                                                sharepoint_tenant=sp_tenant), indent=2))
             return 0
         return do_status_all(audience=args.audience, scope=args.scope,
+                              sharepoint_tenant=sp_tenant,
                               verbose=getattr(args, 'verbose', False))
 
     alias, rc = _resolve_and_activate(args)
     if rc:
         return rc
     if getattr(args, 'json', False):
-        report = status_report(alias, audience=args.audience, scope=args.scope)
+        report = status_report(alias, audience=args.audience, scope=args.scope,
+                               sharepoint_tenant=sp_tenant)
         print(json.dumps(report, indent=2))
         return 0 if report.get('state') in ('ok', 'warn', 'disabled') else 1
     return do_status(alias, audience=args.audience, scope=args.scope,
+                     sharepoint_tenant=sp_tenant,
                      verbose=getattr(args, 'verbose', False))
 
 
@@ -700,15 +751,20 @@ def _cmd_debug(args):
     alias, rc = _resolve_and_activate(args)
     if rc:
         return rc
-    return do_debug(alias, audience=args.audience, scope=args.scope)
+    return do_debug(alias, audience=args.audience, scope=args.scope,
+                    sharepoint_tenant=getattr(args, 'sharepoint_tenant', None))
 
 
 def _cmd_audiences(_args):
     # Underscore-prefixed because the dispatcher contract passes args to
     # every handler but this one has nothing to read off it.
-    max_name = max(len(n) for n in KNOWN_AUDIENCES)
-    max_aud = max(len(aud) for aud, _ in KNOWN_AUDIENCES.values())
+    all_items = list(KNOWN_AUDIENCES.items()) + list(KNOWN_AUDIENCE_TEMPLATES.items())
+    max_name = max(len(n) for n, _ in all_items)
+    max_aud = max(len(aud) for _, (aud, _) in all_items)
     for name, (aud, desc) in KNOWN_AUDIENCES.items():
+        print(f'  {name:<{max_name + 2}}{aud:<{max_aud + 2}}{desc}')
+    print('\n  tenant-templated (tenant auto-resolved on first use):')
+    for name, (aud, desc) in KNOWN_AUDIENCE_TEMPLATES.items():
         print(f'  {name:<{max_name + 2}}{aud:<{max_aud + 2}}{desc}')
     return 0
 

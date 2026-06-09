@@ -83,7 +83,7 @@ def _profile_is_disabled(alias):
     return alias not in registered
 
 
-def status_report(alias, audience=None, scope=None):
+def status_report(alias, audience=None, scope=None, sharepoint_tenant=None):
     """Return a token health report for profile <alias> without token values."""
     _config.set_active_profile(alias)
     config, persist = load_config()
@@ -123,6 +123,8 @@ def status_report(alias, audience=None, scope=None):
         audience,
         scope,
         profile_default=config.get('OWA_DEFAULT_AUDIENCE', '').strip(),
+        sharepoint_tenant=sharepoint_tenant,
+        profile_sharepoint_tenant=config.get('OWA_SHAREPOINT_TENANT', '').strip(),
     )
     if err:
         report['hints'].append(err)
@@ -171,10 +173,11 @@ def status_report(alias, audience=None, scope=None):
     return report
 
 
-def status_all_report(audience=None, scope=None):
+def status_all_report(audience=None, scope=None, sharepoint_tenant=None):
     profiles = list_profiles()
     reports = [
-        status_report(alias, audience=audience, scope=scope)
+        status_report(alias, audience=audience, scope=scope,
+                      sharepoint_tenant=sharepoint_tenant)
         for alias in profiles
     ]
     summary = {'ok': 0, 'warn': 0, 'fail': 0}
@@ -183,7 +186,8 @@ def status_all_report(audience=None, scope=None):
     return {'profiles': reports, 'summary': summary}
 
 
-def do_status(alias, audience=None, scope=None, multi=False, verbose=False):
+def do_status(alias, audience=None, scope=None, sharepoint_tenant=None,
+              multi=False, verbose=False):
     """Compact health summary for profile <alias>. Does a live exchange
     probe to verify the RT actually works (rotates it as a side effect,
     which is fine - the RT rotates on every use anyway). Prints three
@@ -234,6 +238,8 @@ def do_status(alias, audience=None, scope=None, multi=False, verbose=False):
         audience,
         scope,
         profile_default=config.get('OWA_DEFAULT_AUDIENCE', '').strip(),
+        sharepoint_tenant=sharepoint_tenant,
+        profile_sharepoint_tenant=config.get('OWA_SHAREPOINT_TENANT', '').strip(),
     )
     if err:
         print(f'ERROR: {err}', file=sys.stderr)
@@ -335,7 +341,7 @@ def do_status(alias, audience=None, scope=None, multi=False, verbose=False):
     return 0
 
 
-def do_status_all(audience=None, scope=None, verbose=False):
+def do_status_all(audience=None, scope=None, sharepoint_tenant=None, verbose=False):
     """Run do_status() against every configured profile.
 
     Used when `status` is invoked with no explicit --profile / no
@@ -352,12 +358,13 @@ def do_status_all(audience=None, scope=None, verbose=False):
     for i, alias in enumerate(profiles):
         if i:
             print()
-        rc = max(rc, do_status(alias, audience=audience, scope=scope, multi=True,
+        rc = max(rc, do_status(alias, audience=audience, scope=scope,
+                               sharepoint_tenant=sharepoint_tenant, multi=True,
                                verbose=verbose))
     return rc
 
 
-def do_debug(alias, audience=None, scope=None):
+def do_debug(alias, audience=None, scope=None, sharepoint_tenant=None):
     """Dump everything useful to diagnose a broken setup for profile <alias>:
     config file, refresh-token shape, live exchange probe, access-token
     claims, launchd agent status, PATH install, sidecar profile. Also
@@ -376,6 +383,8 @@ def do_debug(alias, audience=None, scope=None):
         audience,
         scope,
         profile_default=config.get('OWA_DEFAULT_AUDIENCE', '').strip(),
+        sharepoint_tenant=sharepoint_tenant,
+        profile_sharepoint_tenant=config.get('OWA_SHAREPOINT_TENANT', '').strip(),
     )
     if scope_err:
         print(f'ERROR: {scope_err}', file=sys.stderr)
