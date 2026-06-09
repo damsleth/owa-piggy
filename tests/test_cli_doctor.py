@@ -1,4 +1,4 @@
-"""`owa-piggy --doctor` hugr contract conformance."""
+"""`owa-piggy --doctor` contract conformance."""
 from __future__ import annotations
 
 import json

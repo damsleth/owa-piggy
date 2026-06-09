@@ -66,10 +66,9 @@ owa_piggy/
   profiles.py        # registry lifecycle: create/delete/enable/disable/set_default_profile
   profile_tui.py     # interactive `owa-piggy profiles` TUI (run_picker + action handlers)
   status.py          # do_status(alias), do_debug(alias), status_report (JSON broker)
-  doctor.py          # `owa-piggy --doctor` health check (hugr doctor JSON
+  doctor.py          # `owa-piggy --doctor` health check (doctor JSON
                      # contract; MUST NOT print or log tokens)
-  conventions.py     # hugr suite CLI contract (output classes, exit codes);
-                     # mirrors yaams/ledger conventions.py
+  conventions.py     # CLI contract (output classes, exit codes)
 scripts/
   reseed-from-edge.sh  # headless Edge sidecar; reads OWA_PIGGY_EDGE_PROFILE_DIR
   scrape_edge.py

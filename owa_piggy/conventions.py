@@ -1,17 +1,13 @@
-"""owa-piggy implementation of the hugr suite CLI contract.
+"""owa-piggy's CLI wire contract.
 
 The wire contract (action/error envelopes, the doctor payload shape,
-the 0-5 exit-code taxonomy, redact()) is specified by CONVENTIONS.md
-in the hugr repo. owa-piggy keeps a self-contained hand-copy of it
-here rather than depending on a separate package, so owa-piggy
+the 0-5 exit-code taxonomy, redact()) is defined here. owa-piggy keeps
+this self-contained rather than depending on a separate package, so it
 installs cleanly with no third-party runtime dependency and stays
-independently shippable - the suite's loose-coupling axiom. Mirrors
-the equivalent files in yaams, cognitive-ledger, and owa-tools.
+independently shippable.
 
 The auth broker has no long-running streaming actions, so the NDJSON
 ``stream_*`` helpers are intentionally omitted here.
-
-See https://github.com/damsleth/hugr/blob/main/CONVENTIONS.md.
 """
 
 from __future__ import annotations

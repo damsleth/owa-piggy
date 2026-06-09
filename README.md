@@ -16,15 +16,11 @@ package, separate token store, never imported.
 
 ## Suite
 
-`owa-piggy` is the M365 auth broker in the
-**[hugr](https://github.com/damsleth/hugr)** memory suite, alongside
-YAAMS (Tier 1 raw), cognitive-ledger (Tier 2 curated), and owa-tools
-(M365 read/write). The suite gives you one install (`brew install
-damsleth/tap/hugr`), one verb surface (`hugr auth ...`), and one
-CLI contract (output classes, exit codes - see
-[hugr/CONVENTIONS.md](https://github.com/damsleth/hugr/blob/main/CONVENTIONS.md)).
-`owa-piggy` continues to work standalone and remains the only thing
-that touches your refresh tokens.
+`owa-piggy` is the M365 auth broker for the `owa-*` tool suite. The
+companion [`owa-tools`](https://github.com/damsleth/owa-tools) CLIs
+borrow tokens from it. `owa-piggy` follows a consistent CLI contract
+(output classes, exit codes - documented in `owa_piggy/conventions.py`)
+and remains the only thing that touches your refresh tokens.
 
 ## Install
 
@@ -121,7 +117,7 @@ consumer CLIs, so one agent can drive the whole suite uniformly:
 | `owa-piggy --help --json`  | the same schema via the help flag                                   |
 | `owa-piggy --agent <cmd>`  | wrap JSON stdout in a stable `{"_owa": …, "data": …}` envelope (or `OWA_AGENT=1`); non-interactive commands only |
 | `owa-piggy --err-json <cmd>` | structured JSON error on stderr (or `OWA_ERR_JSON=1`)              |
-| `owa-piggy --doctor [--json]` | hugr health/redaction doctor payload                             |
+| `owa-piggy --doctor [--json]` | health/redaction doctor payload                                  |
 
 ## Examples
 
@@ -293,7 +289,7 @@ launchd:      true
 
 Without `--profile`, `status` reports every configured profile in a stanza per alias. Prints `no valid token` (exit 1) and an `ERROR:` line on stderr if the live probe fails for a profile. The refresh-token expiry is the 24h hard-cap, computed from `OWA_RT_ISSUED_AT` which is stamped on `setup` and `reseed` (setups from before this field landed will show `unknown` until the next reseed). `scopes:` collapses to `default(N)` for the default scope set; an explicit `--scope` request prints the granted scope list verbatim. `launchd:` shows whether a per-profile LaunchAgent is bootstrapped.
 
-`owa-piggy status --json` returns the machine-readable shape consumed by `hugr doctor` and other suite tools: one object per profile with `state` (`ok|fail|disabled`), `access_token.expires_at`, `refresh_token.expires_at`, and `hints[]`.
+`owa-piggy status --json` returns a machine-readable shape for scripts and companion tools: one object per profile with `state` (`ok|fail|disabled`), `access_token.expires_at`, `refresh_token.expires_at`, and `hints[]`.
 
 ```sh
 owa-piggy debug

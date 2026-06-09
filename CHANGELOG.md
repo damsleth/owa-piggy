@@ -73,7 +73,7 @@ SharePoint feature ships under 0.15.1.)
 - `owa-piggy profiles new <alias>` as a thin alias for
   `owa-piggy setup --profile <alias>`, with `--email` for Edge capture.
 
-## [0.12.0] - machine surface for hugr-suite agents
+## [0.12.0] - machine surface for agents
 
 - `schema` / `schema <command>` subcommands; `--help --json` returns the
   full command schema.
