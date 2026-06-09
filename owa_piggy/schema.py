@@ -1,8 +1,8 @@
 """Machine surface for owa-piggy: command schema + agent/error envelopes.
 
 This mirrors the owa-tools consumer contract (``owa_core.schema`` and
-``owa_core.modes``) so an agent driving the whole hugr suite sees the
-same introspection surface on the broker as on the consumer CLIs:
+``owa_core.modes``) so an agent driving the broker sees the
+same introspection surface as on the consumer CLIs:
 
     owa-piggy schema            # JSON command schema
     owa-piggy schema <command>  # one command
@@ -10,11 +10,10 @@ same introspection surface on the broker as on the consumer CLIs:
     owa-piggy --agent <cmd>     # {"_owa": {...}, "data": <json>}
     owa-piggy --err-json <cmd>  # structured JSON error on stderr
 
-Standalone (stdlib only) on purpose: owa-piggy already depends on
-``hugr-conventions`` for the action/doctor envelopes, but the schema and
-agent-mode layers are not in that package yet. When they land there,
-this module collapses to a thin binding - the wire shapes here are
-deliberately identical to owa_core's so that lift is mechanical.
+Standalone (stdlib only) on purpose: the action/doctor envelopes live
+in owa_piggy.conventions, and the schema and agent-mode layers are kept
+here. The wire shapes are deliberately identical to owa_core's so the
+introspection surface stays consistent across the tools.
 """
 from __future__ import annotations
 
