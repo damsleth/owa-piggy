@@ -8,19 +8,13 @@
 Turn your existing Outlook Web session into a reusable API token from the
 terminal. No app registration, no tenant admin ask, no client secrets.
 
-`owa-piggy` is the auth broker. The companion suite
-[`owa-tools`](https://github.com/damsleth/owa-tools) ships eight binaries
+`owa-piggy` is the auth broker. The companion
+[`owa-tools`](https://github.com/damsleth/owa-tools) ships the `owa-*` CLIs
 (`owa`, `owa-cal`, `owa-mail`, `owa-graph`, `owa-doctor`, `owa-people`,
-`owa-sched`, `owa-drive`) that borrow tokens from `owa-piggy` - separate
-package, separate token store, never imported.
-
-## Suite
-
-`owa-piggy` is the M365 auth broker for the `owa-*` tool suite. The
-companion [`owa-tools`](https://github.com/damsleth/owa-tools) CLIs
-borrow tokens from it. `owa-piggy` follows a consistent CLI contract
-(output classes, exit codes - documented in `owa_piggy/conventions.py`)
-and remains the only thing that touches your refresh tokens.
+`owa-sched`, `owa-drive`, and more) that borrow tokens from `owa-piggy` -
+separate package, separate token store, never imported. `owa-piggy` stays the
+only thing that ever touches your refresh tokens, and follows a consistent CLI
+contract (output classes, exit codes - documented in `owa_piggy/conventions.py`).
 
 ## Install
 
