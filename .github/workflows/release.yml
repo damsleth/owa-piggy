@@ -59,19 +59,64 @@ jobs:
           path: dist/
           if-no-files-found: error
 
+  binaries:
+    # Standalone PyInstaller binary - no Python install required.
+    # See packaging/owa-piggy.spec and packaging/entry.py.
+    needs: gates
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: linux-x86_64 }
+          - { os: macos-13,      target: macos-x86_64 }
+          - { os: macos-14,      target: macos-arm64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Resolve version from tag
+        id: version
+        run: |
+          ref="${GITHUB_REF##*/}"
+          echo "version=${ref#v}" >> "$GITHUB_OUTPUT"
+      - name: Install package + PyInstaller
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pip install --no-deps .
+      - name: Build binary
+        working-directory: packaging
+        run: pyinstaller --clean --noconfirm owa-piggy.spec
+      - name: Archive binary
+        working-directory: packaging/dist
+        run: |
+          archive="owa-piggy-${{ steps.version.outputs.version }}-${{ matrix.target }}.tar.gz"
+          tar czf "$archive" owa-piggy
+          echo "built $archive"
+      - name: Upload binary archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.target }}
+          path: packaging/dist/*.tar.gz
+          if-no-files-found: error
+
   github-release:
-    needs: build
+    needs: [build, binaries]
     runs-on: ubuntu-latest
     steps:
-      - name: Download built distributions
+      - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          name: dist
-          path: dist/
+          path: artifacts
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: owa-piggy v${{ needs.build.outputs.version }}
           generate_release_notes: true
-          files: dist/*
+          # artifacts/dist/* = wheel + sdist; artifacts/binary-*/* = standalone binaries
+          files: |
+            artifacts/dist/*
+            artifacts/binary-*/*
           fail_on_unmatched_files: true
