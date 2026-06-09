@@ -1,6 +1,6 @@
 """``owa-piggy --doctor`` - data-class health check.
 
-Schema matches the doctor JSON contract from hugr/CONVENTIONS.md.
+Schema matches owa-piggy's doctor JSON contract (see conventions.py).
 Owa-piggy is the auth surface; doctor MUST NOT print or log tokens.
 """
 
