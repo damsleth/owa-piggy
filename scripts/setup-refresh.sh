@@ -220,7 +220,9 @@ write_shell_shim() {
 # attribute the Login Items row to it. Best-effort.
 register_bundle() {
   local lsreg="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
-  [ -x "$lsreg" ] && "$lsreg" -f "$APP_BUNDLE" >/dev/null 2>&1 || true
+  if [ -x "$lsreg" ]; then
+    "$lsreg" -f "$APP_BUNDLE" >/dev/null 2>&1 || true
+  fi
 }
 
 # Build the launcher app bundle whose executable execs `full_args` (the fully
