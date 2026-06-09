@@ -1,7 +1,7 @@
 """owa-piggy machine surface: schema, --help --json, --agent, --err-json.
 
-Mirrors the owa-tools consumer contract so an agent driving the whole
-hugr suite sees the same introspection surface on the broker. These
+Mirrors the owa-tools consumer contract so an agent driving the
+broker sees the same introspection surface. These
 exercises need no auth: schema/help are static, --agent uses `version`,
 and --err-json is triggered with an argparse usage error.
 """

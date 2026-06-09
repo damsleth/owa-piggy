@@ -580,7 +580,7 @@ def _emit(access_token, mode, *, full_response=None, cache_hit_exp=None):
 
 
 def _cmd_setup(args):
-    # setup is interactive class per hugr CONVENTIONS.md - --json is
+    # setup is an interactive-class command - --json is
     # rejected with a clear pointer to a machine-friendly alternative.
     if getattr(args, 'json', False):
         print(
@@ -831,7 +831,7 @@ def _cmd_profiles(args):
         return 0
     if sub == 'list':
         # Non-interactive alias of bare `profiles`. Skips the TTY picker
-        # so scripts (and hugr doctor) get predictable output regardless
+        # so scripts get predictable output regardless
         # of where they run.
         from . import profile_tui
         if not list_profiles():
@@ -1128,7 +1128,7 @@ def _run_with_modes(raw, agent, err_json):
 
 def main():
     raw = list(sys.argv[1:])
-    # Top-level --doctor per hugr CONVENTIONS.md. Handle before
+    # Top-level --doctor per owa-piggy's CLI conventions. Handle before
     # argparse so it composes with --json without touching the
     # subcommand surface.
     if "--doctor" in raw:
