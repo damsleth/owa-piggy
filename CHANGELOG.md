@@ -8,6 +8,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 Releases before v0.12.0 are recorded only in the annotated git tags
 (`git tag -n99`).
 
+## [0.16.0] - 2026-06-09
+
+### Added
+- Standalone binary releases: each tagged release attaches a per-OS/arch
+  tarball (Linux x86_64, macOS x86_64, macOS arm64) with a single PyInstaller
+  binary - run owa-piggy with no Python install. Built via
+  `packaging/owa-piggy.spec`.
+- `-v` is now accepted as a short alias for the top-level `--version` flag.
+  (The `status` subcommand's `-v`/`--verbose` is unaffected.)
+
+### Changed
+- Decoupled from the internal "hugr" suite framing; owa-piggy is documented as
+  a standalone auth broker for the `owa-*` tools. No behavior change.
+
 ## [0.15.1] - 2026-06-09
 
 First public release of the SharePoint work. (v0.15.0 was tagged but never
