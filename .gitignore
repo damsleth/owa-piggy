@@ -34,6 +34,8 @@ MANIFEST
 # PyInstaller
 *.manifest
 *.spec
+# ...except the committed build spec for release binaries.
+!packaging/owa-piggy.spec
 
 # Installer logs
 pip-log.txt
