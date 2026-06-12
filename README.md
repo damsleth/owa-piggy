@@ -319,7 +319,9 @@ A small registry at `~/.config/owa-piggy/profiles.conf` tracks which profiles ex
 Writes are atomic (temp file + fsync + rename) so a crash mid-rotation cannot corrupt the only live token. Environment variables take precedence over the config file:
 
 - `OWA_REFRESH_TOKEN`, `OWA_TENANT_ID` - override the corresponding config values (when `OWA_REFRESH_TOKEN` is env-supplied, rotated tokens are kept env-only and not written back to disk)
-- `OWA_CLIENT_ID` - override the default OWA client ID
+- `OWA_CLIENT_ID` - override the default OWA client ID (set automatically when capturing a non-FOCI client's token, e.g. Azure DevOps)
+- `OWA_CAPTURE_URL` - point the capture/reseed sidecar at a non-OWA SPA so its bound refresh token is grabbed off the wire instead of OWA's. Use for non-FOCI clients (e.g. the Azure DevOps app) whose RT the FOCI client cannot mint itself (AADSTS65002 preauth wall). Persisted on the profile so scheduled reseeds rotate the *same* client's token; env wins for ad-hoc runs.
+- `OWA_ORIGIN` - override the `Origin` header used in the token exchange. Auto-derived per client; set automatically alongside `OWA_CLIENT_ID` / `OWA_CAPTURE_URL` when capturing a non-FOCI client so the exchange replays under the minting origin.
 - `OWA_DEFAULT_AUDIENCE` - change the default audience (a short name from `owa-piggy audiences` like `outlook`, or a full https URL). Command-line `--audience` / `--scope` still wins.
 - `OWA_SHAREPOINT_TENANT` - SharePoint tenant name (the `.onmicrosoft.com` prefix, e.g. `contoso365`) used to fill the `{tenant}` placeholder for the `sharepoint` / `sharepoint-admin` audiences. Auto-derived and persisted on first use; `--sharepoint-tenant` overrides it. See [SharePoint](#sharepoint-tenant-admin).
 - `OWA_PROFILE` - select the active profile, overriding `OWA_DEFAULT_PROFILE`. Equivalent to `--profile <alias>`.
