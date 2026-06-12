@@ -376,6 +376,18 @@ def _ticker(alias):
         f'({elapsed}s elapsed)...', file=sys.stderr)
 
 
+def _capture_url():
+    """Where the capture sidecar navigates to trigger a /token round-trip.
+
+    Defaults to OWA (which mints the FOCI family RT). Override via
+    OWA_CAPTURE_URL to capture a different client's RT off the wire — e.g.
+    https://dev.azure.com/<org> to grab the Azure DevOps app's bound RT,
+    which the FOCI client cannot obtain (AADSTS65002 preauth wall). Pair
+    with OWA_CLIENT_ID / OWA_ORIGIN so the exchange replays under the same
+    client and origin that minted it."""
+    return os.environ.get('OWA_CAPTURE_URL', '').strip() or OWA_URL
+
+
 def _capture_headless_default():
     """Honor OWA_CAPTURE_HEADLESS=0 as the escape hatch for tenants whose
     Conditional Access / device-compliance check fails in headless mode
@@ -406,7 +418,10 @@ def capture_signin(alias, email, *, timeout=300, user_agent=None):
     port = find_free_port()
     log(f'launching Edge visibly on port {port}, userdata={edge_dir}'
         + (f', ua={user_agent!r}' if user_agent else ''))
-    proc = launch_edge(edge_dir, port, headless=False, url=OWA_URL,
+    capture_url = _capture_url()
+    if capture_url != OWA_URL:
+        log(f'capture URL overridden to {capture_url}')
+    proc = launch_edge(edge_dir, port, headless=False, url=capture_url,
                        user_agent=user_agent)
     session = None
     try:
@@ -665,4 +680,17 @@ def _build_config(token_response, *, email, mode):
     }
     if email:
         out['OWA_EMAIL'] = email
+    # When capturing a non-FOCI client's RT (OWA_CAPTURE_URL pointed at a
+    # different SPA), persist the client/origin/capture-url so the exchange
+    # replays under the same identity and a later silent reseed navigates
+    # back to the same SPA. FOCI captures leave these unset and fall back
+    # to the built-in defaults.
+    for env_key, cfg_key in (
+        ('OWA_CLIENT_ID', 'OWA_CLIENT_ID'),
+        ('OWA_ORIGIN', 'OWA_ORIGIN'),
+        ('OWA_CAPTURE_URL', 'OWA_CAPTURE_URL'),
+    ):
+        val = os.environ.get(env_key, '').strip()
+        if val:
+            out[cfg_key] = val
     return out
