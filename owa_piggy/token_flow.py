@@ -71,7 +71,17 @@ def exchange_fresh(config, scope, *, persist, capture_stderr=False):
         'cid': cid,
         'rt_present': bool(rt),
         'tid_present': bool(tid),
-        'rt_shape_ok': bool(rt) and (rt.startswith('1.') or rt.startswith('0.')),
+        # The `1.`/`0.` prefix is a property of FOCI family tokens (the
+        # default client). A profile pointed at a non-FOCI client — e.g.
+        # the Azure DevOps app (OWA_CLIENT_ID set to its app id), whose
+        # bound RT is captured off the wire — carries an opaque RT with
+        # no such prefix, so the shape check does not apply there. We only
+        # know how to validate the FOCI shape; for other clients, defer to
+        # AAD to reject a malformed RT.
+        'rt_shape_ok': bool(rt) and (
+            (rt.startswith('1.') or rt.startswith('0.'))
+            if cid == CLIENT_ID else True
+        ),
         'stderr_text': '',
         'aad_error': None,
         'rotated': False,
