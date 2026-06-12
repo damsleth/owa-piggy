@@ -396,7 +396,8 @@ def _capture_headless_default():
     return os.environ.get('OWA_CAPTURE_HEADLESS', '1').strip() != '0'
 
 
-def capture_signin(alias, email, *, timeout=300, user_agent=None):
+def capture_signin(alias, email, *, timeout=300, user_agent=None,
+                   capture_url=None):
     """Visible Edge for first-time setup. Returns a config dict on
     success, or raises RuntimeError with a user-facing message.
 
@@ -418,7 +419,8 @@ def capture_signin(alias, email, *, timeout=300, user_agent=None):
     port = find_free_port()
     log(f'launching Edge visibly on port {port}, userdata={edge_dir}'
         + (f', ua={user_agent!r}' if user_agent else ''))
-    capture_url = _capture_url()
+    if capture_url is None:
+        capture_url = _capture_url()
     if capture_url != OWA_URL:
         log(f'capture URL overridden to {capture_url}')
     proc = launch_edge(edge_dir, port, headless=False, url=capture_url,
@@ -478,7 +480,8 @@ def capture_signin(alias, email, *, timeout=300, user_agent=None):
     return _build_config(token_response, email=email, mode='capture')
 
 
-def capture_silent(alias, *, timeout=None, headless=None, user_agent=None):
+def capture_silent(alias, *, timeout=None, headless=None, user_agent=None,
+                   capture_url=None):
     """Headless Edge for scheduled reseed. Returns (status, config_dict):
 
       ('ok', dict)              success - dict has OWA_REFRESH_TOKEN/OWA_TENANT_ID
@@ -501,12 +504,22 @@ def capture_silent(alias, *, timeout=None, headless=None, user_agent=None):
     20s historically but Conditional-Access-heavy tenants routinely take
     25-40s on the post-reload /token round-trip; the 20s budget tripped
     spurious 'error' returns on otherwise healthy sessions.
+
+    `capture_url=None` falls back to `_capture_url()` (OWA_CAPTURE_URL env
+    or OWA). A profile that captured a non-FOCI client's RT persists its
+    OWA_CAPTURE_URL to the config; the reseed path reads it back and passes
+    it here so the headless reseed navigates to the *same* SPA that minted
+    the token. Without this the silent reseed loads OWA, MSAL never touches
+    the non-FOCI client's cache, and the round-trip yields the wrong RT (or
+    none) - so launchd reseed silently rots and the user reseeds by hand.
     """
     if timeout is None:
         try:
             timeout = int(os.environ.get('OWA_CAPTURE_TIMEOUT', '60'))
         except ValueError:
             timeout = 60
+    if capture_url is None:
+        capture_url = _capture_url()
     log = _logger(f'capture/silent/{alias}')
     tick = _ticker(alias)
     edge_dir = _config.profile_edge_dir(alias)
@@ -516,12 +529,13 @@ def capture_silent(alias, *, timeout=None, headless=None, user_agent=None):
     if headless is None:
         headless = _capture_headless_default()
     port = find_free_port()
-    log(f'launching Edge {"headless" if headless else "offscreen"} on port {port}')
+    log(f'launching Edge {"headless" if headless else "offscreen"} on port {port}'
+        + (f' at {capture_url}' if capture_url != OWA_URL else ''))
     try:
         # offscreen=True keeps the non-headless fallback parked at
         # -32000,-32000 so the user doesn't see a window pop onscreen
         # and assume it's interactive - capture_silent never is.
-        proc = launch_edge(edge_dir, port, headless=headless, url=OWA_URL,
+        proc = launch_edge(edge_dir, port, headless=headless, url=capture_url,
                            offscreen=True, user_agent=user_agent)
     except RuntimeError as e:
         print(f'ERROR: {e}', file=sys.stderr)
