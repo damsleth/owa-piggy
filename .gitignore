@@ -80,3 +80,5 @@ Thumbs.db
 # Project-local
 .pycache_local/
 .serena/
+# headroom writes a CLAUDE.md, but we're using AGENTS.md globally
+CLAUDE.md
