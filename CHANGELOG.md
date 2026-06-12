@@ -8,6 +8,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 Releases before v0.12.0 are recorded only in the annotated git tags
 (`git tag -n99`).
 
+## [0.16.1] - 2026-06-12
+
+### Added
+- Capture a non-FOCI client's refresh token off the wire: point the capture
+  sidecar at a non-OWA SPA with `OWA_CAPTURE_URL` (e.g. the Azure DevOps app)
+  and grab its bound refresh token, which the FOCI client cannot mint itself
+  (AADSTS65002 preauth wall). `OWA_CLIENT_ID` / `OWA_ORIGIN` / `OWA_CAPTURE_URL`
+  are persisted to the profile config so the token exchange replays under the
+  same minting client and origin.
+
+### Fixed
+- Scheduled reseed of a non-FOCI profile now navigates to the SPA it was
+  captured against (the persisted `OWA_CAPTURE_URL`) and rotates *that*
+  client's refresh token instead of OWA's. Previously the silent reseed loaded
+  OWA, never touched the non-FOCI client's MSAL cache, and the launchd reseed
+  quietly rotted until a manual re-seed.
+- Relaxed the refresh-token shape check in `token_flow`: the `1.`/`0.` prefix
+  is a FOCI family property, so non-FOCI clients carry an opaque RT. Defer to
+  AAD to reject a malformed token rather than failing the shape gate locally.
+
 ## [0.16.0] - 2026-06-09
 
 ### Added
@@ -97,7 +117,10 @@ SharePoint feature ships under 0.15.1.)
   leak guard); `audiences`/`decode`/`remaining` declared text-only.
 - Internal: token-flow extracted into `token_flow.py` (no behavior change).
 
+[0.16.1]: https://github.com/damsleth/owa-piggy/releases/tag/v0.16.1
+[0.16.0]: https://github.com/damsleth/owa-piggy/releases/tag/v0.16.0
 [0.15.1]: https://github.com/damsleth/owa-piggy/releases/tag/v0.15.1
+[0.15.0]: https://github.com/damsleth/owa-piggy/releases/tag/v0.15.0
 [0.14.1]: https://github.com/damsleth/owa-piggy/releases/tag/v0.14.1
 [0.14.0]: https://github.com/damsleth/owa-piggy/releases/tag/v0.14.0
 [0.13.0]: https://github.com/damsleth/owa-piggy/releases/tag/v0.13.0
