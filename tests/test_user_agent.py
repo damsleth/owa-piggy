@@ -68,8 +68,10 @@ def test_reseed_capture_passes_persisted_ua_to_capture(monkeypatch, tmp_config):
 
     seen = {}
 
-    def _fake_silent(alias, *, timeout=None, headless=None, user_agent=None):
+    def _fake_silent(alias, *, timeout=None, headless=None, user_agent=None,
+                     capture_url=None):
         seen['user_agent'] = user_agent
+        seen['capture_url'] = capture_url
         return 'ok', {'OWA_REFRESH_TOKEN': '1.AQ_x', 'OWA_TENANT_ID': 'tid-x'}
 
     monkeypatch.setattr(capture, 'capture_silent', _fake_silent)
@@ -91,8 +93,10 @@ def test_reseed_capture_env_overrides_persisted_ua(monkeypatch, tmp_config):
 
     seen = {}
 
-    def _fake_silent(alias, *, timeout=None, headless=None, user_agent=None):
+    def _fake_silent(alias, *, timeout=None, headless=None, user_agent=None,
+                     capture_url=None):
         seen['user_agent'] = user_agent
+        seen['capture_url'] = capture_url
         return 'ok', {'OWA_REFRESH_TOKEN': '1.AQ_x', 'OWA_TENANT_ID': 'tid-x'}
 
     monkeypatch.setattr(capture, 'capture_silent', _fake_silent)
