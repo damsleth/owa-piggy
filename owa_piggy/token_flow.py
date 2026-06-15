@@ -16,11 +16,8 @@ command keeps only its own cache / output-formatting concerns.
 This module does NOT touch the access-token cache, do not call out to
 reseed, and does not print rotation NOTEs - those are caller policy.
 """
-import io
-import sys
-
 from .config import save_config
-from .oauth import CLIENT_ID, exchange_token
+from .oauth import CLIENT_ID, capture_errors, exchange_token
 
 # AAD error codes the caller can recover from by triggering an automatic
 # reseed (sliding-window expiry, hard-cap expiry). Detected from
@@ -29,7 +26,8 @@ from .oauth import CLIENT_ID, exchange_token
 _RECOVERABLE_AAD_CODES = ('AADSTS70043', 'AADSTS700084')
 
 
-def exchange_fresh(config, scope, *, persist, capture_stderr=False):
+def exchange_fresh(config, scope, *, persist, capture_stderr=False,
+                   config_path=None):
     """Live AAD exchange against the profile in `config` for `scope`.
 
     Returns ``(result, info)``:
@@ -53,9 +51,11 @@ def exchange_fresh(config, scope, *, persist, capture_stderr=False):
 
     Side effect: when the response carries a rotated refresh token and
     ``persist`` is True, ``config['OWA_REFRESH_TOKEN']`` is updated and
-    ``save_config(config)`` is called. The config dict is mutated in
-    place either way so the caller's subsequent reads see the new
-    token.
+    ``save_config(config, config_path)`` is called. ``config_path`` selects
+    which profile's config file the rotated token is written to (defaults to
+    the active CONFIG_PATH); concurrent callers pass an explicit path so
+    per-profile writes never collide. The config dict is mutated in place
+    either way so the caller's subsequent reads see the new token.
     """
     rt = config.get('OWA_REFRESH_TOKEN', '').strip()
     tid = config.get('OWA_TENANT_ID', '').strip()
@@ -90,13 +90,11 @@ def exchange_fresh(config, scope, *, persist, capture_stderr=False):
         return None, info
 
     if capture_stderr:
-        captured = io.StringIO()
-        stderr_fd = sys.stderr
-        try:
-            sys.stderr = captured
+        # Capture via oauth's thread-local sink rather than swapping the
+        # global sys.stderr, so concurrent probes (status fans out across
+        # profiles) don't clobber each other's buffer.
+        with capture_errors() as captured:
             result = exchange_token(rt, tid, cid, scope, **origin_kw)
-        finally:
-            sys.stderr = stderr_fd
         info['stderr_text'] = captured.getvalue()
         # Note: the helper does NOT replay captured stderr. The cli
         # mint path wants the AAD error to reach the terminal verbatim
@@ -118,5 +116,5 @@ def exchange_fresh(config, scope, *, persist, capture_stderr=False):
         config['OWA_REFRESH_TOKEN'] = new_rt
         info['rotated'] = True
         if persist:
-            save_config(config)
+            save_config(config, config_path)
     return result, info
