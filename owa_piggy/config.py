@@ -399,17 +399,23 @@ def parse_kv_stream(text):
     return {k: v for k, v in _iter_kv(text) if k in allowed and v}
 
 
-def load_config():
+def load_config(path=None):
     """Returns (config, persist). persist is True only when the *effective*
     OWA_REFRESH_TOKEN came from the on-disk config - i.e. the file has the
     key AND no environment override is shadowing it. When env overrides,
     the env value is what we send to AAD and the rotated token belongs to
     that env-driven session; writing it back would silently clobber the
-    unrelated file token."""
+    unrelated file token.
+
+    `path` selects which profile's config file to read. It defaults to the
+    module-global CONFIG_PATH (set by set_active_profile) for the common
+    single-profile path, but callers that need to read several profiles
+    concurrently pass an explicit path so they don't race the global."""
+    cfg_path = path or CONFIG_PATH
     config = {}
     file_keys = set()
-    if CONFIG_PATH.exists():
-        for k, v in _iter_kv(CONFIG_PATH.read_text()):
+    if cfg_path.exists():
+        for k, v in _iter_kv(cfg_path.read_text()):
             config[k] = v
             file_keys.add(k)
     # Environment overrides file
@@ -423,7 +429,7 @@ def load_config():
     return config, persist
 
 
-def save_config(config):
+def save_config(config, path=None):
     """Atomically rewrite the config file.
 
     Refresh tokens rotate on every successful exchange, so a partial write here
@@ -431,12 +437,17 @@ def save_config(config):
     browser. Write the new contents to a sibling temp file, fsync, chmod, then
     rename over the target - rename within a filesystem is atomic on POSIX, so
     either the old or the new file is visible, never a truncated mix.
+
+    `path` selects the target config file, defaulting to the module-global
+    CONFIG_PATH. Concurrent callers persisting rotated tokens for different
+    profiles pass distinct explicit paths, so the writes never collide.
     """
+    cfg_path = path or CONFIG_PATH
     lines = []
-    if CONFIG_PATH.exists():
+    if cfg_path.exists():
         # Preserve existing lines, update known keys in place
         existing_keys = set()
-        for line in CONFIG_PATH.read_text().splitlines():
+        for line in cfg_path.read_text().splitlines():
             stripped = line.strip()
             if stripped and not stripped.startswith('#') and '=' in stripped:
                 k = stripped.split('=', 1)[0].strip()
@@ -451,4 +462,4 @@ def save_config(config):
     else:
         for k, v in config.items():
             lines.append(f'{k}="{v}"')
-    atomic_write(CONFIG_PATH, '\n'.join(lines) + '\n')
+    atomic_write(cfg_path, '\n'.join(lines) + '\n')

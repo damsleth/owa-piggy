@@ -8,6 +8,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 Releases before v0.12.0 are recorded only in the annotated git tags
 (`git tag -n99`).
 
+## [0.16.2] - 2026-06-15
+
+### Fixed
+- `status` (and every token exchange) no longer hangs for minutes on hosts with
+  a broken/blackholed IPv6 route. `login.microsoftonline.com` resolves to IPv6
+  addresses first, and Python's `socket.create_connection` tries them strictly
+  in order, blocking on each dead address until the OS TCP timeout (~75s).
+  Exchanges now connect via a Happy Eyeballs connector (RFC 8305) that races
+  IPv4/IPv6 concurrently and uses the first to connect, like curl. TLS cert and
+  hostname verification are unchanged. `EXCHANGE_TIMEOUT` caps each attempt.
+
+### Changed
+- `status` with no `--profile` now probes all profiles concurrently instead of
+  serially, so one slow or failing profile no longer blocks the rest. Output is
+  unchanged: stanzas are still printed in configuration order.
+- Internal: the JSON (`--json`) and human `status` paths now share a single
+  thread-safe probe core (`_probe_profile`), replacing two divergent copies.
+  Token-exchange error capture moved from swapping the global `sys.stderr` to a
+  thread-local sink so concurrent probes can't clobber each other.
+
 ## [0.16.1] - 2026-06-12
 
 ### Added
@@ -117,6 +137,7 @@ SharePoint feature ships under 0.15.1.)
   leak guard); `audiences`/`decode`/`remaining` declared text-only.
 - Internal: token-flow extracted into `token_flow.py` (no behavior change).
 
+[0.16.2]: https://github.com/damsleth/owa-piggy/releases/tag/v0.16.2
 [0.16.1]: https://github.com/damsleth/owa-piggy/releases/tag/v0.16.1
 [0.16.0]: https://github.com/damsleth/owa-piggy/releases/tag/v0.16.0
 [0.15.1]: https://github.com/damsleth/owa-piggy/releases/tag/v0.15.1
