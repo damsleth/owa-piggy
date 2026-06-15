@@ -4,14 +4,26 @@ Do not change CLIENT_ID, ORIGIN, or the Content-Type header without a
 very clear reason. Those values make AAD accept the request; changing
 them silently breaks the tool.
 """
+import http.client
+import itertools
 import json
+import queue
+import socket
 import sys
+import threading
 import urllib.error
 import urllib.parse
 import urllib.request
 
 CLIENT_ID = '9199bf20-a13f-4107-85dc-02114787ef48'
 ORIGIN = 'https://outlook.cloud.microsoft'
+
+# Hard cap on the AAD token exchange, used both as the per-connection-attempt
+# timeout in the Happy Eyeballs connector and as the read timeout afterwards.
+# urllib's default is no timeout, so a stalled handshake would block forever;
+# `status` runs one exchange per profile serially, so a single bad network
+# window turns into minutes. Surfaced as TimeoutError/URLError below.
+EXCHANGE_TIMEOUT = 15
 
 # AAD's cross-origin check (AADSTS9002327) ties an SPA refresh-token grant
 # to an Origin registered on that client's app registration. The default
@@ -34,6 +46,117 @@ def origin_for_client(client_id, override=None):
     return KNOWN_CLIENT_ORIGINS.get(client_id, ORIGIN)
 
 
+# --- Happy Eyeballs ---------------------------------------------------------
+# login.microsoftonline.com resolves to a long list of IPv6 addresses first,
+# then IPv4. Python's socket.create_connection tries them strictly in order,
+# so on a host with a broken/blackholed IPv6 default route every IPv6 attempt
+# blocks until the OS TCP-connect timeout (~75s) before falling through to a
+# working IPv4 address. With one exchange per profile that turns `status` into
+# a multi-minute hang. curl and browsers avoid this by racing the families in
+# parallel (RFC 8305 "Happy Eyeballs"); we do the same here.
+
+def _interleave_by_family(infos):
+    """Reorder getaddrinfo results to alternate IPv6/IPv4 so a dead family
+    can't monopolise the front of the attempt list."""
+    v6 = [i for i in infos if i[0] == socket.AF_INET6]
+    v4 = [i for i in infos if i[0] == socket.AF_INET]
+    out = []
+    for a, b in itertools.zip_longest(v6, v4):
+        if a:
+            out.append(a)
+        if b:
+            out.append(b)
+    return out
+
+
+def _coerce_timeout(timeout):
+    """http.client may hand us its _GLOBAL_DEFAULT_TIMEOUT sentinel; settimeout
+    only accepts a number or None."""
+    return timeout if isinstance(timeout, (int, float)) else None
+
+
+def happy_eyeballs_connect(host, port, timeout):
+    """Connect to host:port by racing every resolved address concurrently and
+    returning the first socket that connects. Remaining attempts are reaped in
+    the background. Raises the last connection error if all attempts fail."""
+    infos = _interleave_by_family(
+        socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM))
+    if not infos:
+        raise OSError(f'getaddrinfo returned no addresses for {host}:{port}')
+
+    read_timeout = _coerce_timeout(timeout)
+    per_attempt = EXCHANGE_TIMEOUT if read_timeout is None else max(1.0, read_timeout)
+    results = queue.Queue()
+
+    def attempt(family, sockaddr):
+        sock = socket.socket(family, socket.SOCK_STREAM)
+        try:
+            sock.settimeout(per_attempt)
+            sock.connect(sockaddr)
+        except OSError as exc:
+            sock.close()
+            results.put(exc)
+            return
+        results.put(sock)
+
+    for family, _, _, _, sockaddr in infos:
+        threading.Thread(target=attempt, args=(family, sockaddr),
+                         daemon=True).start()
+
+    winner = None
+    last_err = None
+    consumed = 0
+    while consumed < len(infos):
+        item = results.get()
+        consumed += 1
+        if isinstance(item, socket.socket):
+            winner = item
+            break
+        last_err = item
+
+    if winner is None:
+        raise last_err or OSError(f'could not connect to {host}:{port}')
+
+    # Drain and close any sockets from attempts that connect after the winner,
+    # so a late-but-successful IPv6 race doesn't leak a descriptor.
+    remaining = len(infos) - consumed
+    if remaining:
+        def reap(n):
+            for _ in range(n):
+                item = results.get()
+                if isinstance(item, socket.socket):
+                    item.close()
+        threading.Thread(target=reap, args=(remaining,), daemon=True).start()
+
+    winner.settimeout(read_timeout)
+    return winner
+
+
+class _HappyEyeballsHTTPSConnection(http.client.HTTPSConnection):
+    """HTTPSConnection that connects via happy_eyeballs_connect, then performs
+    the normal TLS handshake (cert + hostname verification preserved via the
+    handler's SSL context)."""
+
+    def connect(self):
+        self.sock = happy_eyeballs_connect(self.host, self.port, self.timeout)
+        if getattr(self, '_tunnel_host', None):
+            self._tunnel()
+        server_hostname = self._tunnel_host or self.host
+        self.sock = self._context.wrap_socket(
+            self.sock, server_hostname=server_hostname)
+
+
+class _HappyEyeballsHTTPSHandler(urllib.request.HTTPSHandler):
+    def https_open(self, req):
+        return self.do_open(_HappyEyeballsHTTPSConnection, req,
+                            context=self._context)
+
+
+# Built once and reused: a default opener whose only deviation from the stock
+# one is the Happy Eyeballs HTTPS connection.
+_OPENER = urllib.request.build_opener(_HappyEyeballsHTTPSHandler())
+
+
 def exchange_token(refresh_token, tenant_id, client_id, scope, origin=None):
     url = f'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token'
     data = urllib.parse.urlencode({
@@ -53,7 +176,7 @@ def exchange_token(refresh_token, tenant_id, client_id, scope, origin=None):
         method='POST',
     )
     try:
-        with urllib.request.urlopen(req) as resp:
+        with _OPENER.open(req, timeout=EXCHANGE_TIMEOUT) as resp:
             return json.loads(resp.read())
     except urllib.error.HTTPError as e:
         err_body = e.read().decode('utf-8', errors='replace')
@@ -84,6 +207,13 @@ def exchange_token(refresh_token, tenant_id, client_id, scope, origin=None):
                       file=sys.stderr)
         except Exception:
             print(f'ERROR: HTTP {e.code}: {err_body[:200]}', file=sys.stderr)
+        return None
+    except TimeoutError:
+        # A read timeout surfaces as a bare socket.timeout/TimeoutError, not
+        # wrapped in URLError, so catch it explicitly or it escapes and aborts
+        # the whole `status` run on the first slow profile.
+        print(f'ERROR: token exchange timed out after {EXCHANGE_TIMEOUT}s',
+              file=sys.stderr)
         return None
     except urllib.error.URLError as e:
         print(f'ERROR: {e.reason}', file=sys.stderr)
