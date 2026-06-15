@@ -281,7 +281,7 @@ scopes:       default(26)
 launchd:      true
 ```
 
-Without `--profile`, `status` reports every configured profile in a stanza per alias. Prints `no valid token` (exit 1) and an `ERROR:` line on stderr if the live probe fails for a profile. The refresh-token expiry is the 24h hard-cap, computed from `OWA_RT_ISSUED_AT` which is stamped on `setup` and `reseed` (setups from before this field landed will show `unknown` until the next reseed). `scopes:` collapses to `default(N)` for the default scope set; an explicit `--scope` request prints the granted scope list verbatim. `launchd:` shows whether a per-profile LaunchAgent is bootstrapped.
+Without `--profile`, `status` probes every configured profile concurrently and reports them in a stanza per alias (in configuration order). Prints `no valid token` (exit 1) and an `ERROR:` line on stderr if the live probe fails for a profile. The refresh-token expiry is the 24h hard-cap, computed from `OWA_RT_ISSUED_AT` which is stamped on `setup` and `reseed` (setups from before this field landed will show `unknown` until the next reseed). `scopes:` collapses to `default(N)` for the default scope set; an explicit `--scope` request prints the granted scope list verbatim. `launchd:` shows whether a per-profile LaunchAgent is bootstrapped.
 
 `owa-piggy status --json` returns a machine-readable shape for scripts and companion tools: one object per profile with `state` (`ok|fail|disabled`), `access_token.expires_at`, `refresh_token.expires_at`, and `hints[]`.
 

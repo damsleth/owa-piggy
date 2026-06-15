@@ -13,6 +13,7 @@ import os
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -83,28 +84,108 @@ def _profile_is_disabled(alias):
     return alias not in registered
 
 
-def status_report(alias, audience=None, scope=None, sharepoint_tenant=None):
-    """Return a token health report for profile <alias> without token values."""
-    _config.set_active_profile(alias)
-    config, persist = load_config()
+def _probe_profile(alias, audience=None, scope=None, sharepoint_tenant=None):
+    """Live exchange probe for one profile, with no global side effects.
+
+    Reads the profile's config by explicit path and persists any rotated RT
+    back to that same path, so several profiles can be probed concurrently
+    without racing the module-global CONFIG_PATH / sys.stderr. Returns a
+    normalised result dict that both the JSON (_status_json) and human
+    (_status_human) formatters render - the single source of truth that
+    replaced the two divergent probe copies.
+    """
+    config_path = _config.profile_config_path(alias)
+    config, persist = load_config(config_path)
     rt = config.get('OWA_REFRESH_TOKEN', '').strip()
+    probe = {
+        'alias': alias,
+        'rt_present_cfg': bool(rt),
+        'rt_expires_at': _rt_expires_at(config),
+        'rt_issued_at': config.get('OWA_RT_ISSUED_AT', '').strip(),
+        'default_audience': audience or config.get('OWA_DEFAULT_AUDIENCE', '').strip() or 'graph',
+        'disabled': False,
+        'resolve_error': None,
+        'info': None,
+        'result': None,
+        'exchange_error': None,
+        'payload': None,
+        'decode_failed': False,
+        'scheduled': launchd_is_scheduled(alias),
+    }
+    if _profile_is_disabled(alias):
+        probe['disabled'] = True
+        return probe
+
+    probe_scope, err = resolve_audience(
+        audience,
+        scope,
+        profile_default=config.get('OWA_DEFAULT_AUDIENCE', '').strip(),
+        sharepoint_tenant=sharepoint_tenant,
+        profile_sharepoint_tenant=config.get('OWA_SHAREPOINT_TENANT', '').strip(),
+    )
+    if err:
+        probe['resolve_error'] = err
+        return probe
+
+    # exchange_fresh handles config field extraction, FOCI shape check,
+    # thread-local stderr capture (so we can surface the AAD error instead
+    # of leaking it to stdout), and rotated-RT persistence to config_path.
+    result, info = exchange_fresh(config, probe_scope, persist=persist,
+                                  capture_stderr=True, config_path=config_path)
+    probe['result'] = result
+    probe['info'] = info
+    if not info['rt_present'] or not info['tid_present'] or not info['rt_shape_ok']:
+        return probe
+    if not result or not result.get('access_token'):
+        probe['exchange_error'] = next(
+            (l for l in info['stderr_text'].splitlines()
+             if l.startswith('ERROR: ')), '')
+        return probe
+
+    at = result['access_token']
+    try:
+        probe['payload'] = decode_jwt_segment(at.split('.')[1])
+    except Exception:
+        probe['decode_failed'] = True
+    return probe
+
+
+def _probe_all(profiles, audience, scope, sharepoint_tenant):
+    """Probe every profile, returning results in the same order as `profiles`.
+
+    The probes are network-bound (one AAD exchange each) and independent, so
+    they run concurrently on a thread pool; a single bad profile no longer
+    serialises the whole run behind it. ThreadPoolExecutor.map preserves
+    input order, so formatting downstream stays deterministic.
+    """
+    if len(profiles) <= 1:
+        return [_probe_profile(a, audience, scope, sharepoint_tenant)
+                for a in profiles]
+    with ThreadPoolExecutor(max_workers=min(len(profiles), 8)) as pool:
+        return list(pool.map(
+            lambda a: _probe_profile(a, audience, scope, sharepoint_tenant),
+            profiles))
+
+
+def _status_json(probe):
+    """Render a probe result as the token-health report dict (no token values)."""
     report = {
-        'profile': alias,
+        'profile': probe['alias'],
         'state': 'fail',
-        'audience': audience or config.get('OWA_DEFAULT_AUDIENCE', '').strip() or 'graph',
+        'audience': probe['default_audience'],
         'access_token': {
             'present': False,
             'expires_at': None,
             'minutes_remaining': None,
         },
         'refresh_token': {
-            'present': bool(rt),
-            'expires_at': _rt_expires_at(config),
+            'present': probe['rt_present_cfg'],
+            'expires_at': probe['rt_expires_at'],
             'minutes_remaining': None,
         },
         'hints': [],
     }
-    if _profile_is_disabled(alias):
+    if probe['disabled']:
         report['state'] = 'disabled'
         report['hints'].append('profile is disabled')
         return report
@@ -119,46 +200,32 @@ def status_report(alias, audience=None, scope=None, sharepoint_tenant=None):
         except ValueError:
             pass
 
-    probe_scope, err = resolve_audience(
-        audience,
-        scope,
-        profile_default=config.get('OWA_DEFAULT_AUDIENCE', '').strip(),
-        sharepoint_tenant=sharepoint_tenant,
-        profile_sharepoint_tenant=config.get('OWA_SHAREPOINT_TENANT', '').strip(),
-    )
-    if err:
-        report['hints'].append(err)
+    if probe['resolve_error']:
+        report['hints'].append(probe['resolve_error'])
         return report
 
-    # exchange_fresh handles config field extraction, FOCI shape check,
-    # stderr capture (so we can surface the AAD error as a hint instead
-    # of leaking it to the caller's stdout), and rotated-RT persistence.
-    result, info = exchange_fresh(config, probe_scope, persist=persist,
-                                  capture_stderr=True)
-
+    info = probe['info']
     if not info['rt_present']:
-        report['hints'].append(f'run owa-piggy setup --profile {alias}')
+        report['hints'].append(f"run owa-piggy setup --profile {probe['alias']}")
         return report
     if not info['tid_present']:
-        report['hints'].append(f'profile {alias} is missing OWA_TENANT_ID')
+        report['hints'].append(f"profile {probe['alias']} is missing OWA_TENANT_ID")
         return report
     if not info['rt_shape_ok']:
         report['hints'].append('refresh token is not an AAD FOCI token; reseed from Microsoft Edge')
         return report
 
+    result = probe['result']
     if not result or not result.get('access_token'):
-        err_line = next((l for l in info['stderr_text'].splitlines()
-                         if l.startswith('ERROR: ')), '')
+        err_line = probe['exchange_error']
         report['hints'].append(err_line[len('ERROR: '):] if err_line else 'token exchange failed')
         return report
 
-    at = result['access_token']
-    try:
-        payload = decode_jwt_segment(at.split('.')[1])
-    except Exception:
+    if probe['decode_failed'] or probe['payload'] is None:
         report['hints'].append('access token decode failed')
         return report
 
+    payload = probe['payload']
     exp_ts = int(payload.get('exp', 0))
     minutes = max(0, int((exp_ts - time.time()) / 60)) if exp_ts else None
     raw_aud = payload.get('aud', '')
@@ -173,12 +240,16 @@ def status_report(alias, audience=None, scope=None, sharepoint_tenant=None):
     return report
 
 
+def status_report(alias, audience=None, scope=None, sharepoint_tenant=None):
+    """Return a token health report for profile <alias> without token values."""
+    return _status_json(_probe_profile(alias, audience, scope, sharepoint_tenant))
+
+
 def status_all_report(audience=None, scope=None, sharepoint_tenant=None):
     profiles = list_profiles()
     reports = [
-        status_report(alias, audience=audience, scope=scope,
-                      sharepoint_tenant=sharepoint_tenant)
-        for alias in profiles
+        _status_json(probe)
+        for probe in _probe_all(profiles, audience, scope, sharepoint_tenant)
     ]
     summary = {'ok': 0, 'warn': 0, 'fail': 0}
     for report in reports:
@@ -186,97 +257,50 @@ def status_all_report(audience=None, scope=None, sharepoint_tenant=None):
     return {'profiles': reports, 'summary': summary}
 
 
-def do_status(alias, audience=None, scope=None, sharepoint_tenant=None,
-              multi=False, verbose=False):
-    """Compact health summary for profile <alias>. Does a live exchange
-    probe to verify the RT actually works (rotates it as a side effect,
-    which is fine - the RT rotates on every use anyway). Prints three
-    ISO8601 lines or the single line 'no valid token' if anything is
-    missing or the probe fails.
+def _status_human(probe, multi=False, verbose=False):
+    """Render a probe result as the compact ISO8601 health block. Prints the
+    lines and returns the per-profile exit code (0 healthy, 1 otherwise).
 
-    Refresh-token expiry uses OWA_RT_ISSUED_AT + 24h if it's in the config
-    (set by `setup` and `reseed`). That's the SPA hard-cap, which is the
-    binding constraint since hourly rotation keeps the sliding window
-    permanently fresh. If the field is missing (pre-existing setups from
-    before this flag landed) we fall back to 'unknown'.
-
-    `multi=True` is set by do_status_all() when iterating every profile.
-    In that mode the [profile=...] label is written to stdout so the
-    output is self-describing when scanning several profiles at once;
-    single-profile mode keeps the label on stderr to preserve the
-    script-friendly stdout contract."""
-    # set_active_profile rebinds CONFIG_PATH so load_config / save_config
-    # and the access-token cache all target the right profile. The
-    # single-profile path goes through cli.py which already calls this,
-    # but do_status_all() calls us directly per alias so we own it here.
-    _config.set_active_profile(alias)
-    config, persist = load_config()
-
-    # The per-profile header (`profile: <alias>`) goes to stdout in
-    # multi-profile mode so concatenated output is self-describing, and
-    # to stderr in single-profile mode so scripts that only consume
-    # stdout don't have to filter it out (the `no valid token` /
-    # ISO8601 lines remain the script-friendly stdout payload).
+    The per-profile header (`profile: <alias>`) goes to stdout in
+    multi-profile mode so concatenated output is self-describing, and to
+    stderr in single-profile mode so scripts that only consume stdout don't
+    have to filter it out (the `no valid token` / ISO8601 lines remain the
+    script-friendly stdout payload)."""
+    alias = probe['alias']
     label_stream = sys.stdout if multi else sys.stderr
     print(f'profile:      {alias}', file=label_stream)
 
     # Disabled profiles (on disk but not in OWA_PROFILES) get a one-line
-    # status and no probe. We don't have a refresh agent for them and
-    # don't want a spurious "no valid token" failure on stale data.
-    # A missing registry means the user predates the registry or is in a
-    # test fixture - treat all on-disk profiles as enabled in that case.
-    # A present-but-empty registry means every profile is disabled.
-    if _profile_is_disabled(alias):
+    # status and no probe - the core probe already skipped the exchange.
+    if probe['disabled']:
         print('status:       disabled')
         return 0
 
-    # Resolve scope BEFORE the exchange so any OWA_DEFAULT_AUDIENCE
-    # misconfiguration warning still reaches the user. status honors the
-    # same options as the main token path, so
-    # `owa-piggy status --audience outlook` probes the outlook audience.
-    probe_scope, err = resolve_audience(
-        audience,
-        scope,
-        profile_default=config.get('OWA_DEFAULT_AUDIENCE', '').strip(),
-        sharepoint_tenant=sharepoint_tenant,
-        profile_sharepoint_tenant=config.get('OWA_SHAREPOINT_TENANT', '').strip(),
-    )
-    if err:
-        print(f'ERROR: {err}', file=sys.stderr)
+    if probe['resolve_error']:
+        print(f"ERROR: {probe['resolve_error']}", file=sys.stderr)
         return 1
 
-    # exchange_fresh captures exchange_token's stderr so we can surface
-    # the AAD error alongside 'no valid token' instead of dropping it.
-    # Silent drops made AADSTS700084 look like a mystery - the user
-    # would see 'no valid token' here and the real reason only when
-    # running `owa-piggy` bare. Persistence of any rotated RT is
-    # handled by the helper.
-    result, info = exchange_fresh(config, probe_scope, persist=persist,
-                                  capture_stderr=True)
-
+    info = probe['info']
     if not info['rt_present'] or not info['tid_present'] or not info['rt_shape_ok']:
         print('no valid token')
         return 1
 
+    result = probe['result']
     if not result or not result.get('access_token'):
         print('no valid token')
         # Send the AAD error to the same stream as the [profile=...]
         # label so single-profile mode keeps its strict stdout contract
         # (stdout == 'no valid token') while multi-profile output stays
         # self-describing when scanning several profiles at once.
-        err_line = next((l for l in info['stderr_text'].splitlines()
-                         if l.startswith('ERROR: ')), '')
-        if err_line:
-            print(err_line, file=label_stream)
+        if probe['exchange_error']:
+            print(probe['exchange_error'], file=label_stream)
         return 1
 
-    at = result['access_token']
-    try:
-        payload = decode_jwt_segment(at.split('.')[1])
-    except Exception:
+    if probe['decode_failed'] or probe['payload'] is None:
         print('no valid token')
         return 1
 
+    payload = probe['payload']
     exp_ts = int(payload.get('exp', 0))
     at_minutes = max(0, int((exp_ts - time.time()) / 60)) if exp_ts else None
     scp = payload.get('scp') or payload.get('roles') or ''
@@ -299,14 +323,14 @@ def do_status(alias, audience=None, scope=None, sharepoint_tenant=None,
                 break
     audience_line = f'{aud_name} ({aud})' if aud_name else (aud or 'unknown')
 
-    # Rotated RT persistence is handled by exchange_fresh above.
+    # Rotated RT persistence is handled by the core probe via exchange_fresh.
 
     def iso(ts):
         return datetime.fromtimestamp(ts, tz=timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
     # Refresh token hard-cap: issued_at + 24h. Parse OWA_RT_ISSUED_AT if set.
     rt_expires = 'unknown (run `owa-piggy reseed` to establish)'
-    issued_at = config.get('OWA_RT_ISSUED_AT', '').strip()
+    issued_at = probe['rt_issued_at']
     if issued_at:
         try:
             dt = datetime.strptime(issued_at, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc)
@@ -329,7 +353,7 @@ def do_status(alias, audience=None, scope=None, sharepoint_tenant=None,
     if at_minutes is not None:
         at_expires = f'{at_expires} ({_humanize_minutes(at_minutes)})'
 
-    scheduled_state = 'true' if launchd_is_scheduled(alias) else 'false'
+    scheduled_state = 'true' if probe['scheduled'] else 'false'
     print(f'authtoken:    expires {at_expires}')
     print(f'refreshtoken: expires {rt_expires}')
     # audience and scopes are stable noise (OWA always mints the same dense
@@ -341,26 +365,45 @@ def do_status(alias, audience=None, scope=None, sharepoint_tenant=None,
     return 0
 
 
+def do_status(alias, audience=None, scope=None, sharepoint_tenant=None,
+              multi=False, verbose=False):
+    """Compact health summary for profile <alias>. Does a live exchange
+    probe to verify the RT actually works (rotates it as a side effect,
+    which is fine - the RT rotates on every use anyway). Prints three
+    ISO8601 lines or the single line 'no valid token' if anything is
+    missing or the probe fails.
+
+    Refresh-token expiry uses OWA_RT_ISSUED_AT + 24h if it's in the config
+    (set by `setup` and `reseed`). That's the SPA hard-cap, which is the
+    binding constraint since hourly rotation keeps the sliding window
+    permanently fresh. If the field is missing (pre-existing setups from
+    before this flag landed) we fall back to 'unknown'.
+
+    `multi=True` is set by do_status_all() when iterating every profile."""
+    probe = _probe_profile(alias, audience, scope, sharepoint_tenant)
+    return _status_human(probe, multi=multi, verbose=verbose)
+
+
 def do_status_all(audience=None, scope=None, sharepoint_tenant=None, verbose=False):
-    """Run do_status() against every configured profile.
+    """Run the status probe against every configured profile.
 
     Used when `status` is invoked with no explicit --profile / no
-    OWA_PROFILE env var. Each profile gets its own labeled block,
-    separated by a blank line. Exit code is the max of the per-profile
-    return codes so any unhealthy profile is still surfaced to scripts.
+    OWA_PROFILE env var. The probes run concurrently (see _probe_all); each
+    profile then gets its own labeled block, separated by a blank line, in
+    configuration order. Exit code is the max of the per-profile return codes
+    so any unhealthy profile is still surfaced to scripts.
     """
     profiles = list_profiles()
     if not profiles:
         print('no profiles configured. Run: owa-piggy setup --profile <alias>',
               file=sys.stderr)
         return 1
+    probes = _probe_all(profiles, audience, scope, sharepoint_tenant)
     rc = 0
-    for i, alias in enumerate(profiles):
+    for i, probe in enumerate(probes):
         if i:
             print()
-        rc = max(rc, do_status(alias, audience=audience, scope=scope,
-                               sharepoint_tenant=sharepoint_tenant, multi=True,
-                               verbose=verbose))
+        rc = max(rc, _status_human(probe, multi=True, verbose=verbose))
     return rc
 
 
