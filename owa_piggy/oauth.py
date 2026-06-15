@@ -4,7 +4,9 @@ Do not change CLIENT_ID, ORIGIN, or the Content-Type header without a
 very clear reason. Those values make AAD accept the request; changing
 them silently breaks the tool.
 """
+import contextlib
 import http.client
+import io
 import itertools
 import json
 import queue
@@ -157,6 +159,32 @@ class _HappyEyeballsHTTPSHandler(urllib.request.HTTPSHandler):
 _OPENER = urllib.request.build_opener(_HappyEyeballsHTTPSHandler())
 
 
+# exchange_token reports AAD errors and hints by printing them. Callers like
+# `status` want to capture that text and surface it as a value instead of
+# leaking it to stdout. Routing through a thread-local sink (rather than
+# swapping the global sys.stderr) lets several profiles be probed concurrently
+# without clobbering each other's capture buffer, and leaves exchange_token's
+# signature untouched so test mocks keep working.
+_err_sink = threading.local()
+
+
+def _err_stream():
+    return getattr(_err_sink, 'stream', None) or sys.stderr
+
+
+@contextlib.contextmanager
+def capture_errors():
+    """Redirect exchange_token's ERROR/hint output to a buffer for the calling
+    thread only. Yields the buffer; restores the previous sink on exit."""
+    buf = io.StringIO()
+    prev = getattr(_err_sink, 'stream', None)
+    _err_sink.stream = buf
+    try:
+        yield buf
+    finally:
+        _err_sink.stream = prev
+
+
 def exchange_token(refresh_token, tenant_id, client_id, scope, origin=None):
     url = f'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token'
     data = urllib.parse.urlencode({
@@ -184,7 +212,7 @@ def exchange_token(refresh_token, tenant_id, client_id, scope, origin=None):
             err = json.loads(err_body)
             code = err.get('error', '')
             desc = err.get('error_description', '').split('\r\n')[0]
-            print(f'ERROR: {code}: {desc}', file=sys.stderr)
+            print(f'ERROR: {code}: {desc}', file=_err_stream())
             # AADSTS700084 is the 24h SPA hard-expiry: the refresh token has
             # hit its absolute lifetime ceiling (not the sliding window) and
             # cannot be extended by any amount of hourly rotation. The only
@@ -195,7 +223,7 @@ def exchange_token(refresh_token, tenant_id, client_id, scope, origin=None):
                 print('hint: refresh token has hit its 24h SPA hard-expiry. '
                       'Run `owa-piggy reseed` to fetch a fresh token '
                       'headlessly from the Edge sidecar profile.',
-                      file=sys.stderr)
+                      file=_err_stream())
             elif 'AADSTS70043' in err_body:
                 # The tenant-side Conditional Access sign-in-frequency cap
                 # (typically 7 days). Same recovery path as 700084, but the
@@ -204,17 +232,17 @@ def exchange_token(refresh_token, tenant_id, client_id, scope, origin=None):
                       'sign-in-frequency policy. Run `owa-piggy reseed` to '
                       'fetch a fresh token headlessly from the Edge sidecar '
                       'profile (Edge must still have a live tenant session).',
-                      file=sys.stderr)
+                      file=_err_stream())
         except Exception:
-            print(f'ERROR: HTTP {e.code}: {err_body[:200]}', file=sys.stderr)
+            print(f'ERROR: HTTP {e.code}: {err_body[:200]}', file=_err_stream())
         return None
     except TimeoutError:
         # A read timeout surfaces as a bare socket.timeout/TimeoutError, not
         # wrapped in URLError, so catch it explicitly or it escapes and aborts
         # the whole `status` run on the first slow profile.
         print(f'ERROR: token exchange timed out after {EXCHANGE_TIMEOUT}s',
-              file=sys.stderr)
+              file=_err_stream())
         return None
     except urllib.error.URLError as e:
-        print(f'ERROR: {e.reason}', file=sys.stderr)
+        print(f'ERROR: {e.reason}', file=_err_stream())
         return None
