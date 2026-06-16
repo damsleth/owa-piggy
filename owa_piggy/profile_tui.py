@@ -42,6 +42,8 @@ HIDE_CURSOR = '\x1b[?25l'
 SHOW_CURSOR = '\x1b[?25h'
 DIM = '\x1b[2m'
 GREEN = '\x1b[32m'
+YELLOW = '\x1b[33m'
+RED = '\x1b[31m'
 CYAN = '\x1b[36m'
 RESET = '\x1b[0m'
 
@@ -59,8 +61,8 @@ def empty_state_setup_flow():
     Asks for alias, email (network-capture mode is the right default
     today - works on Okta-federated tenants too), and a default
     audience, then dispatches into the standard interactive_setup.
-    After success, drops into the picker so the user sees what they
-    just built.
+    After success, drops into the dashboard so the user sees what they
+    just built (and its token health).
     """
     print('owa-piggy: no profiles configured yet.')
     print('Let\'s set one up. Press Ctrl-C to abort.\n')
@@ -69,7 +71,7 @@ def empty_state_setup_flow():
         return 1
     if create_profile(alias, email=email, audience=audience) != 0:
         return 1
-    return run_picker()
+    return run_dashboard()
 
 
 def prompt_new_profile_fields(default_alias=''):
@@ -330,37 +332,137 @@ def _action_reseed_all(state):
             else 'reseed --all failed (see above).')
 
 
-# --- Picker loop -------------------------------------------------------
+def print_plain_list():
+    """Plain printed listing of profiles, marking default with '*' and
+    enabled-but-not-default with 'x'.
 
-def run_picker():
-    """Multi-key profile manager.
+    Used by cli.`_do_profiles_list` for the non-TTY / pipe / redirect
+    case when called without a freshness probe. For the dashboard's own
+    fallback (alias + token freshness) see `print_plain_status`.
+    """
+    profiles = list_profiles()
+    reg = load_profiles_conf()
+    default = reg['OWA_DEFAULT_PROFILE']
+    enabled = set(reg['OWA_PROFILES'])
+    scheduled = set(reg.get('OWA_SCHEDULED', []))
+    for alias in profiles:
+        marker = '*' if alias == default else ('x' if alias in enabled else ' ')
+        sched = ' (S)' if alias in scheduled else ''
+        print(f' {marker} {alias}{sched}')
+    return 0
 
-    Keys:
-      up/down or j/k - move cursor
-      space          - toggle enabled (registered in OWA_PROFILES)
-      enter          - set highlighted profile as default
-      a              - add a new profile (drops into setup)
-      d              - delete profile (with confirm)
-      l              - add highlighted profile to the launchd schedule
-      u              - remove highlighted profile from the launchd schedule
-      r              - reseed highlighted profile (drops out, re-enters)
-      R              - reseed every profile (= `owa-piggy reseed --all`)
-      e              - open Edge with the highlighted profile's sidecar session
-      q / esc        - quit
 
-    Falls back to a plain printed list when termios is unavailable.
+# --- Dashboard (token health) ------------------------------------------
+
+def _freshness_cell(report):
+    """Map one status report to a (text, ansi_color) pair for the dashboard.
+
+    Pure - no I/O. `report` is one entry from
+    `status.status_all_report()['profiles']`, or None when the profile
+    hasn't been probed yet. The text carries no escapes so the non-TTY
+    fallback can print it verbatim; the caller wraps it in `color`.
+
+    The cell tracks the access-token `state`: `ok` -> green "fresh <Nm>"
+    (humanized minutes_remaining), `warn` -> yellow "expiring <Nm>",
+    `fail` -> red (the first actionable hint, e.g. "run owa-piggy setup
+    --profile X"), `disabled` -> dim. Unprobed -> dim "probing...".
+    """
+    if report is None:
+        return 'probing...', DIM
+
+    from .status import _humanize_minutes
+
+    st = report.get('state', 'fail')
+    if st == 'disabled':
+        return 'disabled', DIM
+
+    at = report.get('access_token') or {}
+    mins = at.get('minutes_remaining')
+
+    if st == 'ok':
+        text = f'fresh {_humanize_minutes(mins)}' if mins is not None else 'fresh'
+        return text, GREEN
+    if st == 'warn':
+        text = f'expiring {_humanize_minutes(mins)}' if mins is not None else 'expiring'
+        return text, YELLOW
+
+    # fail: surface the first hint so the user knows the fix, truncated so
+    # one broken profile can't blow out the row width.
+    hints = report.get('hints') or []
+    label = hints[0] if hints else 'needs reseed (r)'
+    if len(label) > 44:
+        label = label[:43] + '...'
+    return label, RED
+
+
+def print_plain_status(audience=None, scope=None, sharepoint_tenant=None):
+    """Non-TTY fallback for `owa-piggy tui`: one line per profile with its
+    token freshness, no escapes.
+
+    Used when termios is unavailable or stdin/stdout isn't a TTY (pipes,
+    CI, redirects). Shares `_freshness_cell` with the interactive dashboard
+    so the two output paths cannot drift.
+    """
+    profiles = list_profiles()
+    if not profiles:
+        print('no profiles configured. Run: owa-piggy setup --profile <alias>')
+        return 0
+    from . import status as status_mod
+    data = status_mod.status_all_report(
+        audience=audience, scope=scope, sharepoint_tenant=sharepoint_tenant)
+    reg = load_profiles_conf()
+    default = reg['OWA_DEFAULT_PROFILE']
+    reports = {r['profile']: r for r in data['profiles']}
+    width = max((len(a) for a in profiles), default=0)
+    for alias in profiles:
+        marker = '*' if alias == default else ' '
+        text, _color = _freshness_cell(reports.get(alias))
+        print(f' {marker} {alias.ljust(width)}  {text}')
+    return 0
+
+
+def run_dashboard(audience=None, scope=None, sharepoint_tenant=None):
+    """Interactive token-health dashboard for `owa-piggy tui`.
+
+    Also the screen bare `owa-piggy profiles` opens on a TTY. Combines the
+    profile list, markers, and single-key registry actions with a
+    per-profile token-freshness column driven by a live
+    `status.status_all_report` probe. Keys:
+
+      up/down or j/k   navigate
+      space            toggle enabled (registered in OWA_PROFILES)
+      enter            set highlighted profile default
+      a                add a new profile
+      d                delete profile
+      l / u            add / remove from launchd schedule
+      r                reseed highlighted profile        (re-probes)
+      R                reseed every profile               (re-probes)
+      e                open Edge for highlighted profile's sidecar session
+      g                refresh token health (re-probe)
+      q / esc          quit
+
+    Probing is network-bound (one live AAD exchange per profile, run
+    concurrently by `_probe_all`), so the screen paints a "probing..."
+    skeleton first, then redraws with results. Actions that change token
+    state (reseed, toggle, add) trigger a re-probe; registry-only actions
+    (default, schedule) just redraw. Falls back to `print_plain_status`
+    when termios is unavailable or stdin/stdout isn't a TTY.
     """
     try:
         import termios
     except ImportError:
-        # Non-POSIX: degrade gracefully to a plain listing. tty (used by
-        # PickerState.go_raw) ships alongside termios on every platform
-        # that has either, so probing one is enough.
-        return print_plain_list()
+        return print_plain_status(audience=audience, scope=scope,
+                                  sharepoint_tenant=sharepoint_tenant)
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        return print_plain_status(audience=audience, scope=scope,
+                                  sharepoint_tenant=sharepoint_tenant)
 
     fd = sys.stdin.fileno()
     old = termios.tcgetattr(fd)
     state = PickerState(fd, old)
+    # alias -> status report, populated by reprobe(). Stored on state so the
+    # cooked-mode action helpers can't see a stale closure.
+    state.reports = {}
 
     def load_state():
         profiles = list_profiles()
@@ -375,20 +477,23 @@ def run_picker():
         elif state.idx < 0:
             state.idx = 0
 
+    def refresh():
+        from . import status as status_mod
+        data = status_mod.status_all_report(
+            audience=audience, scope=scope, sharepoint_tenant=sharepoint_tenant)
+        state.reports = {r['profile']: r for r in data['profiles']}
+
     def draw():
         profiles, default, enabled = load_state()
         clamp_cursor(profiles)
-        # Compute launchd schedule state once per frame from the registry
-        # (one profiles.conf read) rather than per-row.
         scheduled = set(load_profiles_conf().get('OWA_SCHEDULED', []))
         launchd_state = {alias: alias in scheduled for alias in profiles}
-        # Full-screen redraw: cheaper to reason about than a partial diff,
-        # and the screen is tiny.
+        width = max((len(a) for a in profiles), default=0)
         sys.stdout.write(CLEAR_SCREEN)
-        sys.stdout.write('owa-piggy profiles\r\n')
+        sys.stdout.write('owa-piggy dashboard\r\n')
         sys.stdout.write(
             f'  {DIM}'
-            'up/down  navigate  ·  space toggle  ·  enter set default\r\n'
+            'up/down  navigate  ·  space toggle  ·  enter set default  ·  g refresh\r\n'
             '  a add  ·  d delete  ·  l schedule  ·  u unschedule  ·  r reseed  ·  R reseed all  ·  e edge  ·  q quit'
             f'{RESET}\r\n\r\n'
         )
@@ -404,8 +509,11 @@ def run_picker():
                 else:
                     state_marker = f'{DIM} {RESET}'
                 launchd_marker = f' {CYAN}(S){RESET}' if launchd_state[alias] else ''
+                text, color = _freshness_cell(state.reports.get(alias))
+                cell = f'{color}{text}{RESET}'
                 sys.stdout.write(
-                    f' {cursor} [{state_marker}] {alias}{launchd_marker}{CLEAR_EOL}\r\n'
+                    f' {cursor} [{state_marker}] {alias.ljust(width)}{launchd_marker}'
+                    f'  {cell}{CLEAR_EOL}\r\n'
                 )
         sys.stdout.write('\r\n')
         if state.message:
@@ -414,15 +522,22 @@ def run_picker():
             sys.stdout.write(f'{CLEAR_EOL}\r\n')
         sys.stdout.flush()
 
+    def reprobe():
+        # Clear cached reports so every row shows "probing..." during the
+        # blocking network call, then repopulate and redraw.
+        state.reports = {}
+        draw()
+        refresh()
+        draw()
+
     try:
         state.go_raw()
         sys.stdout.write(HIDE_CURSOR)
         sys.stdout.flush()
-        # Cursor starts on the current default if any, else top.
         profiles, default, _ = load_state()
         if default in profiles:
             state.idx = profiles.index(default)
-        draw()
+        reprobe()
         while True:
             ch = sys.stdin.read(1)
             profiles, default, enabled = load_state()
@@ -457,14 +572,19 @@ def run_picker():
                 draw()
                 continue
 
+            if ch in ('g', 'G'):
+                state.message = ''
+                reprobe()
+                continue
+
             if ch == 'a':
                 state.message = _action_add(state) or ''
-                draw()
+                reprobe()
                 continue
 
             if ch == 'R':
                 state.message = _action_reseed_all(state) or ''
-                draw()
+                reprobe()
                 continue
 
             if not current:
@@ -475,7 +595,7 @@ def run_picker():
 
             if ch == ' ':
                 state.message = _action_toggle(current, enabled) or ''
-                draw()
+                reprobe()
                 continue
 
             if ch in ('\r', '\n'):
@@ -500,7 +620,7 @@ def run_picker():
 
             if ch == 'r':
                 state.message = _action_reseed(state, current) or ''
-                draw()
+                reprobe()
                 continue
 
             if ch == 'e':
@@ -515,27 +635,8 @@ def run_picker():
         sys.stdout.write(SHOW_CURSOR)
         sys.stdout.flush()
         state.restore()
-    # Move cursor to the bottom of the picker on exit so the next shell
-    # prompt does not overwrite the last frame.
+    # Move cursor to the bottom on exit so the next shell prompt does not
+    # overwrite the last frame.
     print()
     return 0
-
-
-def print_plain_list():
-    """Plain printed listing of profiles, marking default with '*' and
-    enabled-but-not-default with 'x'.
-
-    Used by cli.`_do_profiles_list` for the non-TTY / pipe / redirect
-    case, and by `run_picker` itself when termios is unavailable. One
-    body so the two output paths cannot drift.
-    """
-    profiles = list_profiles()
-    reg = load_profiles_conf()
-    default = reg['OWA_DEFAULT_PROFILE']
-    enabled = set(reg['OWA_PROFILES'])
-    scheduled = set(reg.get('OWA_SCHEDULED', []))
-    for alias in profiles:
-        marker = '*' if alias == default else ('x' if alias in enabled else ' ')
-        sched = ' (S)' if alias in scheduled else ''
-        print(f' {marker} {alias}{sched}')
     return 0
