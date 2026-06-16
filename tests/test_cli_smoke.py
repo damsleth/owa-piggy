@@ -27,7 +27,7 @@ def test_help_exits_zero(monkeypatch, capsys):
     assert 'usage: owa-piggy' in out
     # Spot-check documented subcommands.
     for cmd in ('token', 'status', 'debug', 'setup', 'reseed', 'decode',
-                'remaining', 'edge', 'audiences', 'profiles'):
+                'remaining', 'edge', 'tui', 'audiences', 'profiles'):
         assert cmd in out, f'{cmd} missing from --help'
 
 
@@ -802,13 +802,41 @@ def test_profiles_delete_rejects_bad_alias(monkeypatch, capsys, tmp_config,
     assert 'invalid profile alias' in capsys.readouterr().err
 
 
-def test_interactive_profile_picker_ctrl_c_restores_terminal(monkeypatch):
+class _TTYStringIO(io.StringIO):
+    """StringIO that claims to be a TTY, so run_dashboard's isatty guard
+    doesn't divert to the plain-text fallback under test capture."""
+
+    def isatty(self):
+        return True
+
+
+def _stub_dashboard_probe(monkeypatch, profiles):
+    """Stub the network probe run_dashboard fires on entry/refresh so the
+    dashboard's key loop can be exercised offline (all profiles 'fresh')."""
+    from owa_piggy import status as status_mod
+    monkeypatch.setattr(
+        status_mod, 'status_all_report',
+        lambda **kw: {
+            'profiles': [
+                {'profile': a, 'state': 'ok',
+                 'access_token': {'present': True, 'minutes_remaining': 60},
+                 'hints': []}
+                for a in profiles
+            ],
+            'summary': {'ok': len(profiles), 'warn': 0, 'fail': 0},
+        })
+
+
+def test_interactive_profile_dashboard_ctrl_c_restores_terminal(monkeypatch):
     import termios
     import tty
 
     class FakeIn:
         def fileno(self):
             return 0
+
+        def isatty(self):
+            return True
 
         def read(self, _n):
             return '\x03'
@@ -817,8 +845,8 @@ def test_interactive_profile_picker_ctrl_c_restores_terminal(monkeypatch):
 
     restored = []
     monkeypatch.setattr(sys, 'stdin', FakeIn())
-    monkeypatch.setattr(sys, 'stdout', io.StringIO())
-    # The picker reads profile state from disk on each frame; stub the
+    monkeypatch.setattr(sys, 'stdout', _TTYStringIO())
+    # The dashboard reads profile state from disk on each frame; stub the
     # lookups so the call doesn't depend on a real ~/.config tree.
     monkeypatch.setattr(profile_tui, 'list_profiles', lambda: ['work', 'personal'])
     monkeypatch.setattr(
@@ -827,6 +855,7 @@ def test_interactive_profile_picker_ctrl_c_restores_terminal(monkeypatch):
         lambda: {'OWA_DEFAULT_PROFILE': 'work', 'OWA_PROFILES': ['work', 'personal']},
     )
     monkeypatch.setattr(profile_tui, 'launchd_is_scheduled', lambda alias: False)
+    _stub_dashboard_probe(monkeypatch, ['work', 'personal'])
     monkeypatch.setattr(termios, 'tcgetattr', lambda fd: ['old-state'])
     monkeypatch.setattr(tty, 'setraw', lambda fd: None)
     monkeypatch.setattr(
@@ -836,7 +865,7 @@ def test_interactive_profile_picker_ctrl_c_restores_terminal(monkeypatch):
     )
 
     with pytest.raises(KeyboardInterrupt):
-        profile_tui.run_picker()
+        profile_tui.run_dashboard()
 
     assert restored == [(0, termios.TCSADRAIN, ['old-state'])]
 
@@ -856,6 +885,9 @@ class _ScriptedStdin:
     def fileno(self):
         return 0
 
+    def isatty(self):
+        return True
+
     def read(self, _n):
         if self._keys:
             return self._keys.pop(0)
@@ -864,16 +896,16 @@ class _ScriptedStdin:
 
 def _stub_picker_environment(monkeypatch, *, profiles, default,
                              enabled=None, keys=()):
-    """Wire up the termios/stdin/state stubs the picker needs to run
-    detached from a real terminal and a real config tree. Returns the
-    reverse-chronological key list so tests can append before run."""
+    """Wire up the termios/stdin/state stubs the dashboard needs to run
+    detached from a real terminal and a real config tree, including a
+    stubbed token probe so the key loop never touches the network."""
     import termios
     import tty
     from owa_piggy import profile_tui as tui
 
     enabled = list(enabled if enabled is not None else profiles)
     monkeypatch.setattr(sys, 'stdin', _ScriptedStdin(list(keys)))
-    monkeypatch.setattr(sys, 'stdout', io.StringIO())
+    monkeypatch.setattr(sys, 'stdout', _TTYStringIO())
     monkeypatch.setattr(tui, 'list_profiles', lambda: list(profiles))
     monkeypatch.setattr(
         tui, 'load_profiles_conf',
@@ -881,12 +913,13 @@ def _stub_picker_environment(monkeypatch, *, profiles, default,
                  'OWA_PROFILES': list(enabled)},
     )
     monkeypatch.setattr(tui, 'launchd_is_scheduled', lambda alias: False)
+    _stub_dashboard_probe(monkeypatch, profiles)
     monkeypatch.setattr(termios, 'tcgetattr', lambda fd: ['old-state'])
     monkeypatch.setattr(tty, 'setraw', lambda fd: None)
     monkeypatch.setattr(termios, 'tcsetattr', lambda *a, **kw: None)
 
 
-def test_picker_space_toggles_profile(monkeypatch):
+def test_dashboard_space_toggles_profile(monkeypatch):
     """Pressing space on a highlighted profile calls disable_profile when
     it is currently enabled, then enable_profile when it is not - the
     registry mutation goes through the shared profiles.* helpers, never
@@ -906,13 +939,13 @@ def test_picker_space_toggles_profile(monkeypatch):
     monkeypatch.setattr(tui, 'enable_profile',
                         lambda alias: calls.append(('enable', alias)) or (True, ''))
 
-    rc = tui.run_picker()
+    rc = tui.run_dashboard()
     assert rc == 0
     # Cursor starts on the default ('work'). Space disables it.
     assert calls == [('disable', 'work')]
 
 
-def test_picker_enter_sets_default(monkeypatch):
+def test_dashboard_enter_sets_default(monkeypatch):
     """Pressing enter on a non-default profile calls set_default_profile.
     Pressing enter on the already-default is a no-op (a status-line hint,
     not a registry write)."""
@@ -928,12 +961,12 @@ def test_picker_enter_sets_default(monkeypatch):
     monkeypatch.setattr(tui, 'set_default_profile',
                         lambda alias: calls.append(alias) or (True, ''))
 
-    rc = tui.run_picker()
+    rc = tui.run_dashboard()
     assert rc == 0
     assert calls == ['personal']
 
 
-def test_picker_delete_cancel_does_not_mutate(monkeypatch):
+def test_dashboard_delete_cancel_does_not_mutate(monkeypatch):
     """Answering 'n' at the delete confirmation must not call
     delete_profile. The picker prints the about-to-delete summary, the
     user backs out, and the registry is left alone."""
@@ -952,11 +985,11 @@ def test_picker_delete_cancel_does_not_mutate(monkeypatch):
         lambda *a, **kw: pytest.fail('delete_profile must not run on confirm=no'),
     )
 
-    rc = tui.run_picker()
+    rc = tui.run_dashboard()
     assert rc == 0
 
 
-def test_picker_shift_r_reseeds_all(monkeypatch):
+def test_dashboard_shift_r_reseeds_all(monkeypatch):
     """`R` triggers do_reseed_all - the same code path as
     `owa-piggy reseed --all` from the shell."""
     from owa_piggy import profile_tui as tui
@@ -971,12 +1004,12 @@ def test_picker_shift_r_reseeds_all(monkeypatch):
     monkeypatch.setattr(tui, 'do_reseed_all', lambda: calls.append('all') or 0)
     monkeypatch.setattr('builtins.input', lambda prompt='': '')
 
-    rc = tui.run_picker()
+    rc = tui.run_dashboard()
     assert rc == 0
     assert calls == ['all']
 
 
-def test_picker_e_opens_edge(monkeypatch):
+def test_dashboard_e_opens_edge(monkeypatch):
     """`e` calls capture.open_edge for the highlighted profile and leaves
     the picker running (open_edge is detached - no cooked-mode drop)."""
     from owa_piggy import capture as capture_mod
@@ -993,7 +1026,7 @@ def test_picker_e_opens_edge(monkeypatch):
         capture_mod, 'open_edge',
         lambda alias, **kw: calls.append(alias) or ('proc', f'/tmp/{alias}'))
 
-    rc = tui.run_picker()
+    rc = tui.run_dashboard()
     assert rc == 0
     # Cursor starts on the default ('work').
     assert calls == ['work']

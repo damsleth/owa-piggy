@@ -96,7 +96,7 @@ examples:
   owa-piggy setup --profile new                    # paste-flow setup
   owa-piggy setup --profile new --email me@x.org   # network-capture setup (Okta etc.)
   pbpaste | owa-piggy setup --profile new          # pipe token from clipboard
-  owa-piggy profiles                               # list (TTY: interactive picker)
+  owa-piggy profiles                               # TTY: interactive dashboard (same as `tui`)
   owa-piggy profiles list                          # non-interactive list (alias of bare)
   owa-piggy profiles list --json                   # machine-readable list
   owa-piggy profiles new work                      # alias of `setup --profile work`
@@ -258,6 +258,10 @@ def _build_parser():
         'edge', help="open a normal Edge window using a profile's sidecar session")
     _add_common_options(p_edge, audience_scope=False)
 
+    p_tui = sub.add_parser(
+        'tui', help='interactive token-health dashboard (profiles + freshness)')
+    _add_common_options(p_tui)
+
     sub.add_parser(
         'audiences', help='list all known FOCI-accessible audiences')
 
@@ -335,7 +339,7 @@ def _build_parser():
 # tuple used during argv preprocessing.
 COMMANDS = (
     'token', 'status', 'debug', 'setup', 'reseed', 'decode',
-    'remaining', 'edge', 'audiences', 'version', 'profiles',
+    'remaining', 'edge', 'tui', 'audiences', 'version', 'profiles',
     'install-owa-tools',
 )
 
@@ -719,6 +723,23 @@ def _cmd_edge(args):
     return 0
 
 
+def _cmd_tui(args):
+    """Interactive token-health dashboard: the profile registry plus a live
+    per-profile freshness probe, with reseed/edge/setup actions on one
+    screen. Deliberately not a machine command (excluded from
+    MACHINE_COMMANDS) - it owns the terminal, so --agent/--err-json don't
+    apply. Drops to a plain status table when stdin/stdout isn't a TTY.
+    """
+    from . import profile_tui
+    if not list_profiles():
+        return profile_tui.empty_state_setup_flow()
+    return profile_tui.run_dashboard(
+        audience=args.audience,
+        scope=args.scope,
+        sharepoint_tenant=getattr(args, 'sharepoint_tenant', None),
+    )
+
+
 def _cmd_status(args):
     # No explicit profile + no OWA_PROFILE env: iterate every profile.
     # This bypasses resolve_profile()'s ambiguity error (multiple
@@ -838,7 +859,7 @@ def _cmd_profiles(args):
             print('no profiles configured. Run: owa-piggy setup --profile <alias>')
             return 0
         return profile_tui.print_plain_list()
-    # Bare `owa-piggy profiles` - list (with interactive picker on TTY).
+    # Bare `owa-piggy profiles` - list (with interactive dashboard on TTY).
     return _do_profiles_list()
 
 
@@ -865,12 +886,13 @@ def _profiles_report():
 def _do_profiles_list():
     """Print configured profiles, marking the default with '*'.
 
-    On an interactive stdout+stdin we hand off to the multi-key TUI in
-    `profile_tui.run_picker` so the user can manage profiles without
-    memorising the subcommand surface. Non-TTY invocations (pipes,
-    redirects, CI) fall through to `profile_tui.print_plain_list` -
-    same body the picker itself falls back to when termios is missing,
-    so the two output paths cannot drift.
+    On an interactive stdout+stdin we hand off to the dashboard in
+    `profile_tui.run_dashboard` (the same screen as `owa-piggy tui`): a
+    superset of the old picker that adds a live token-freshness column to
+    the profile-management actions, so the user can manage profiles and
+    see their health without memorising the subcommand surface. Non-TTY
+    invocations (pipes, redirects, CI) fall through to
+    `profile_tui.print_plain_list` so scripts get a stable, offline list.
 
     Empty-state: on a TTY, offer to walk through creating the first
     profile interactively. Non-TTY just prints the hint and exits 0.
@@ -885,7 +907,7 @@ def _do_profiles_list():
         return profile_tui.empty_state_setup_flow()
 
     if is_tty:
-        return profile_tui.run_picker()
+        return profile_tui.run_dashboard()
 
     return profile_tui.print_plain_list()
 
@@ -1034,6 +1056,7 @@ _DISPATCH = {
     'decode': _cmd_decode,
     'remaining': _cmd_remaining,
     'edge': _cmd_edge,
+    'tui': _cmd_tui,
     'audiences': _cmd_audiences,
     'version': _cmd_version,
     'profiles': _cmd_profiles,

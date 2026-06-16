@@ -90,10 +90,11 @@ Bare `owa-piggy` is shorthand for `owa-piggy token` - the access token goes to s
 | `decode`                 | print JWT header and payload of the current access token              |
 | `remaining`              | print minutes remaining on the current access token                   |
 | `audiences`              | list all known FOCI-accessible audiences                              |
-| `profiles`               | list profiles (TTY: interactive picker); `--json` emits aliases and config presence |
-| `profiles list`          | non-interactive list (alias of bare `profiles` without the picker); `--json` emits the registry doc - use this in scripts |
+| `profiles`               | on a TTY, opens the interactive dashboard (same screen as `tui`); `--json` emits aliases and config presence |
+| `profiles list`          | non-interactive list (bare `profiles` without the dashboard); `--json` emits the registry doc - use this in scripts |
 | `profiles set-default A` | make `A` the default profile; `--json` emits an action envelope     |
 | `profiles delete A`      | remove profile `A`'s config + Edge sidecar dir; `--force` to override default-pointer guard, `--yes` to bypass TTY confirmation (required in non-TTY), `--json` for action envelope |
+| `tui`                    | interactive dashboard: profile list + live per-profile token freshness in one screen, with reseed / toggle / set-default / edge actions; falls back to a plain status table when not a TTY. Bare `profiles` on a TTY opens the same screen - `tui` is the explicit name for it |
 | `install-owa-tools`      | shorthand for `brew install damsleth/tap/owa-tools` (the companion suite) |
 | `version`                | print version information; `--json` emits `{"tool": ..., "version": ...}` |
 
@@ -341,7 +342,8 @@ owa-piggy setup --profile work                # create a new profile
 owa-piggy setup --profile personal            # ...and another
 owa-piggy --profile work                      # raw token for 'work'
 OWA_PROFILE=work owa-piggy                    # same, via env
-owa-piggy profiles                            # list (TTY: interactive picker)
+owa-piggy tui                                 # dashboard: profiles + live token freshness
+owa-piggy profiles                            # same dashboard on a TTY (explicit name: tui)
 owa-piggy profiles list                       # non-interactive list (scripts, CI)
 owa-piggy profiles list --json                # machine-readable registry
 owa-piggy profiles set-default work           # change the default pointer
@@ -351,6 +353,8 @@ owa-piggy profiles delete personal            # remove a profile (config + Edge)
 owa-piggy profiles schedule work              # add 'work' to the shared hourly agent
 owa-piggy profiles unschedule work            # stop auto-reseeding 'work'
 ```
+
+`owa-piggy tui` is the one-screen answer to *"are my tokens fresh, and if not, fix it"*: a profile list with single-key actions (toggle, set-default, schedule, add/delete, reseed, edge) plus a live freshness column from a `status` probe of every profile — green `fresh 58m`, yellow `expiring 4m`, red with the fix hint when a profile needs a reseed. Reseeding (`r`/`R`), toggling, and adding re-probe automatically; `g` forces a refresh. Probing is network-bound, so the screen paints a `probing...` skeleton first, then fills in results. Bare `owa-piggy profiles` on a TTY opens this same dashboard — `tui` is just the explicit, discoverable name for it. For scripts and CI, use `profiles list` (offline, no probe) or `status --json`.
 
 Selection precedence when `--profile` is omitted: `OWA_PROFILE` env var > `OWA_DEFAULT_PROFILE` in `profiles.conf` > lone profile on disk > `default` on fresh installs. If multiple profiles exist but none is marked default, the command errors out rather than guessing.
 
