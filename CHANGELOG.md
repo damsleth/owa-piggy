@@ -8,7 +8,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 Releases before v0.12.0 are recorded only in the annotated git tags
 (`git tag -n99`).
 
-## [Unreleased]
+## [0.17.0] - 2026-06-16
 
 ### Added
 - `owa-piggy tui`: an interactive token-health dashboard. One screen shows every
@@ -158,6 +158,7 @@ SharePoint feature ships under 0.15.1.)
   leak guard); `audiences`/`decode`/`remaining` declared text-only.
 - Internal: token-flow extracted into `token_flow.py` (no behavior change).
 
+[0.17.0]: https://github.com/damsleth/owa-piggy/releases/tag/v0.17.0
 [0.16.2]: https://github.com/damsleth/owa-piggy/releases/tag/v0.16.2
 [0.16.1]: https://github.com/damsleth/owa-piggy/releases/tag/v0.16.1
 [0.16.0]: https://github.com/damsleth/owa-piggy/releases/tag/v0.16.0
