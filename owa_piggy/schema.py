@@ -186,6 +186,8 @@ COMMAND_SCHEMA = [
                    flag("--json", summary="Emit an action envelope on stdout")]),
     command("edge", "Open a normal Edge window using a profile's sidecar session",
             flags=[_PROFILE]),
+    command("tui", "Interactive token-health dashboard (profiles + freshness)",
+            output="text", mutates=True, flags=[_PROFILE, _AUDIENCE, _SCOPE]),
     command("audiences", "List all known FOCI-accessible audiences", output="text"),
     command("version", "Print version information", flags=[_JSON]),
     command("profiles", "List / manage profiles (subcommands: list, new, set-default, delete)",

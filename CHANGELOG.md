@@ -8,6 +8,27 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 Releases before v0.12.0 are recorded only in the annotated git tags
 (`git tag -n99`).
 
+## [Unreleased]
+
+### Added
+- `owa-piggy tui`: an interactive token-health dashboard. One screen shows every
+  profile with a live freshness column (green `fresh 58m`, yellow `expiring 4m`,
+  red with the fix hint when a reseed is needed), driven by the same concurrent
+  `status` probe used by `status` with no `--profile`. Carries all the single-key
+  registry actions (toggle, set-default, schedule, add/delete, edge) plus reseed
+  (`r`/`R`) and a manual refresh (`g`); state-changing actions re-probe
+  automatically. Probing is network-bound, so the screen paints a `probing...`
+  skeleton first, then fills in results. Falls back to a plain status table when
+  stdin/stdout isn't a TTY. The command is interactive, so it's excluded from the
+  `--agent`/`--err-json` machine surface.
+
+### Changed
+- Bare `owa-piggy profiles` on a TTY now opens the new dashboard instead of the
+  old profile picker. The two interactive screens have been consolidated into one
+  (`run_dashboard`) — the picker was a strict subset of the dashboard minus the
+  freshness column. `profiles list` and the other `profiles` subcommands are
+  unchanged; scripts and non-TTY callers still get the offline plain list.
+
 ## [0.16.2] - 2026-06-15
 
 ### Fixed
