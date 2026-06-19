@@ -107,7 +107,7 @@ def test_delete_profile_removes_dir_and_unregisters(monkeypatch, tmp_config,
 
 
 def test_delete_profile_uninstalls_launchd_when_present(monkeypatch, tmp_config,
-                                                       clean_env):
+                                                        clean_env):
     _make_profile_dir('work')
     ensure_profile_registered('work')
     calls = _stub_launchd(monkeypatch, installed=True)
@@ -116,6 +116,22 @@ def test_delete_profile_uninstalls_launchd_when_present(monkeypatch, tmp_config,
     assert ok is True
     # launchd uninstall fired exactly once for the deleted profile.
     assert calls == [('work', False)]
+
+
+def test_delete_profile_stops_when_launchd_unschedule_fails(monkeypatch,
+                                                            tmp_config,
+                                                            clean_env):
+    _make_profile_dir('work')
+    ensure_profile_registered('work')
+    calls = _stub_launchd(monkeypatch, installed=True, run_rc=9)
+
+    ok, err = profiles.delete_profile('work')
+
+    assert ok is False
+    assert 'failed to unschedule launchd' in err
+    assert calls == [('work', False)]
+    assert profile_dir('work').exists()
+    assert list_profiles() == ['work']
 
 
 def test_delete_profile_promotes_default(monkeypatch, tmp_config, clean_env):
