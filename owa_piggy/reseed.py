@@ -19,6 +19,7 @@ Two backends:
 import os
 import subprocess
 import sys
+import zlib
 
 from . import config as _config
 from .cache import clear_cache
@@ -35,46 +36,18 @@ from .scripts import find_reseed_script
 
 
 def _profile_cdp_port(alias):
-    """Derive a stable CDP debug port for `alias`, matching the formula
-    in scripts/setup-refresh.sh (`9222 + cksum % 10000`).
+    """Derive a stable CDP debug port for `alias`.
 
     The legacy scrape backend (reseed-from-edge.sh) reads CDP_PORT from
     the environment. The per-profile launchd plists used to inject it;
     the single shared agent does not, so the scrape path derives it here
     instead. Capture mode is unaffected - it picks a free port at runtime.
+
+    Any stable per-alias hash works; nothing outside Python recomputes
+    this, so zlib.crc32 (stdlib, deterministic) replaces the former
+    hand-rolled POSIX-cksum table.
     """
-    return 9222 + (_posix_cksum(alias.encode()) % 10000)
-
-
-def _posix_cksum(data):
-    """POSIX `cksum` CRC over `data`, returning the same integer the
-    `cksum` utility prints. Implements the standard CRC-32/CKSUM: the
-    byte length is appended to the stream and the CRC is final-XOR'd.
-    """
-    crc = 0
-    table = _CKSUM_TABLE
-    for byte in data:
-        crc = ((crc << 8) & 0xFFFFFFFF) ^ table[((crc >> 24) ^ byte) & 0xFF]
-    n = len(data)
-    while n:
-        crc = ((crc << 8) & 0xFFFFFFFF) ^ table[((crc >> 24) ^ (n & 0xFF)) & 0xFF]
-        n >>= 8
-    return (~crc) & 0xFFFFFFFF
-
-
-def _build_cksum_table():
-    poly = 0x04C11DB7
-    table = []
-    for i in range(256):
-        crc = i << 24
-        for _ in range(8):
-            crc = ((crc << 1) ^ poly) & 0xFFFFFFFF if crc & 0x80000000 \
-                else (crc << 1) & 0xFFFFFFFF
-        table.append(crc)
-    return table
-
-
-_CKSUM_TABLE = _build_cksum_table()
+    return 9222 + (zlib.crc32(alias.encode()) % 10000)
 
 
 def do_reseed(alias):
