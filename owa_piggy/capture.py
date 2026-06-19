@@ -37,6 +37,7 @@ import time
 
 from . import config as _config
 from .cdp import CdpError, CdpSession, find_tab
+from .jwt import decode_jwt_segment
 
 # Match either OWA host the user might have in their bookmarks. The SPA
 # at outlook.cloud.microsoft is the canonical post-2024 home; office.com
@@ -221,11 +222,8 @@ def decode_id_token_payload(id_token):
     """
     if not isinstance(id_token, str) or id_token.count('.') < 2:
         return None
-    seg = id_token.split('.')[1]
-    pad = '=' * (-len(seg) % 4)
     try:
-        raw = base64.urlsafe_b64decode(seg + pad)
-        return json.loads(raw)
+        return decode_jwt_segment(id_token.split('.')[1])
     except (ValueError, json.JSONDecodeError):
         return None
 
