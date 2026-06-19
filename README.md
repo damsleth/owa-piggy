@@ -262,7 +262,12 @@ The `AADSTS700084` error message from the normal flow also prints `hint: run owa
 
 ### Mechanism hierarchy
 
-Five token-acquisition mechanisms, ordered from least to most intrusive. `owa-piggy` walks this ladder so the silent paths run first and you only see a browser window when nothing cheaper works.
+Five token-acquisition mechanisms, ordered from least to most intrusive.
+`setup --email` / network capture is the preferred path for new profiles
+because it works with encrypted MSAL caches. The legacy localStorage scraper
+remains as a compatibility backend for older paste-flow profiles. `owa-piggy`
+walks this ladder so the silent paths run first and you only see a browser
+window when nothing cheaper works.
 
 | # | Mechanism | When it runs | Where |
 |---|-----------|--------------|-------|

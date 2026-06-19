@@ -25,6 +25,8 @@ import sys
 import time
 import urllib.request
 
+CDP_HELPER_PARITY_VERSION = 1
+
 PORT = int(os.environ.get('CDP_PORT', '9222'))
 # Match either the OWA tab or a login redirect so we notice when the SPA
 # gives up and hands off to AAD.
