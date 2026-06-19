@@ -73,7 +73,10 @@ def schedule(alias):
         # Already installed - the static plist reads OWA_SCHEDULED at run
         # time, so nothing else to do. No launchd churn, no re-prompt.
         return 0
-    return _run_setup_refresh_script('--install-shared')
+    rc = _run_setup_refresh_script('--install-shared')
+    if rc != 0:
+        _config.unschedule_profile(alias)
+    return rc
 
 
 def unschedule(alias):
