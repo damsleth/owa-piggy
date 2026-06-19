@@ -12,7 +12,7 @@ import sys
 from owa_piggy.conventions import DoctorFinding, DoctorPayload
 
 
-def run_doctor() -> DoctorPayload:
+def run_doctor(*, fix: bool = False) -> DoctorPayload:
   payload = DoctorPayload()
 
   # --- Config / profiles --------------------------------------------------
@@ -45,6 +45,29 @@ def run_doctor() -> DoctorPayload:
   except Exception:
     pass
 
+  try:
+    from owa_piggy.config import (
+      audit_private_permissions,
+      repair_private_permissions,
+    )
+    if fix:
+      repair_private_permissions()
+    for item in audit_private_permissions():
+      payload.findings.append(DoctorFinding(
+        id="insecure_permissions",
+        severity="warning",
+        message=(f"{item['label']} is mode {item['actual']}; "
+                 f"expected {item['expected']}"),
+        hint=f"Run: owa-piggy --doctor --fix ({item['path']})",
+      ))
+  except Exception as exc:
+    payload.findings.append(DoctorFinding(
+      id="permission_audit_failed",
+      severity="error",
+      message=f"Could not audit config permissions: {exc}",
+      hint="Check ~/.config/owa-piggy ownership and permissions.",
+    ))
+
   return payload
 
 
@@ -66,8 +89,8 @@ def _print_human(payload: DoctorPayload) -> None:
       print(f"        hint: {f.hint}")
 
 
-def emit_doctor(as_json: bool) -> int:
-  payload = run_doctor()
+def emit_doctor(as_json: bool, *, fix: bool = False) -> int:
+  payload = run_doctor(fix=fix)
   if as_json:
     sys.stdout.write(json.dumps(payload.to_dict(), ensure_ascii=False) + "\n")
     sys.stdout.flush()

@@ -112,7 +112,7 @@ consumer CLIs, so one agent can drive the whole suite uniformly:
 | `owa-piggy --help --json`  | the same schema via the help flag                                   |
 | `owa-piggy --agent <cmd>`  | wrap JSON stdout in a stable `{"_owa": …, "data": …}` envelope (or `OWA_AGENT=1`); non-interactive commands only |
 | `owa-piggy --err-json <cmd>` | structured JSON error on stderr (or `OWA_ERR_JSON=1`)              |
-| `owa-piggy --doctor [--json]` | health doctor payload                                            |
+| `owa-piggy --doctor [--json] [--fix]` | health doctor payload; `--fix` repairs known config permissions |
 
 ## Examples
 
