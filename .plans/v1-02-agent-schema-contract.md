@@ -1,6 +1,6 @@
 # v1-02-agent-schema-contract
 
-Status: planned
+Status: implemented
 
 Problem: the schema advertises machine JSON for commands such as `token`,
 `status`, `version`, and `profiles`, but `--agent <cmd>` currently fails for
@@ -16,4 +16,3 @@ Acceptance:
 - `owa-piggy --agent version` succeeds.
 - `owa-piggy --agent token` succeeds when the profile can mint a token.
 - The schema remains truthful for agent consumers.
-

@@ -170,6 +170,20 @@ def test_raw_token_to_stdout(monkeypatch, capsys, tmp_config, clean_env,
     assert capsys.readouterr().out.strip() == token
 
 
+def test_agent_token_adds_json_default(monkeypatch, capsys, tmp_config,
+                                       clean_env, make_jwt):
+    from owa_piggy.config import save_config
+    save_config({'OWA_REFRESH_TOKEN': '1.AQ_fake', 'OWA_TENANT_ID': 'tid'})
+    token = make_jwt({'exp': 9_999_999_999})
+    monkeypatch.setattr('owa_piggy.token_flow.exchange_token',
+                        lambda *a, **k: {'access_token': token,
+                                         'expires_in': 3600})
+    assert _run(monkeypatch, ['--agent', 'token']) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['_owa']['command'] == 'token'
+    assert payload['data']['access_token'] == token
+
+
 def test_env_mode_emits_shell_vars(monkeypatch, capsys, tmp_config, clean_env,
                                    make_jwt):
     from owa_piggy.config import save_config
