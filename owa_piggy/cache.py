@@ -70,10 +70,7 @@ def get_cached_token(tenant_id, client_id, scope, min_remaining_seconds=60):
 
 def get_cached_exp(tenant_id, client_id, scope):
     """Return the cached `exp` (unix seconds) for the triple, or None."""
-    entry = load_cache().get(_key(tenant_id, client_id, scope))
-    if not entry:
-        return None
-    exp = entry.get('exp')
+    exp = (load_cache().get(_key(tenant_id, client_id, scope)) or {}).get('exp')
     return exp if isinstance(exp, (int, float)) else None
 
 
