@@ -1,6 +1,6 @@
 # v1-05-cdp-loopback-binding
 
-Status: planned
+Status: implemented
 
 Problem: Edge CDP launchers pass `--remote-debugging-port` but do not state the
 intended loopback-only binding explicitly.
@@ -13,4 +13,3 @@ Scope:
 Acceptance:
 - Both CDP launchers explicitly bind to loopback.
 - Existing capture/reseed behavior remains unchanged.
-

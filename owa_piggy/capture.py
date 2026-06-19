@@ -103,6 +103,7 @@ def launch_edge(edge_dir, port, *, headless, url, edge_path=None,
         '--disable-gpu',
         '--no-first-run',
         '--no-default-browser-check',
+        '--remote-debugging-address=127.0.0.1',
         f'--remote-debugging-port={port}',
         f'--user-data-dir={edge_dir}',
     ]

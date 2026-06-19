@@ -104,6 +104,7 @@ launch_edge() {
     --disable-gpu
     --no-first-run
     --no-default-browser-check
+    --remote-debugging-address=127.0.0.1
     --remote-debugging-port="$PORT"
     --user-data-dir="$PROFILE_DIR"
   )

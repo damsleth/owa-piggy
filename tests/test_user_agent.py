@@ -105,3 +105,21 @@ def test_reseed_capture_env_overrides_persisted_ua(monkeypatch, tmp_config):
     rc = reseed_mod._do_reseed_capture('uap2', cfg)
     assert rc == 0
     assert seen['user_agent'] == 'UA/Env-Wins'
+
+
+def test_launch_edge_binds_debugging_to_loopback(monkeypatch, tmp_path):
+    seen = {}
+
+    class _P:
+        pass
+
+    def _fake_popen(args, **kwargs):
+        seen['args'] = args
+        return _P()
+
+    monkeypatch.setattr(capture, 'find_edge', lambda: '/usr/bin/edge')
+    monkeypatch.setattr(capture.subprocess, 'Popen', _fake_popen)
+
+    launch_edge(tmp_path, 9999, headless=True, url='https://x')
+
+    assert '--remote-debugging-address=127.0.0.1' in seen['args']
