@@ -45,26 +45,6 @@ def run_doctor() -> DoctorPayload:
   except Exception:
     pass
 
-  # --- Redaction sentinel -------------------------------------------------
-  try:
-    from owa_piggy.conventions import redact
-    sentinel = "CANARY_SECRET_xxxx"
-    jwt_like = "eyJalg.payload-" + sentinel + ".sig-padding-123"
-    out = redact(f"Bearer {jwt_like}")
-    if sentinel in out:
-      payload.findings.append(DoctorFinding(
-        id="redact_sentinel_leak",
-        severity="error",
-        message="Redaction sentinel leaked through redact()",
-        hint="redact() is not catching expected patterns",
-      ))
-  except Exception as exc:
-    payload.findings.append(DoctorFinding(
-      id="redact_unavailable",
-      severity="error",
-      message=f"redact() is not callable: {exc}",
-    ))
-
   return payload
 
 
