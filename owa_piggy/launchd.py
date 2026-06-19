@@ -14,11 +14,6 @@ it needs to be directly runnable by hand and by packaged installs. This
 module centralizes the Python-side label/path conventions, the registry
 edits, and the call into that script so the CLI and diagnostics cannot
 drift.
-
-The pre-consolidation layout used one plist per profile, labelled
-``com.damsleth.owa-piggy.<alias>``. ``label_for`` / ``plist_path`` are
-retained so migration and status can find and clean those up; new code
-should use the shared-agent helpers.
 """
 import subprocess
 import sys
@@ -28,23 +23,7 @@ from . import config as _config
 from .scripts import find_setup_refresh_script
 
 LABEL_PREFIX = 'com.damsleth.owa-piggy'
-LEGACY_LABEL = LABEL_PREFIX
 SHARED_LABEL = f'{LABEL_PREFIX}.scheduled'
-
-
-def label_for(alias):
-    """Return the (pre-consolidation) per-profile LaunchAgent label."""
-    return f'{LABEL_PREFIX}.{alias}'
-
-
-def plist_path(alias):
-    """Return the (pre-consolidation) per-profile LaunchAgent plist path."""
-    return Path.home() / 'Library' / 'LaunchAgents' / f'{label_for(alias)}.plist'
-
-
-def legacy_plist_path():
-    """Return the pre-profile single-label plist path."""
-    return Path.home() / 'Library' / 'LaunchAgents' / f'{LEGACY_LABEL}.plist'
 
 
 def shared_plist_path():
@@ -55,14 +34,6 @@ def shared_plist_path():
 def shared_agent_installed():
     """True when the shared LaunchAgent plist exists on disk."""
     return shared_plist_path().exists()
-
-
-def is_installed(alias):
-    """Back-compat: True when a pre-consolidation per-profile plist still
-    exists. New code should prefer ``is_scheduled``; this is kept so
-    migration and diagnostics can detect leftover per-profile agents.
-    """
-    return plist_path(alias).exists()
 
 
 def is_scheduled(alias):
