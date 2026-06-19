@@ -67,11 +67,12 @@ def test_agent_wraps_json_output():
     assert "data" in payload
 
 
-def test_agent_rejects_non_json_output():
-    # `version` without --json prints a bare version string, not JSON.
-    result = _run("--agent", "version")
-    assert result.returncode == 2
-    assert "requires JSON" in result.stderr
+def test_agent_adds_json_default_for_machine_command():
+  result = _run("--agent", "version")
+  assert result.returncode == 0
+  payload = json.loads(result.stdout)
+  assert payload["_owa"]["command"] == "version"
+  assert payload["data"]["tool"] == "owa-piggy"
 
 
 def test_err_json_emits_structured_error_on_stderr():
