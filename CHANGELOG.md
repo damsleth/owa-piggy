@@ -8,6 +8,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 Releases before v0.12.0 are recorded only in the annotated git tags
 (`git tag -n99`).
 
+## [1.0.0] - 2026-06-19
+
+First stable release. No breaking API changes from 0.17.0 — this marks the
+project as production-ready after a security-hardening and cleanup pass.
+
+### Security
+- Edge CDP now binds to loopback only, and a parity guard keeps the CDP helper
+  in sync so the debugging port can't be reached off-host.
+- `owa-piggy` audits and repairs config-file permissions on startup, and the
+  docs now call out every secret-bearing token surface.
+
+### Changed
+- Agent machine commands default to JSON output.
+- Modernized packaging metadata.
+- launchd schedule state is kept consistent across reseeds.
+- Internal cleanup: trimmed over-engineering (~97 fewer LoC, no behavior
+  change) and shrank two helpers (`dict.fromkeys` dedup, dropped a redundant
+  cache guard).
+
 ## [0.17.0] - 2026-06-16
 
 ### Added
