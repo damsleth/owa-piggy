@@ -68,6 +68,14 @@ Edge on their own machine, running the CLI under their own account.
 - Atomic writes (temp file + fsync + rename) protect the on-disk
   token from partial writes that would require a browser reseed.
 
+**Secret output policy.** Human and agent token surfaces deliberately emit
+usable secrets. Raw token output, `token --json`, `token --env`, and agent
+wrappers are not redaction boundaries and should be handled like credentials.
+That is intentional: highest possible usability and lowest possible friction is
+the point of the tool. Best-effort hygiene belongs around shell history and
+persistent logs where it does not make normal token use harder; it does not
+change the fact that successful token commands return secrets.
+
 **Out of scope:**
 
 - Multi-tenant deployment. There is none.

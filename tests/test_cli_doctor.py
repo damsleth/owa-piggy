@@ -28,7 +28,7 @@ def test_doctor_human_default():
   assert "owa-piggy doctor" in result.stdout
 
 
-def test_doctor_redaction_sentinel():
+def test_doctor_does_not_claim_redaction_health():
   result = _run("--doctor", "--json")
   ids = [f["id"] for f in json.loads(result.stdout.strip())["findings"]]
   assert "redact_sentinel_leak" not in ids
