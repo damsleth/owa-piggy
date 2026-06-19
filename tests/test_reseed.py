@@ -164,3 +164,10 @@ def test_capture_reseed_clears_cache(monkeypatch, tmp_config, clean_env):
     assert saved['OWA_REFRESH_TOKEN'] == '1.AQ_fake-rotated'
     assert saved['OWA_TENANT_ID'] == 'tid-1'
     assert saved['OWA_RT_ISSUED_AT'] == '2026-04-30T12:00:00Z'
+
+
+def test_legacy_reseed_script_binds_debugging_to_loopback():
+    from pathlib import Path
+
+    script = Path('scripts/reseed-from-edge.sh').read_text()
+    assert '--remote-debugging-address=127.0.0.1' in script
