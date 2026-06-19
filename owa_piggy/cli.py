@@ -1103,10 +1103,12 @@ def _run_with_modes(raw, agent, err_json):
     if command not in schema_mod.MACHINE_COMMANDS:
         return _dispatch(raw)
 
+    dispatch_raw = _agent_json_default(raw, command) if agent else raw
+
     out_buf, err_buf = io.StringIO(), io.StringIO()
     try:
         with contextlib.redirect_stdout(out_buf), contextlib.redirect_stderr(err_buf):
-            rc = _dispatch(raw)
+            rc = _dispatch(dispatch_raw)
     except SystemExit as exc:
         rc = int(exc.code or 0)
     out, err = out_buf.getvalue(), err_buf.getvalue()
@@ -1147,6 +1149,23 @@ def _run_with_modes(raw, agent, err_json):
     json.dump(schema_mod.envelope(command, data), sys.stdout, ensure_ascii=False, indent=2)
     sys.stdout.write("\n")
     return 0
+
+
+def _agent_json_default(raw, command):
+    """Make `--agent <machine-command>` self-sufficient.
+
+    The normal CLI stays text-first. Agent mode is schema-first, so commands
+    with a JSON flag should opt into it unless the caller explicitly chose a
+    different output form such as `token --env`.
+    """
+    argv = _inject_default_command(raw)
+    if '--json' in argv:
+        return argv
+    if command == 'token' and '--env' in argv:
+        return argv
+    if command in {'token', 'status', 'version', 'profiles'}:
+        return argv + ['--json']
+    return argv
 
 
 def main():
