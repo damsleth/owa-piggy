@@ -204,13 +204,7 @@ def load_profiles_conf():
 
 def _dedup_preserve_order(items):
     """De-duplicate an iterable of aliases, preserving first-seen order."""
-    seen = set()
-    uniq = []
-    for p in items or []:
-        if p and p not in seen:
-            seen.add(p)
-            uniq.append(p)
-    return uniq
+    return list(dict.fromkeys(p for p in (items or []) if p))
 
 
 def save_profiles_conf(data):
