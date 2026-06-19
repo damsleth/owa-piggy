@@ -12,8 +12,10 @@ We round-trip through socket.socketpair() with the send happening on a
 background thread so a large payload can't deadlock against an unread
 receive buffer.
 """
+import importlib.util
 import socket
 import threading
+from pathlib import Path
 
 import pytest
 
@@ -94,3 +96,14 @@ def test_recv_frame_raises_on_close():
     finally:
         a.close()
         b.close()
+
+
+def test_standalone_scraper_declares_matching_cdp_parity_version():
+    spec = importlib.util.spec_from_file_location(
+        'scrape_edge_parity',
+        Path('scripts/scrape_edge.py'),
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    assert module.CDP_HELPER_PARITY_VERSION == cdp.CDP_HELPER_PARITY_VERSION

@@ -24,6 +24,8 @@ import struct
 import time
 import urllib.request
 
+CDP_HELPER_PARITY_VERSION = 1
+
 
 def find_tab(port, timeout=15.0):
     """Poll http://localhost:<port>/json until at least one page-type
