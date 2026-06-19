@@ -1,6 +1,6 @@
 # v1-06-legacy-cdp-parity
 
-Status: planned
+Status: implemented
 
 Problem: the package CDP client and standalone legacy scraper intentionally
 duplicate low-level WebSocket/CDP code. That is still useful for compatibility,
@@ -16,4 +16,3 @@ Scope:
 Acceptance:
 - Test coverage makes CDP-helper drift visible.
 - README describes network capture as the preferred setup path.
-
