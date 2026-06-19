@@ -1,6 +1,6 @@
 # v1-07-packaging-metadata
 
-Status: planned
+Status: implemented
 
 Problem: package builds succeed, but setuptools warns that current license
 metadata is deprecated. The classifier also still marks the project beta.
@@ -13,4 +13,3 @@ Scope:
 Acceptance:
 - `uv build` succeeds without setuptools license deprecation warnings.
 - Wheel and sdist still include `LICENSE`.
-
