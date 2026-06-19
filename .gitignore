@@ -82,3 +82,4 @@ Thumbs.db
 .serena/
 # headroom writes a CLAUDE.md, but we're using AGENTS.md globally
 CLAUDE.md
+uv.lock

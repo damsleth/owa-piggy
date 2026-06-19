@@ -52,13 +52,22 @@ def _humanize_minutes(m):
     return f'{d}d{h}h'
 
 
-def _rt_expires_at(config):
-    issued_at = config.get('OWA_RT_ISSUED_AT', '').strip()
-    if not issued_at:
-        return None
+def _parse_iso(s):
+    """Parse an `%Y-%m-%dT%H:%M:%SZ` UTC string, or None if malformed."""
     try:
-        dt = datetime.strptime(issued_at, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc)
-    except ValueError:
+        return datetime.strptime(s, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc)
+    except (ValueError, TypeError):
+        return None
+
+
+def _minutes_until(dt):
+    """Whole minutes from now until `dt`, floored at 0."""
+    return max(0, int((dt - datetime.now(timezone.utc)).total_seconds() / 60))
+
+
+def _rt_expires_at(config):
+    dt = _parse_iso(config.get('OWA_RT_ISSUED_AT', '').strip())
+    if dt is None:
         return None
     return (dt + timedelta(hours=24)).strftime('%Y-%m-%dT%H:%M:%SZ')
 
@@ -189,16 +198,9 @@ def _status_json(probe):
         report['state'] = 'disabled'
         report['hints'].append('profile is disabled')
         return report
-    if report['refresh_token']['expires_at']:
-        try:
-            exp_dt = datetime.strptime(
-                report['refresh_token']['expires_at'], '%Y-%m-%dT%H:%M:%SZ',
-            ).replace(tzinfo=timezone.utc)
-            report['refresh_token']['minutes_remaining'] = max(
-                0, int((exp_dt - datetime.now(timezone.utc)).total_seconds() / 60),
-            )
-        except ValueError:
-            pass
+    exp_dt = _parse_iso(report['refresh_token']['expires_at'])
+    if exp_dt is not None:
+        report['refresh_token']['minutes_remaining'] = _minutes_until(exp_dt)
 
     if probe['resolve_error']:
         report['hints'].append(probe['resolve_error'])
@@ -325,20 +327,12 @@ def _status_human(probe, multi=False, verbose=False):
 
     # Rotated RT persistence is handled by the core probe via exchange_fresh.
 
-    def iso(ts):
-        return datetime.fromtimestamp(ts, tz=timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-
     # Refresh token hard-cap: issued_at + 24h. Parse OWA_RT_ISSUED_AT if set.
     rt_expires = 'unknown (run `owa-piggy reseed` to establish)'
-    issued_at = probe['rt_issued_at']
-    if issued_at:
-        try:
-            dt = datetime.strptime(issued_at, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc)
-            exp_dt = dt + timedelta(hours=24)
-            rt_minutes = max(0, int((exp_dt - datetime.now(timezone.utc)).total_seconds() / 60))
-            rt_expires = f'{exp_dt.strftime("%Y-%m-%dT%H:%M:%SZ")} ({_humanize_minutes(rt_minutes)})'
-        except ValueError:
-            pass
+    dt = _parse_iso(probe['rt_issued_at'])
+    if dt is not None:
+        exp_dt = dt + timedelta(hours=24)
+        rt_expires = f'{exp_dt.strftime("%Y-%m-%dT%H:%M:%SZ")} ({_humanize_minutes(_minutes_until(exp_dt))})'
 
     # OWA-issued access tokens always carry the same dense scope set, so
     # spelling out three names and a count was pure noise. Collapse to
@@ -349,7 +343,7 @@ def _status_human(probe, multi=False, verbose=False):
     else:
         scopes_line = str(scp)
 
-    at_expires = iso(exp_ts)
+    at_expires = _iso(exp_ts)
     if at_minutes is not None:
         at_expires = f'{at_expires} ({_humanize_minutes(at_minutes)})'
 

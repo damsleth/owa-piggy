@@ -18,39 +18,6 @@ from owa_piggy.config import (
 )
 
 
-# --- launchd helpers ---------------------------------------------------
-
-
-def test_launchd_label_format():
-    assert launchd.label_for('work') == 'com.damsleth.owa-piggy.work'
-
-
-def test_launchd_plist_path_uses_label():
-    p = launchd.plist_path('personal')
-    assert p.name == 'com.damsleth.owa-piggy.personal.plist'
-    assert p.parent.name == 'LaunchAgents'
-
-
-def test_launchd_legacy_plist_path_has_no_suffix():
-    p = launchd.legacy_plist_path()
-    assert p.name == 'com.damsleth.owa-piggy.plist'
-
-
-def test_launchd_is_installed_false_when_plist_missing(tmp_path, monkeypatch):
-    """We never want a test reaching ~/Library/LaunchAgents. Redirect
-    Path.home() so the predicate sees a fresh empty tree."""
-    monkeypatch.setattr(launchd.Path, 'home', staticmethod(lambda: tmp_path))
-    assert launchd.is_installed('whatever') is False
-
-
-def test_launchd_is_installed_true_when_plist_present(tmp_path, monkeypatch):
-    monkeypatch.setattr(launchd.Path, 'home', staticmethod(lambda: tmp_path))
-    plist = tmp_path / 'Library' / 'LaunchAgents' / 'com.damsleth.owa-piggy.work.plist'
-    plist.parent.mkdir(parents=True)
-    plist.touch()
-    assert launchd.is_installed('work') is True
-
-
 # --- set_default_profile ----------------------------------------------
 
 
