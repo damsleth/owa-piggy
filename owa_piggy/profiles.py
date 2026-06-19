@@ -154,7 +154,9 @@ def delete_profile(alias, *, uninstall_launchd=True, promote_default=True):
     confusing for the next command.
     """
     if uninstall_launchd and launchd_is_scheduled(alias):
-        launchd_unschedule(alias)
+        rc = launchd_unschedule(alias)
+        if rc != 0:
+            return False, f'failed to unschedule launchd for {alias!r}'
 
     try:
         unregister_profile(alias)
