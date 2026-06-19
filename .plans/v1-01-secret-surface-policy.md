@@ -1,6 +1,6 @@
 # v1-01-secret-surface-policy
 
-Status: planned
+Status: implemented
 
 Decision: do not broaden secret redaction. `owa-piggy` is an auth broker,
 so human and agent token surfaces intentionally emit usable secrets. Highest
@@ -17,4 +17,3 @@ Acceptance:
 - README and SECURITY clearly state the policy and rationale.
 - `--doctor` no longer reports redaction health.
 - Tests reflect the policy without broadening redaction.
-

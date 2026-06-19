@@ -112,7 +112,7 @@ consumer CLIs, so one agent can drive the whole suite uniformly:
 | `owa-piggy --help --json`  | the same schema via the help flag                                   |
 | `owa-piggy --agent <cmd>`  | wrap JSON stdout in a stable `{"_owa": …, "data": …}` envelope (or `OWA_AGENT=1`); non-interactive commands only |
 | `owa-piggy --err-json <cmd>` | structured JSON error on stderr (or `OWA_ERR_JSON=1`)              |
-| `owa-piggy --doctor [--json]` | health/redaction doctor payload                                  |
+| `owa-piggy --doctor [--json]` | health doctor payload                                            |
 
 ## Examples
 
@@ -133,6 +133,14 @@ owa-piggy debug                        # full setup diagnostics
 owa-piggy --version                    # print version
 owa-piggy version --json               # machine-readable version
 ```
+
+Token surfaces are intentionally secret-bearing. The raw token, `--json`,
+`--env`, and `--agent` token paths return usable credentials because
+`owa-piggy` is an auth broker and the goal is highest possible usability with
+the least possible friction. Do not treat human or agent output as redacted.
+Prefer command substitution such as `eval "$(owa-piggy token --env)"` when you
+want to avoid putting token values in shell history, and avoid redirecting token
+output to persistent logs unless that is the point of the command.
 
 Pipe-friendly - raw token goes to stdout, everything else to stderr:
 
