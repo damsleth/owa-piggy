@@ -26,6 +26,7 @@ into `profiles/default/` the first time a profile-aware code path runs.
 """
 import os
 import re
+import stat
 import tempfile
 import time
 from pathlib import Path
@@ -149,6 +150,75 @@ def profile_edge_dir(alias):
 def profile_log_path(alias):
     """Path to a specific profile's launchd stderr log."""
     return profile_dir(alias) / 'refresh.log'
+
+
+def private_permission_paths():
+    """Return known secret-bearing paths and their desired modes.
+
+    The Edge profile tree can be large and browser-managed; keeping its top
+    directory private is enough to prevent traversal without recursively
+    chmodding Chromium internals.
+    """
+    paths = [
+        (ROOT_DIR, 0o700, 'config root'),
+        (profiles_dir(), 0o700, 'profiles root'),
+        (profiles_conf_path(), 0o600, 'profile registry'),
+        (ROOT_DIR / 'config', 0o600, 'legacy config'),
+        (ROOT_DIR / 'cache.json', 0o600, 'legacy cache'),
+    ]
+    for alias in list_profiles():
+        paths.extend([
+            (profile_dir(alias), 0o700, f'profile {alias} directory'),
+            (profile_config_path(alias), 0o600, f'profile {alias} config'),
+            (profile_dir(alias) / 'cache.json', 0o600,
+             f'profile {alias} cache'),
+            (profile_edge_dir(alias), 0o700,
+             f'profile {alias} Edge sidecar directory'),
+            (profile_log_path(alias), 0o600, f'profile {alias} refresh log'),
+        ])
+    return paths
+
+
+def audit_private_permissions():
+    """Return paths whose group/other bits are too open.
+
+    Missing paths are ignored; this is an audit, not setup.
+    """
+    findings = []
+    for path, expected, label in private_permission_paths():
+        try:
+            st = path.lstat()
+        except FileNotFoundError:
+            continue
+        actual = stat.S_IMODE(st.st_mode)
+        if actual & 0o077:
+            findings.append({
+                'path': str(path),
+                'label': label,
+                'actual': f'{actual:04o}',
+                'expected': f'{expected:04o}',
+            })
+    return findings
+
+
+def repair_private_permissions():
+    """Chmod known existing config paths to their private modes."""
+    repaired = []
+    for path, expected, label in private_permission_paths():
+        try:
+            st = path.lstat()
+        except FileNotFoundError:
+            continue
+        actual = stat.S_IMODE(st.st_mode)
+        if actual != expected:
+            os.chmod(path, expected)
+            repaired.append({
+                'path': str(path),
+                'label': label,
+                'before': f'{actual:04o}',
+                'after': f'{expected:04o}',
+            })
+    return repaired
 
 
 def set_active_profile(alias):

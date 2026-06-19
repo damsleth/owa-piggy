@@ -123,6 +123,40 @@ def test_save_creates_parent_dir(tmp_path, monkeypatch, clean_env):
     assert parent_mode & 0o077 == 0
 
 
+def test_permission_audit_reports_open_known_paths(tmp_config, clean_env):
+    from owa_piggy.config import (
+        audit_private_permissions,
+        profile_edge_dir,
+        profile_dir,
+    )
+    profile_dir('work').mkdir(parents=True)
+    profile_edge_dir('work').mkdir()
+    (profile_dir('work') / 'config').write_text('OWA_REFRESH_TOKEN=x\n')
+    profile_dir('work').chmod(0o755)
+    profile_edge_dir('work').chmod(0o755)
+
+    findings = audit_private_permissions()
+
+    labels = {f['label'] for f in findings}
+    assert 'profile work directory' in labels
+    assert 'profile work Edge sidecar directory' in labels
+
+
+def test_repair_private_permissions_chmods_known_paths(tmp_config, clean_env):
+    from owa_piggy.config import repair_private_permissions, profile_dir
+    profile_dir('work').mkdir(parents=True)
+    cfg = profile_dir('work') / 'config'
+    cfg.write_text('OWA_REFRESH_TOKEN=x\n')
+    profile_dir('work').chmod(0o755)
+    cfg.chmod(0o644)
+
+    repaired = repair_private_permissions()
+
+    assert any(r['label'] == 'profile work directory' for r in repaired)
+    assert stat.S_IMODE(profile_dir('work').stat().st_mode) == 0o700
+    assert stat.S_IMODE(cfg.stat().st_mode) == 0o600
+
+
 def test_save_atomic_no_stray_tmpfile(tmp_config, clean_env):
     save_config({'OWA_REFRESH_TOKEN': 'x', 'OWA_TENANT_ID': 'y'})
     siblings = list(tmp_config.parent.iterdir())

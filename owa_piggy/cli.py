@@ -110,7 +110,7 @@ machine surface (uniform across the owa suite):
   owa-piggy --help --json                          # the same schema
   owa-piggy --agent <cmd>                          # wrap JSON stdout in an envelope
   owa-piggy --err-json <cmd>                       # structured JSON errors on stderr
-  owa-piggy --doctor [--json]                      # health / redaction doctor payload
+  owa-piggy --doctor [--json] [--fix]              # health doctor; --fix repairs config permissions
 
 notes:
   - Default audience is Microsoft Graph (superset of Outlook REST plus
@@ -1176,7 +1176,8 @@ def main():
     if "--doctor" in raw:
         from owa_piggy.doctor import emit_doctor
         as_json = "--json" in raw
-        return emit_doctor(as_json)
+        fix = "--fix" in raw
+        return emit_doctor(as_json, fix=fix)
 
     # Machine surface: `schema [<cmd>]` and `--help --json`, handled before
     # argparse so they compose without touching the subcommand grammar.
