@@ -27,12 +27,11 @@ from .cache import (
     store_token,
 )
 from .config import (
-    profile_config_path,
     list_profiles,
     load_config,
     load_profiles_conf,
+    profile_config_path,
     resolve_profile,
-    save_config,
     set_active_profile,
     validate_alias,
 )
@@ -42,8 +41,8 @@ from .oauth import CLIENT_ID
 from .profiles import create_profile, delete_profile, set_default_profile
 from .reseed import do_reseed, do_reseed_all, do_reseed_scheduled
 from .scopes import (
-    KNOWN_AUDIENCES,
     KNOWN_AUDIENCE_TEMPLATES,
+    KNOWN_AUDIENCES,
     _resolve_sharepoint_tenant,
     resolve_audience,
     templated_audience_name,
@@ -52,7 +51,8 @@ from .sharepoint import derive_sharepoint_tenant
 from .status import do_debug, do_status, do_status_all, status_all_report, status_report
 from .token_flow import exchange_fresh
 
-_EPILOG = """\
+_EPILOG = (
+    """\
 one-time setup (two paths):
 
   A. Network-capture (required for Okta-federated / encrypted-MSAL tenants):
@@ -70,7 +70,8 @@ one-time setup (two paths):
           const parse = s => JSON.parse(localStorage[find(s)])
           const rt = parse('|refreshtoken|'), it = parse('|idtoken|')
           if (!rt.secret) console.warn('WARN: non-MSAL shape.')
-          console.log(`OWA_REFRESH_TOKEN=${rt.secret || rt.data}\\nOWA_TENANT_ID=${(it.realm || find('|idtoken|').split('|')[5])}`)
+          console.log(`OWA_REFRESH_TOKEN=${rt.secret || rt.data}\\nOWA_TENANT_ID=${(it.realm || find('|idtoken|').split('|')[5])}`)"""  # noqa: E501  (verbatim DevTools snippet the user copies; must stay one line)
+    """
      4. Run: owa-piggy setup --profile <alias>
         (or: pbpaste | owa-piggy setup --profile <alias>)
      If the snippet warns "non-MSAL shape" the tenant has encrypted cache;
@@ -131,6 +132,7 @@ config:
   Env vars take precedence over the config file. OWA_PROFILE selects
   which profile to load.
 """
+)
 
 
 def _add_common_options(p, *, audience_scope=True):
@@ -625,7 +627,9 @@ def _cmd_reseed(args):
     def _usage_error(message):
         if as_json:
             from owa_piggy.conventions import (
-                EXIT_USER_ERROR, action_envelope, emit_action,
+                EXIT_USER_ERROR,
+                action_envelope,
+                emit_action,
             )
             emit_action(action_envelope(
                 command='reseed', ok=False,
@@ -989,7 +993,7 @@ def _do_profiles_delete(alias, force=False, yes=False, as_json=False):
         emit_action(action_envelope(
             command='profiles delete', ok=True,
             stats={'alias': alias, 'removed': True},
-            warnings=['Refresh tokens cached in keychain are not auto-purged; remove them manually if needed.'],
+            warnings=['Refresh tokens cached in keychain are not auto-purged; remove them manually if needed.'],  # noqa: E501  (single user-facing warning string)
             duration_ms=(time.monotonic() - t0) * 1000.0,
         ))
         return 0

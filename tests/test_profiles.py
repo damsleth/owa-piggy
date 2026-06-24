@@ -5,6 +5,8 @@ tmp_path, so everything written here is fully sandboxed.
 """
 import stat
 
+import pytest
+
 from owa_piggy import config as config_mod
 from owa_piggy import migration
 from owa_piggy.config import (
@@ -24,8 +26,6 @@ from owa_piggy.config import (
     unregister_profile,
     validate_alias,
 )
-import pytest
-
 
 # --- Path helpers ------------------------------------------------------
 
@@ -43,9 +43,9 @@ def test_profile_paths_resolve_under_root(tmp_config, clean_env):
 def test_set_active_profile_rebinds_config_path(tmp_config, clean_env):
     before = config_mod.CONFIG_PATH
     returned = set_active_profile('work')
-    assert config_mod.CONFIG_PATH == returned
-    assert config_mod.CONFIG_PATH != before
-    assert config_mod.CONFIG_PATH == profile_config_path('work')
+    assert returned == config_mod.CONFIG_PATH
+    assert before != config_mod.CONFIG_PATH
+    assert profile_config_path('work') == config_mod.CONFIG_PATH
 
 
 def test_set_active_profile_redirects_cache(tmp_config, clean_env):
@@ -53,6 +53,7 @@ def test_set_active_profile_redirects_cache(tmp_config, clean_env):
     so set_active_profile must automatically re-scope the cache without
     any separate plumbing."""
     import time
+
     from owa_piggy.cache import _cache_path, store_token
 
     set_active_profile('work')

@@ -11,7 +11,6 @@ import pytest
 
 from owa_piggy import capture
 
-
 # --- is_token_endpoint ----------------------------------------------------
 
 @pytest.mark.parametrize('url', [

@@ -9,14 +9,13 @@ Covers:
 Each test stubs `is_scheduled`/`unschedule` to keep launchd off the wire
 - we never want a test to touch ~/Library/LaunchAgents.
 """
-from owa_piggy import launchd, profiles
+from owa_piggy import profiles
 from owa_piggy.config import (
     ensure_profile_registered,
     list_profiles,
     load_profiles_conf,
     profile_dir,
 )
-
 
 # --- set_default_profile ----------------------------------------------
 

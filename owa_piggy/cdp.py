@@ -17,6 +17,7 @@ that fires before we even ask for getResponseBody still gets delivered
 to whoever is waiting for it.
 """
 import base64
+import contextlib
 import json
 import secrets
 import socket
@@ -218,10 +219,8 @@ class CdpSession:
         )
 
     def close(self):
-        try:
+        with contextlib.suppress(Exception):
             self._sock.close()
-        except Exception:
-            pass
 
 
 class CdpError(RuntimeError):

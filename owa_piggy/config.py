@@ -24,6 +24,7 @@ Pre-migration (legacy) installs keep `CONFIG_PATH` at the flat
 `~/.config/owa-piggy/config`. `migration.migrate_if_needed()` moves that
 into `profiles/default/` the first time a profile-aware code path runs.
 """
+import contextlib
 import os
 import re
 import stat
@@ -110,10 +111,8 @@ def atomic_write(path, payload, *, mode=0o600):
             os.fsync(f.fileno())
         os.replace(tmp, path)
     except Exception:
-        try:
+        with contextlib.suppress(FileNotFoundError):
             tmp.unlink()
-        except FileNotFoundError:
-            pass
         raise
 
 

@@ -163,7 +163,7 @@ class DoctorFinding:
 @dataclass
 class DoctorPayload:
   tool: str = TOOL_NAME
-  version: "str | Callable[[], str]" = field(default_factory=lambda: _version)
+  version: str | Callable[[], str] = field(default_factory=lambda: _version)
   config_path: str | None = None
   data_path: str | None = None
   auth: dict[str, Any] | None = None

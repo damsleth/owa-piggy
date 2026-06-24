@@ -28,8 +28,10 @@ from .config import (
 from .jwt import decode_jwt_segment
 from .launchd import (
     SHARED_LABEL,
-    is_scheduled as launchd_is_scheduled,
     shared_plist_path,
+)
+from .launchd import (
+    is_scheduled as launchd_is_scheduled,
 )
 from .oauth import CLIENT_ID
 from .scopes import KNOWN_AUDIENCES, resolve_audience
@@ -147,8 +149,8 @@ def _probe_profile(alias, audience=None, scope=None, sharepoint_tenant=None):
         return probe
     if not result or not result.get('access_token'):
         probe['exchange_error'] = next(
-            (l for l in info['stderr_text'].splitlines()
-             if l.startswith('ERROR: ')), '')
+            (line for line in info['stderr_text'].splitlines()
+             if line.startswith('ERROR: ')), '')
         return probe
 
     at = result['access_token']
@@ -505,7 +507,7 @@ def do_debug(alias, audience=None, scope=None, sharepoint_tenant=None):
                     else:
                         row('..', 'access token scp', str(scp))
                     row('..', 'access token exp',
-                        f'in {int((exp-now)/60)} min ({time.strftime("%H:%M:%S", time.localtime(exp))})')
+                        f'in {int((exp-now)/60)} min ({time.strftime("%H:%M:%S", time.localtime(exp))})')  # noqa: E501
                     row('..', 'access token iat',
                         f'{int((now-iat)/60)} min ago')
                 except Exception as e:

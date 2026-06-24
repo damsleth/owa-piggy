@@ -126,8 +126,8 @@ def test_save_creates_parent_dir(tmp_path, monkeypatch, clean_env):
 def test_permission_audit_reports_open_known_paths(tmp_config, clean_env):
     from owa_piggy.config import (
         audit_private_permissions,
-        profile_edge_dir,
         profile_dir,
+        profile_edge_dir,
     )
     profile_dir('work').mkdir(parents=True)
     profile_edge_dir('work').mkdir()
@@ -143,7 +143,7 @@ def test_permission_audit_reports_open_known_paths(tmp_config, clean_env):
 
 
 def test_repair_private_permissions_chmods_known_paths(tmp_config, clean_env):
-    from owa_piggy.config import repair_private_permissions, profile_dir
+    from owa_piggy.config import profile_dir, repair_private_permissions
     profile_dir('work').mkdir(parents=True)
     cfg = profile_dir('work') / 'config'
     cfg.write_text('OWA_REFRESH_TOKEN=x\n')

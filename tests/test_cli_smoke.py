@@ -228,6 +228,7 @@ def test_cache_short_circuits_exchange(monkeypatch, capsys, tmp_config,
     """A cached AT with exp > now + 60s means no call to AAD for the
     plain-token output path. exchange_token must not run."""
     import time as _time
+
     from owa_piggy.cache import store_token
     from owa_piggy.config import save_config
     from owa_piggy.oauth import CLIENT_ID
@@ -252,6 +253,7 @@ def test_cache_writes_on_exchange(monkeypatch, tmp_config, clean_env,
     """A successful exchange must populate the cache keyed by
     (tenant, client, scope)."""
     import time as _time
+
     from owa_piggy.cache import get_cached_token
     from owa_piggy.config import save_config
     from owa_piggy.oauth import CLIENT_ID
@@ -273,6 +275,7 @@ def test_cache_does_not_cross_tenant_boundary(monkeypatch, capsys, tmp_config,
     """Regression anchor for QA finding #1: a cached AT for tenant A must
     NOT be served when the active config has tenant B."""
     import time as _time
+
     from owa_piggy.cache import store_token
     from owa_piggy.config import save_config
     from owa_piggy.oauth import CLIENT_ID
@@ -305,6 +308,7 @@ def test_setup_clears_cache(monkeypatch, tmp_config, clean_env, make_jwt):
     """Running `setup` wipes any pre-existing cache so entries from a
     previous identity can't leak past the re-setup."""
     import time as _time
+
     from owa_piggy.cache import load_cache, store_token
     from owa_piggy.config import save_config
     from owa_piggy.oauth import CLIENT_ID
@@ -342,6 +346,7 @@ def test_reseed_clears_cache(monkeypatch, tmp_config, clean_env):
     """`reseed` wipes the cache before shelling out so any AT minted for
     the pre-reseed RT can't be served afterwards."""
     import time as _time
+
     from owa_piggy.cache import load_cache, store_token
     from owa_piggy.oauth import CLIENT_ID
     from owa_piggy.scopes import resolve_audience
@@ -416,6 +421,7 @@ def test_json_bypasses_cache(monkeypatch, capsys, tmp_config, clean_env,
     """--json includes a fresh refresh_token we don't cache, so it must
     always hit AAD even when a valid AT is cached."""
     import time as _time
+
     from owa_piggy.cache import store_token
     from owa_piggy.config import save_config
     from owa_piggy.oauth import CLIENT_ID
@@ -451,6 +457,7 @@ def test_expired_cache_falls_through_to_exchange(monkeypatch, capsys,
     """Expired cache entry must not short-circuit - exchange_token runs
     and the fresh token is what lands on stdout, not the stale cached one."""
     import time as _time
+
     from owa_piggy.cache import store_token
     from owa_piggy.config import save_config
     from owa_piggy.oauth import CLIENT_ID
@@ -485,6 +492,7 @@ def test_status_bypasses_cache(monkeypatch, tmp_config, clean_env, make_jwt):
     """status prefers a live AAD probe over a cached AT. With no explicit
     --profile, dispatch lands in do_status_all rather than do_status."""
     import time as _time
+
     from owa_piggy.cache import store_token
     from owa_piggy.oauth import CLIENT_ID
     from owa_piggy.scopes import resolve_audience
@@ -508,6 +516,7 @@ def test_status_bypasses_cache(monkeypatch, tmp_config, clean_env, make_jwt):
 
 def test_debug_bypasses_cache(monkeypatch, tmp_config, clean_env, make_jwt):
     import time as _time
+
     from owa_piggy.cache import store_token
     from owa_piggy.oauth import CLIENT_ID
     from owa_piggy.scopes import resolve_audience
@@ -531,6 +540,7 @@ def test_debug_bypasses_cache(monkeypatch, tmp_config, clean_env, make_jwt):
 
 def test_reseed_bypasses_cache(monkeypatch, tmp_config, clean_env, make_jwt):
     import time as _time
+
     from owa_piggy.cache import store_token
     from owa_piggy.oauth import CLIENT_ID
     from owa_piggy.scopes import resolve_audience
@@ -560,6 +570,7 @@ def test_cache_hit_env_mode(monkeypatch, capsys, tmp_config, clean_env,
     """--env on a cache hit computes EXPIRES_IN from (exp - now), since
     the original `expires_in` isn't stored in the cache."""
     import time as _time
+
     from owa_piggy.cache import store_token
     from owa_piggy.config import save_config
     from owa_piggy.oauth import CLIENT_ID
@@ -590,6 +601,7 @@ def test_cache_hit_decode_mode(monkeypatch, capsys, tmp_config, clean_env,
                                make_jwt):
     """decode on a cache hit decodes the cached AT, doesn't re-mint."""
     import time as _time
+
     from owa_piggy.cache import store_token
     from owa_piggy.config import save_config
     from owa_piggy.oauth import CLIENT_ID
@@ -668,7 +680,12 @@ def test_profiles_lists_registered(monkeypatch, capsys, tmp_config, clean_env):
 
 
 def test_profiles_json_lists_registered(monkeypatch, capsys, tmp_config, clean_env):
-    from owa_piggy.config import ensure_profile_registered, profile_dir, save_config, set_active_profile
+    from owa_piggy.config import (
+        ensure_profile_registered,
+        profile_dir,
+        save_config,
+        set_active_profile,
+    )
     profile_dir('work').mkdir(parents=True, exist_ok=True)
     profile_dir('personal').mkdir(parents=True, exist_ok=True)
     ensure_profile_registered('work')
@@ -915,6 +932,7 @@ def _stub_picker_environment(monkeypatch, *, profiles, default,
     stubbed token probe so the key loop never touches the network."""
     import termios
     import tty
+
     from owa_piggy import profile_tui as tui
 
     enabled = list(enabled if enabled is not None else profiles)
@@ -1049,8 +1067,8 @@ def test_dashboard_e_opens_edge(monkeypatch):
 def test_profiles_delete_preserves_dir_if_registry_update_fails(
     monkeypatch, capsys, tmp_config, clean_env
 ):
-    from owa_piggy.config import ensure_profile_registered, profile_dir
     from owa_piggy import profiles as profiles_mod
+    from owa_piggy.config import ensure_profile_registered, profile_dir
 
     target = profile_dir('work')
     target.mkdir(parents=True, exist_ok=True)
@@ -1076,8 +1094,8 @@ def test_profiles_delete_preserves_dir_if_registry_update_fails(
 def test_profiles_delete_unregistered_dir_left_on_disk_if_rmtree_fails(
     monkeypatch, capsys, tmp_config, clean_env
 ):
-    from owa_piggy.config import ensure_profile_registered, load_profiles_conf, profile_dir
     from owa_piggy import profiles as profiles_mod
+    from owa_piggy.config import ensure_profile_registered, load_profiles_conf, profile_dir
 
     target = profile_dir('work')
     target.mkdir(parents=True, exist_ok=True)
@@ -1100,6 +1118,7 @@ def test_cache_hit_remaining_mode(monkeypatch, capsys, tmp_config, clean_env,
                                   make_jwt):
     """remaining on a cache hit reports minutes on the cached AT."""
     import time as _time
+
     from owa_piggy.cache import store_token
     from owa_piggy.config import save_config
     from owa_piggy.oauth import CLIENT_ID
@@ -1174,7 +1193,9 @@ def test_profiles_schedule_adds_to_registry(monkeypatch, capsys,
     install is stubbed so the test never touches launchctl."""
     from owa_piggy import launchd as launchd_mod
     from owa_piggy.config import (
-        ensure_profile_registered, load_profiles_conf, profile_dir,
+        ensure_profile_registered,
+        load_profiles_conf,
+        profile_dir,
     )
 
     profile_dir('work').mkdir(parents=True)
@@ -1192,7 +1213,9 @@ def test_profiles_unschedule_removes_from_registry(monkeypatch, capsys,
                                                    tmp_config, clean_env):
     from owa_piggy import launchd as launchd_mod
     from owa_piggy.config import (
-        ensure_profile_registered, load_profiles_conf, profile_dir,
+        ensure_profile_registered,
+        load_profiles_conf,
+        profile_dir,
         schedule_profile,
     )
 

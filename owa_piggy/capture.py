@@ -27,6 +27,7 @@ the cached AT in memory and never makes a /token call - the entire
 point of this dance.
 """
 import base64
+import contextlib
 import json
 import os
 import shutil
@@ -193,10 +194,8 @@ def _terminate(proc):
     try:
         proc.wait(timeout=3)
     except subprocess.TimeoutExpired:
-        try:
+        with contextlib.suppress(OSError):
             proc.kill()
-        except OSError:
-            pass
 
 
 # --- Pure helpers (unit-tested) --------------------------------------------
@@ -582,7 +581,7 @@ def capture_silent(alias, *, timeout=None, headless=None, user_agent=None,
             # silently returning '' for every poll, so this branch fired
             # on every run). Keep the status name for backwards-compat
             # with reseed.py's fallback ladder.
-            log(f'post-load host stayed empty after 7s')
+            log('post-load host stayed empty after 7s')
             if headless:
                 return 'headless_blocked', None
             # Non-headless and still no navigation: cookies are almost
