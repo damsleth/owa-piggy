@@ -15,6 +15,8 @@ test fixtures which monkeypatch the config path get the cache
 redirected into tmp_path automatically.
 """
 
+from __future__ import annotations
+
 import contextlib
 import json
 import time

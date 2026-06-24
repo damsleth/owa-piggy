@@ -11,6 +11,8 @@ line). ``create_profile`` returns the int rc convention (0/1) instead,
 because it embeds a setup banner that already goes to stderr.
 """
 
+from __future__ import annotations
+
 import shutil
 import sys
 
