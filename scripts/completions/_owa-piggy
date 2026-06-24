@@ -1,0 +1,41 @@
+#compdef owa-piggy
+
+_owa_piggy() {
+  local -a _cmds
+  _cmds=(
+    'token:print access token (default when no command given)'
+    'status:compact ISO8601 health summary (all profiles if --profile omitted)'
+    'debug:dump full setup diagnostics for one profile'
+    'decode:print the JWT header and payload of the current access token'
+    'remaining:print minutes remaining on the current access token'
+    'setup:interactive first-time setup; creates the profile if new'
+    'reseed:fetch a fresh refresh token headlessly from the Edge sidecar'
+    'edge:open a normal Edge window using a profile'\''s sidecar session'
+    'tui:interactive token-health dashboard (profiles + freshness)'
+    'audiences:list all known FOCI-accessible audiences'
+    'install-owa-tools:install the companion owa-tools suite via Homebrew'
+    'version:print version information'
+    'profiles:list / manage profiles'
+  )
+  if (( CURRENT == 2 )); then
+    _describe -t commands 'owa-piggy command' _cmds
+    return
+  fi
+  case ${words[2]} in
+    token) compadd -- -h --help --profile --audience --scope --sharepoint-tenant --json --env ;;
+    status) compadd -- -h --help --profile --audience --scope --sharepoint-tenant --json --verbose -v ;;
+    debug) compadd -- -h --help --profile --audience --scope --sharepoint-tenant ;;
+    decode) compadd -- -h --help --profile --audience --scope --sharepoint-tenant ;;
+    remaining) compadd -- -h --help --profile --audience --scope --sharepoint-tenant ;;
+    setup) compadd -- -h --help --profile --email --from-trough --trough-tenant --trough-sub --user-agent --sharepoint-tenant --json ;;
+    reseed) compadd -- -h --help --profile --all --scheduled --json ;;
+    edge) compadd -- -h --help --profile ;;
+    tui) compadd -- -h --help --profile --audience --scope --sharepoint-tenant ;;
+    audiences) compadd -- -h --help ;;
+    install-owa-tools) compadd -- -h --help ;;
+    version) compadd -- -h --help --json ;;
+    profiles) compadd -- -h --help --json list set-default new delete schedule unschedule ;;
+  esac
+}
+
+_owa_piggy "$@"
