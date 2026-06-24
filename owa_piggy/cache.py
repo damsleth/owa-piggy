@@ -20,6 +20,8 @@ from __future__ import annotations
 import contextlib
 import json
 import time
+from pathlib import Path
+from typing import Any
 
 from . import config as _config
 from .config import atomic_write
@@ -27,18 +29,18 @@ from .config import atomic_write
 CACHE_FILENAME = "cache.json"
 
 
-def _cache_path():
+def _cache_path() -> Path:
     return _config.CONFIG_PATH.parent / CACHE_FILENAME
 
 
-def _key(tenant_id, client_id, scope):
+def _key(tenant_id: str, client_id: str, scope: str) -> str:
     """Compose the cache key. Pipe-separated because tenant_id and
     client_id are UUIDs (no pipes) and scope strings only contain
     URL/space characters."""
     return f"{tenant_id}|{client_id}|{scope}"
 
 
-def load_cache():
+def load_cache() -> dict[str, Any]:
     """Return the whole cache dict, or {} on any kind of corruption.
 
     A malformed cache must never crash the tool - worst case we pay a
@@ -55,7 +57,9 @@ def load_cache():
         return {}
 
 
-def get_cached_token(tenant_id, client_id, scope, min_remaining_seconds=60):
+def get_cached_token(
+    tenant_id: str, client_id: str, scope: str, min_remaining_seconds: int = 60
+) -> str | None:
     """Return the cached access token for the (tenant, client, scope)
     triple if it has at least `min_remaining_seconds` left before `exp`,
     else None.
@@ -72,13 +76,13 @@ def get_cached_token(tenant_id, client_id, scope, min_remaining_seconds=60):
     return token if isinstance(token, str) and token else None
 
 
-def get_cached_exp(tenant_id, client_id, scope):
+def get_cached_exp(tenant_id: str, client_id: str, scope: str) -> float | None:
     """Return the cached `exp` (unix seconds) for the triple, or None."""
     exp = (load_cache().get(_key(tenant_id, client_id, scope)) or {}).get("exp")
     return exp if isinstance(exp, (int, float)) else None
 
 
-def store_token(tenant_id, client_id, scope, access_token, exp):
+def store_token(tenant_id: str, client_id: str, scope: str, access_token: str, exp: float) -> None:
     """Write an access token for the (tenant, client, scope) triple to the
     cache, atomically.
 
@@ -93,7 +97,7 @@ def store_token(tenant_id, client_id, scope, access_token, exp):
     atomic_write(_cache_path(), json.dumps(cache, indent=2) + "\n")
 
 
-def clear_cache():
+def clear_cache() -> None:
     """Remove the cache file if present. Called by `setup` and `reseed`
     so the cache never outlives an identity change."""
     path = _cache_path()
