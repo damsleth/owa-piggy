@@ -26,7 +26,7 @@ def _read_version():
     from importlib.metadata import PackageNotFoundError, version
     from pathlib import Path
 
-    pp = Path(__file__).resolve().parent.parent / 'pyproject.toml'
+    pp = Path(__file__).resolve().parent.parent / "pyproject.toml"
     try:
         m = re.search(r'^\s*version\s*=\s*"([^"]+)"', pp.read_text(), re.M)
     except OSError:
@@ -34,9 +34,9 @@ def _read_version():
     if m:
         return m.group(1)
     try:
-        return version('owa-piggy')
+        return version("owa-piggy")
     except PackageNotFoundError:
-        return 'unknown'
+        return "unknown"
 
 
 __version__ = _read_version()
@@ -44,4 +44,4 @@ __version__ = _read_version()
 # Defined after __version__ so cli.py can safely `from . import __version__`.
 from .cli import main  # noqa: E402
 
-__all__ = ['main', '__version__']
+__all__ = ["main", "__version__"]
