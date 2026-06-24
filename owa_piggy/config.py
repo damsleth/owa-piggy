@@ -33,10 +33,33 @@ import re
 import stat
 import tempfile
 import time
+from collections.abc import Iterable, Iterator
 from pathlib import Path
+from typing import Any, TypedDict
 
 ROOT_DIR = Path.home() / ".config" / "owa-piggy"
 CONFIG_PATH = ROOT_DIR / "config"
+
+
+class PermissionFinding(TypedDict):
+    """A config path whose group/other bits are too open (see
+    ``audit_private_permissions``)."""
+
+    path: str
+    label: str
+    actual: str
+    expected: str
+
+
+class PermissionRepair(TypedDict):
+    """A config path that ``repair_private_permissions`` re-chmodded back to
+    its private mode."""
+
+    path: str
+    label: str
+    before: str
+    after: str
+
 
 # Aliases land directly in filesystem paths under profiles/<alias>/ and in
 # the OWA_PROFILES list in profiles.conf. Anything permissive lets a caller
@@ -46,7 +69,7 @@ CONFIG_PATH = ROOT_DIR / "config"
 _ALIAS_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
-def validate_alias(alias):
+def validate_alias(alias: str) -> tuple[bool, str]:
     """Return (ok, err) for a profile alias.
 
     Accepts only `[A-Za-z0-9._-]+` and rejects '.' / '..' outright so no
@@ -65,7 +88,7 @@ def validate_alias(alias):
     return True, ""
 
 
-def iso_utc_now():
+def iso_utc_now() -> str:
     """UTC ISO8601 with trailing Z. Used to stamp OWA_RT_ISSUED_AT on fresh
     setup/reseed so `status` can compute the 24h SPA hard-cap."""
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -74,7 +97,7 @@ def iso_utc_now():
 # --- Shared low-level helpers ------------------------------------------
 
 
-def _iter_kv(text):
+def _iter_kv(text: str) -> Iterator[tuple[str, str]]:
     """Yield (key, value) pairs from KEY=value lines.
 
     Strips empty lines, comments (#-prefix), and surrounding double or
@@ -90,7 +113,7 @@ def _iter_kv(text):
         yield k.strip(), v.strip().strip('"').strip("'")
 
 
-def atomic_write(path, payload, *, mode=0o600):
+def atomic_write(path: str | Path, payload: str, *, mode: int = 0o600) -> None:
     """Atomically replace `path` with `payload` (str), chmod 0o<mode>.
 
     Refresh tokens rotate on every successful exchange, so a partial
@@ -128,37 +151,37 @@ def atomic_write(path, payload, *, mode=0o600):
 # having to re-patch every downstream constant.
 
 
-def profiles_dir():
+def profiles_dir() -> Path:
     """Root of the per-profile directories."""
     return ROOT_DIR / "profiles"
 
 
-def profiles_conf_path():
+def profiles_conf_path() -> Path:
     """Path to the profile-registry file."""
     return ROOT_DIR / "profiles.conf"
 
 
-def profile_dir(alias):
+def profile_dir(alias: str) -> Path:
     """Directory for a single profile. May not exist yet."""
     return profiles_dir() / alias
 
 
-def profile_config_path(alias):
+def profile_config_path(alias: str) -> Path:
     """Path to a specific profile's config file."""
     return profile_dir(alias) / "config"
 
 
-def profile_edge_dir(alias):
+def profile_edge_dir(alias: str) -> Path:
     """Path to a specific profile's Edge sidecar userdata dir."""
     return profile_dir(alias) / "edge-profile"
 
 
-def profile_log_path(alias):
+def profile_log_path(alias: str) -> Path:
     """Path to a specific profile's launchd stderr log."""
     return profile_dir(alias) / "refresh.log"
 
 
-def private_permission_paths():
+def private_permission_paths() -> list[tuple[Path, int, str]]:
     """Return known secret-bearing paths and their desired modes.
 
     The Edge profile tree can be large and browser-managed; keeping its top
@@ -185,12 +208,12 @@ def private_permission_paths():
     return paths
 
 
-def audit_private_permissions():
+def audit_private_permissions() -> list[PermissionFinding]:
     """Return paths whose group/other bits are too open.
 
     Missing paths are ignored; this is an audit, not setup.
     """
-    findings = []
+    findings: list[PermissionFinding] = []
     for path, expected, label in private_permission_paths():
         try:
             st = path.lstat()
@@ -209,9 +232,9 @@ def audit_private_permissions():
     return findings
 
 
-def repair_private_permissions():
+def repair_private_permissions() -> list[PermissionRepair]:
     """Chmod known existing config paths to their private modes."""
-    repaired = []
+    repaired: list[PermissionRepair] = []
     for path, expected, label in private_permission_paths():
         try:
             st = path.lstat()
@@ -231,7 +254,7 @@ def repair_private_permissions():
     return repaired
 
 
-def set_active_profile(alias):
+def set_active_profile(alias: str) -> Path:
     """Rebind CONFIG_PATH to point at `profiles/<alias>/config`.
 
     No validation - callers who need to guarantee the profile already
@@ -243,7 +266,7 @@ def set_active_profile(alias):
     return CONFIG_PATH
 
 
-def list_profiles():
+def list_profiles() -> list[str]:
     """Sorted list of profile aliases present on disk."""
     d = profiles_dir()
     if not d.is_dir():
@@ -256,7 +279,7 @@ def list_profiles():
 # file so the registry never gets confused with a profile's own config.
 
 
-def load_profiles_conf():
+def load_profiles_conf() -> dict[str, Any]:
     """Read profiles.conf into a dict with OWA_DEFAULT_PROFILE (str),
     OWA_PROFILES (list[str]) and OWA_SCHEDULED (list[str]).
 
@@ -269,7 +292,7 @@ def load_profiles_conf():
     reseeded by `reseed --all`, shows in `status`) without being
     scheduled for unattended hourly rotation.
     """
-    out = {"OWA_DEFAULT_PROFILE": "", "OWA_PROFILES": [], "OWA_SCHEDULED": []}
+    out: dict[str, Any] = {"OWA_DEFAULT_PROFILE": "", "OWA_PROFILES": [], "OWA_SCHEDULED": []}
     path = profiles_conf_path()
     if not path.exists():
         return out
@@ -283,12 +306,12 @@ def load_profiles_conf():
     return out
 
 
-def _dedup_preserve_order(items):
+def _dedup_preserve_order(items: Iterable[str] | None) -> list[str]:
     """De-duplicate an iterable of aliases, preserving first-seen order."""
     return list(dict.fromkeys(p for p in (items or []) if p))
 
 
-def save_profiles_conf(data):
+def save_profiles_conf(data: dict[str, Any]) -> None:
     """Atomically write profiles.conf.
 
     `data` mirrors `load_profiles_conf()`: OWA_DEFAULT_PROFILE is a str,
@@ -315,7 +338,7 @@ def save_profiles_conf(data):
     atomic_write(profiles_conf_path(), payload)
 
 
-def ensure_profile_registered(alias, make_default_if_first=True):
+def ensure_profile_registered(alias: str, make_default_if_first: bool = True) -> dict[str, Any]:
     """Add `alias` to OWA_PROFILES (no-op if already present). If no
     default is set yet and `make_default_if_first` is True, mark this
     alias as the default. Returns the updated registry dict.
@@ -332,7 +355,7 @@ def ensure_profile_registered(alias, make_default_if_first=True):
     return data
 
 
-def unregister_profile(alias):
+def unregister_profile(alias: str) -> dict[str, Any]:
     """Remove `alias` from OWA_PROFILES. If it was the default, clear
     the default pointer (caller decides what to promote next, if any).
     Also drop it from OWA_SCHEDULED - a disabled/deleted profile must
@@ -347,7 +370,7 @@ def unregister_profile(alias):
     return data
 
 
-def schedule_profile(alias):
+def schedule_profile(alias: str) -> dict[str, Any]:
     """Add `alias` to OWA_SCHEDULED (the set the shared launchd agent
     reseeds hourly). Ensures `alias` is also registered in OWA_PROFILES
     so the subset invariant holds. No-op if already scheduled. Returns
@@ -365,7 +388,7 @@ def schedule_profile(alias):
     return data
 
 
-def unschedule_profile(alias):
+def unschedule_profile(alias: str) -> dict[str, Any]:
     """Remove `alias` from OWA_SCHEDULED. Leaves OWA_PROFILES untouched -
     the profile stays enabled, it just no longer auto-reseeds. Returns
     the updated registry dict.
@@ -376,12 +399,12 @@ def unschedule_profile(alias):
     return data
 
 
-def is_scheduled(alias):
+def is_scheduled(alias: str) -> bool:
     """True when `alias` is in OWA_SCHEDULED."""
     return alias in load_profiles_conf().get("OWA_SCHEDULED", [])
 
 
-def resolve_profile(cli_profile=None, allow_missing=False):
+def resolve_profile(cli_profile: str | None = None, allow_missing: bool = False) -> tuple[str, str]:
     """Pick which profile this invocation should target.
 
     Precedence (highest wins):
@@ -455,7 +478,7 @@ def resolve_profile(cli_profile=None, allow_missing=False):
 # --- Main config I/O --------------------------------------------------
 
 
-def parse_kv_stream(text):
+def parse_kv_stream(text: str) -> dict[str, str]:
     """Parse KEY=value lines. Only recognises known OWA_* keys to avoid
     writing arbitrary junk to the config file."""
     allowed = {
@@ -479,7 +502,7 @@ def parse_kv_stream(text):
     return {k: v for k, v in _iter_kv(text) if k in allowed and v}
 
 
-def load_config(path=None):
+def load_config(path: Path | None = None) -> tuple[dict[str, str], bool]:
     """Returns (config, persist). persist is True only when the *effective*
     OWA_REFRESH_TOKEN came from the on-disk config - i.e. the file has the
     key AND no environment override is shadowing it. When env overrides,
@@ -492,8 +515,8 @@ def load_config(path=None):
     single-profile path, but callers that need to read several profiles
     concurrently pass an explicit path so they don't race the global."""
     cfg_path = path or CONFIG_PATH
-    config = {}
-    file_keys = set()
+    config: dict[str, str] = {}
+    file_keys: set[str] = set()
     if cfg_path.exists():
         for k, v in _iter_kv(cfg_path.read_text()):
             config[k] = v
@@ -506,7 +529,7 @@ def load_config(path=None):
     return config, persist
 
 
-def save_config(config, path=None):
+def save_config(config: dict[str, str], path: Path | None = None) -> None:
     """Atomically rewrite the config file.
 
     Refresh tokens rotate on every successful exchange, so a partial write here

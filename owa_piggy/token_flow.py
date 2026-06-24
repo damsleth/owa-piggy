@@ -19,6 +19,9 @@ reseed, and does not print rotation NOTEs - those are caller policy.
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Any, TypedDict
+
 from .config import save_config
 from .oauth import CLIENT_ID, capture_errors, exchange_token
 
@@ -29,7 +32,33 @@ from .oauth import CLIENT_ID, capture_errors, exchange_token
 _RECOVERABLE_AAD_CODES = ("AADSTS70043", "AADSTS700084")
 
 
-def exchange_fresh(config, scope, *, persist, capture_stderr=False, config_path=None):
+class ExchangeInfo(TypedDict):
+    """Structured result of the resolve-and-exchange step.
+
+    Replaces the stringly-typed dict that used to be passed between
+    token_flow, status, and debug so a wrong key fails at type-check time
+    instead of surfacing as a KeyError at runtime.
+    """
+
+    rt: str
+    tid: str
+    cid: str
+    rt_present: bool
+    tid_present: bool
+    rt_shape_ok: bool
+    stderr_text: str
+    aad_error: str | None
+    rotated: bool
+
+
+def exchange_fresh(
+    config: dict[str, str],
+    scope: str,
+    *,
+    persist: bool,
+    capture_stderr: bool = False,
+    config_path: Path | None = None,
+) -> tuple[dict[str, Any] | None, ExchangeInfo]:
     """Live AAD exchange against the profile in `config` for `scope`.
 
     Returns ``(result, info)``:
@@ -67,7 +96,7 @@ def exchange_fresh(config, scope, *, persist, capture_stderr=False, config_path=
     # exchange_token pick the per-client default origin — and keep the
     # call 4-positional so existing callers / test mocks are unaffected.
     origin_kw = {"origin": origin} if origin else {}
-    info = {
+    info: ExchangeInfo = {
         "rt": rt,
         "tid": tid,
         "cid": cid,
