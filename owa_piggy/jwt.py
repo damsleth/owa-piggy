@@ -10,15 +10,17 @@ from __future__ import annotations
 import base64
 import json
 import time
+from typing import Any
 
 
-def decode_jwt_segment(segment):
+def decode_jwt_segment(segment: str) -> dict[str, Any]:
     """Decode one base64url segment to a dict. Accepts unpadded input."""
     segment += "=" * ((4 - len(segment) % 4) % 4)
-    return json.loads(base64.urlsafe_b64decode(segment))
+    claims: dict[str, Any] = json.loads(base64.urlsafe_b64decode(segment))
+    return claims
 
 
-def token_minutes_remaining(access_token):
+def token_minutes_remaining(access_token: str) -> int | None:
     """Minutes until the token's `exp` claim. Returns None if the token is
     malformed or missing `exp`. Past `exp` returns a non-positive integer."""
     try:
@@ -28,7 +30,7 @@ def token_minutes_remaining(access_token):
         return None
 
 
-def decode_jwt(access_token):
+def decode_jwt(access_token: str) -> str:
     """Pretty-print Header + Payload as JSON. Signature segment is ignored."""
     import sys
 
