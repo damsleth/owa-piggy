@@ -32,22 +32,29 @@ Storage (mode 0600, atomically written, same as the config):
     }
 """
 
+from __future__ import annotations
+
 import json
+from pathlib import Path
 
 from .config import DEVOPS_CLIENT_ID, atomic_write, iso_utc_now, profile_dir
 
 CLIENTS_FILENAME = "clients.json"
+
+
+# Plain string maps rather than TypedDicts: every value is a string, the
+# registry's only nuance is that `capture_url` may be absent, and entries are
+# built by filtering empties - which a TypedDict rejects for no safety gained.
+ClientMeta = dict[str, "str | None"]
+ClientEntry = dict[str, str]
 
 # Teams web app. The only client teams authsvc still answers, and a full
 # FOCI-family member besides (verified: it mints graph, outlook, and every
 # Teams audience), so routing an audience to it never costs reach.
 TEAMS_WEB_CLIENT_ID = "5e3ce6c0-2b1f-4285-8d4b-75ee78787346"
 
-# Clients a profile can hold beyond its FOCI token. `capture_url` is where
-# the sidecar navigates to make that client mint; None means the URL is
-# tenant- or org-specific and must be supplied (Azure DevOps needs an org
-# path, e.g. https://dev.azure.com/<org>/<project>/_workitems).
-KNOWN_CLIENTS = {
+
+KNOWN_CLIENTS: dict[str, ClientMeta] = {
     TEAMS_WEB_CLIENT_ID: {
         "name": "teams",
         "origin": "https://teams.microsoft.com",
@@ -62,11 +69,11 @@ KNOWN_CLIENTS = {
 
 # Clients `setup` / `reseed` capture without being asked. Only clients whose
 # capture_url works for any tenant belong here.
-DEFAULT_CLIENTS = (TEAMS_WEB_CLIENT_ID,)
+DEFAULT_CLIENTS: tuple[str, ...] = (TEAMS_WEB_CLIENT_ID,)
 
 # Audience URL -> the client that should serve it when the profile has that
 # client's token. Everything absent here stays on the FOCI token.
-AUDIENCE_CLIENT = {
+AUDIENCE_CLIENT: dict[str, str] = {
     # The authsvc audience itself: this is the exchange that hands out the
     # Skype token, and the one that answers 410 ApiRestricted for anyone
     # but the Teams client. Callers that ask for it by scope rather than by
@@ -81,7 +88,7 @@ AUDIENCE_CLIENT = {
 }
 
 
-def client_id_for_name(name):
+def client_id_for_name(name: str) -> str | None:
     """Resolve a short client name ('teams', 'devops') to its client id."""
     for cid, meta in KNOWN_CLIENTS.items():
         if meta["name"] == name:
@@ -89,17 +96,18 @@ def client_id_for_name(name):
     return None
 
 
-def client_name(client_id):
+def client_name(client_id: str | None) -> str:
     """Short name for a client id, or the id itself when unknown."""
     meta = KNOWN_CLIENTS.get((client_id or "").strip())
-    return meta["name"] if meta else (client_id or "")
+    name = meta["name"] if meta else None
+    return name or (client_id or "")
 
 
-def clients_path(alias):
+def clients_path(alias: str) -> Path:
     return profile_dir(alias) / CLIENTS_FILENAME
 
 
-def load_clients(alias):
+def load_clients(alias: str) -> dict[str, ClientEntry]:
     """Bound clients for a profile, or {} when there are none.
 
     A malformed store must never break token minting - the FOCI token in
@@ -118,7 +126,13 @@ def load_clients(alias):
     return {cid: entry for cid, entry in data.items() if isinstance(entry, dict)}
 
 
-def declare_client(alias, client_id, *, origin=None, capture_url=None):
+def declare_client(
+    alias: str,
+    client_id: str,
+    *,
+    origin: str | None = None,
+    capture_url: str | None = None,
+) -> tuple[ClientEntry | None, str]:
     """Record that this profile uses `client_id`, before any token exists.
 
     The store doubles as the profile's site list: `reseed` walks it and
@@ -145,7 +159,7 @@ def declare_client(alias, client_id, *, origin=None, capture_url=None):
     return clients[client_id], ""
 
 
-def forget_client(alias, client_id):
+def forget_client(alias: str, client_id: str) -> bool:
     """Drop a client from the profile's site list.
 
     Used when a default client turns out not to apply to this tenant: a
@@ -160,7 +174,7 @@ def forget_client(alias, client_id):
     return True
 
 
-def parse_spec(spec):
+def parse_spec(spec: str | None) -> tuple[str | None, str | None, str]:
     """Parse a `--with-client` value into `(client_id, capture_url, err)`.
 
     Accepts `teams`, `devops=https://dev.azure.com/org/proj/_workitems`, or
@@ -173,7 +187,7 @@ def parse_spec(spec):
     name, url = name.strip(), url.strip()
     client_id = client_id_for_name(name) or (name if len(name) == 36 else None)
     if not client_id:
-        known = ", ".join(sorted(m["name"] for m in KNOWN_CLIENTS.values()))
+        known = ", ".join(sorted(str(m["name"]) for m in KNOWN_CLIENTS.values()))
         return (
             None,
             None,
@@ -184,7 +198,7 @@ def parse_spec(spec):
     return client_id, url or None, ""
 
 
-def capture_targets(alias):
+def capture_targets(alias: str) -> list[tuple[str, ClientEntry]]:
     """[(client_id, entry)] for every client this profile declares.
 
     The order is insertion order, so reseed rotates them in the order they
@@ -195,8 +209,14 @@ def capture_targets(alias):
 
 
 def save_client(
-    alias, client_id, *, refresh_token, origin=None, capture_url=None, rt_issued_at=None
-):
+    alias: str,
+    client_id: str,
+    *,
+    refresh_token: str,
+    origin: str | None = None,
+    capture_url: str | None = None,
+    rt_issued_at: str | None = None,
+) -> ClientEntry:
     """Add or update one bound client, preserving the rest of the store.
 
     Read-modify-write rather than a whole-file rewrite: `reseed` rotates
@@ -219,7 +239,7 @@ def save_client(
     return clients[client_id]
 
 
-def audience_from_scope(scope):
+def audience_from_scope(scope: str | None) -> str:
     """Pull the audience URL out of a resolved scope string.
 
     `resolve_audience` returns '<audience>/.default openid profile
@@ -234,7 +254,7 @@ def audience_from_scope(scope):
     return first[: -len("/.default")]
 
 
-def select_for_scope(alias, scope):
+def select_for_scope(alias: str, scope: str) -> tuple[str | None, ClientEntry | None]:
     """Which bound client should mint `scope`, if any.
 
     Returns `(client_id, entry)` when the profile holds the client that
@@ -256,7 +276,7 @@ def select_for_scope(alias, scope):
     return client_id, entry
 
 
-def overlay_config(config, client_id, entry):
+def overlay_config(config: dict[str, str], client_id: str, entry: ClientEntry) -> dict[str, str]:
     """Config copy that mints as `client_id` instead of the FOCI client.
 
     A copy, not a mutation: the caller's `config` still describes the
@@ -275,7 +295,7 @@ def overlay_config(config, client_id, entry):
 # --- folding a client-bound profile into its identity's profile --------
 
 
-def _read_config_file(path):
+def _read_config_file(path: Path) -> dict[str, str]:
     from .config import _iter_kv
 
     try:
@@ -284,7 +304,7 @@ def _read_config_file(path):
         return {}
 
 
-def fold_candidates():
+def fold_candidates() -> list[tuple[str, str, str]]:
     """[(bound_alias, parent_alias, client_id)] for profiles that are really
     one identity split across two profile dirs.
 
@@ -306,7 +326,7 @@ def fold_candidates():
         # unrelated profiles look like the same identity.
         profiles[alias] = _read_config_file(path)
 
-    def identity(cfg):
+    def identity(cfg: dict[str, str]) -> tuple[str, str]:
         return (
             (cfg.get("OWA_EMAIL", "") or "").strip().lower(),
             (cfg.get("OWA_TENANT_ID", "") or "").strip().lower(),
@@ -336,7 +356,7 @@ def fold_candidates():
     return out
 
 
-def fold_into_parent(bound_alias, parent_alias, client_id):
+def fold_into_parent(bound_alias: str, parent_alias: str, client_id: str) -> bool:
     """Move `bound_alias`'s token into `parent_alias`'s client store and
     leave the old alias as a pointer at it.
 

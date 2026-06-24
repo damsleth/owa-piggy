@@ -28,7 +28,7 @@ _SITES_ROOT = "https://graph.microsoft.com/v1.0/sites/root?$select=siteCollectio
 _SP_SUFFIX = ".sharepoint.com"
 
 
-def derive_sharepoint_tenant(config, *, persist):
+def derive_sharepoint_tenant(config: dict[str, str], *, persist: bool) -> tuple[str, str]:
     """Mint a Graph token for the profile in ``config`` and read the
     tenant's SharePoint hostname prefix from ``/sites/root``.
 
@@ -65,7 +65,7 @@ def derive_sharepoint_tenant(config, *, persist):
     except (urllib.error.URLError, json.JSONDecodeError, OSError) as e:
         return "", f"Graph /sites/root request failed while deriving SharePoint tenant: {e}"
 
-    host = (body.get("siteCollection") or {}).get("hostname", "") or ""
+    host: str = (body.get("siteCollection") or {}).get("hostname", "") or ""
     if not host.endswith(_SP_SUFFIX) or len(host) <= len(_SP_SUFFIX):
         return "", f"unexpected SharePoint hostname {host!r} from Graph /sites/root"
     tenant = host[: -len(_SP_SUFFIX)]

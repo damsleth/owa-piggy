@@ -31,7 +31,7 @@ import sys
 from . import config as _config
 
 
-def migrate_if_needed():
+def migrate_if_needed() -> str | None:
     """Move legacy single-file config into profiles/default/ if needed.
 
     Returns the alias that got migrated (always 'default' today) or None
@@ -101,7 +101,7 @@ def migrate_if_needed():
 FOLD_STAMP = "fold-bound-clients.done"
 
 
-def fold_bound_clients_if_needed():
+def fold_bound_clients_if_needed() -> list[tuple[str, str]]:
     """Fold client-bound profiles into their identity's profile, once.
 
     Before profiles could hold several clients, the only way to keep an
