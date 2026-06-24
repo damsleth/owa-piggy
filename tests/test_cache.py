@@ -51,6 +51,17 @@ def test_min_remaining_threshold(tmp_config, clean_env):
     assert get_cached_token(TID, CID, SCOPE, min_remaining_seconds=0) == "fake-at"
 
 
+def test_min_remaining_floor_at_exact_boundary(tmp_config, clean_env):
+    """The 60s floor is a strict `<=`: a token whose exp is exactly
+    now+60 is NOT served, but now+61 IS. Uses real-time offsets because
+    the cache module's time is not frozen."""
+    now = int(time.time())
+    store_token(TID, CID, SCOPE, "at-boundary", now + 60)
+    assert get_cached_token(TID, CID, SCOPE) is None
+    store_token(TID, CID, SCOPE, "at-just-over", now + 61)
+    assert get_cached_token(TID, CID, SCOPE) == "at-just-over"
+
+
 def test_different_scopes_cached_independently(tmp_config, clean_env):
     future = int(time.time()) + 3600
     graph_scope = "https://graph.microsoft.com/.default"

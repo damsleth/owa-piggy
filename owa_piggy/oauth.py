@@ -145,7 +145,7 @@ class _HappyEyeballsHTTPSConnection(http.client.HTTPSConnection):
     the normal TLS handshake (cert + hostname verification preserved via the
     handler's SSL context)."""
 
-    def connect(self) -> None:
+    def connect(self) -> None:  # pragma: no cover - needs a live socket + TLS handshake
         self.sock = happy_eyeballs_connect(self.host, self.port, self.timeout)
         if getattr(self, "_tunnel_host", None):
             self._tunnel()  # type: ignore[attr-defined]
@@ -156,7 +156,9 @@ class _HappyEyeballsHTTPSConnection(http.client.HTTPSConnection):
 
 
 class _HappyEyeballsHTTPSHandler(urllib.request.HTTPSHandler):
-    def https_open(self, req: urllib.request.Request) -> http.client.HTTPResponse:
+    def https_open(
+        self, req: urllib.request.Request
+    ) -> http.client.HTTPResponse:  # pragma: no cover - thin urllib glue, needs a live TLS open
         return self.do_open(
             _HappyEyeballsHTTPSConnection,
             req,
