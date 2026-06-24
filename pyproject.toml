@@ -29,7 +29,12 @@ Source = "https://github.com/damsleth/owa-piggy"
 owa-piggy = "owa_piggy:main"
 
 [project.optional-dependencies]
+# Kept as the historical alias CI used pre-v1-08; `dev` is the superset.
 test = ["pytest"]
+# All quality tooling lives here so runtime `dependencies` stays empty - the
+# zero-dependency invariant (see AGENTS.md) is non-negotiable. hypothesis backs
+# the optional property tests in Phase 4.
+dev = ["pytest", "pytest-cov", "ruff", "mypy", "hypothesis"]
 
 [tool.setuptools]
 packages = ["owa_piggy"]
@@ -43,4 +48,52 @@ packages = ["owa_piggy"]
   "scripts/scrape_edge.py",
   "scripts/setup-refresh.sh",
   "scripts/owa-piggy.png",
+]
+
+# --- Quality tooling (v1-08) -------------------------------------------
+# Config lives here from Phase 0; CI starts enforcing it in Phase 1 (ruff),
+# Phase 2 (mypy), and Phase 3 (coverage). All three run with the `dev` extra.
+
+[tool.ruff]
+target-version = "py38"
+line-length = 100
+
+[tool.ruff.lint]
+# UP respects target-version, so it won't push 3.9+ syntax onto a 3.8 floor.
+# PTH (force-pathlib) is deliberately held out: oauth.py/cache.py use `os` by
+# design. Turn it on later as its own pass if wanted.
+select = ["E", "F", "W", "I", "B", "C4", "SIM", "UP"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["owa_piggy"]
+
+[tool.mypy]
+# Runtime floor stays 3.8 (CI tests it), but mypy >= 1.15 only accepts 3.9+ as
+# a check target. `from __future__ import annotations` in every module keeps the
+# list[str] / dict[str, X] syntax safe at runtime on 3.8; ruff UP guards against
+# 3.9-only stdlib calls sneaking in.
+python_version = "3.9"
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_return_any = true
+no_implicit_optional = true
+check_untyped_defs = true
+disallow_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+
+[tool.coverage.run]
+branch = true
+source = ["owa_piggy"]
+# profile_tui is curses; __main__ is a 6-line shim. Excluded from the gate.
+omit = ["owa_piggy/__main__.py", "owa_piggy/profile_tui.py"]
+
+[tool.coverage.report]
+show_missing = true
+exclude_lines = [
+  "pragma: no cover",
+  "if __name__ == .__main__.:",
+  "raise NotImplementedError",
 ]
