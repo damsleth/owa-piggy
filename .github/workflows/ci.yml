@@ -46,6 +46,8 @@ jobs:
       - name: Syntax check
         run: python -m compileall -q owa_piggy
       - name: Tests
-        run: pytest -q
+        run: >
+          pytest -q --cov=owa_piggy --cov-branch
+          --cov-report=term-missing --cov-fail-under=63
       - name: Shellcheck
         run: shellcheck scripts/*.sh
