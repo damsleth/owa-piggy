@@ -5,15 +5,12 @@ No network, no real tokens: exchange_fresh and urlopen are monkeypatched.
 import io
 import json
 
-import pytest
-
 from owa_piggy import sharepoint as sp_mod
 from owa_piggy.scopes import (
     KNOWN_AUDIENCE_TEMPLATES,
     resolve_audience,
     templated_audience_name,
 )
-
 
 # --- templated_audience_name (pure precedence logic) -----------------------
 
