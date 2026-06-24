@@ -23,6 +23,8 @@ artifacts - no config rewrites, no re-reading of secrets - so the
 refresh token never transits a new process or touches disk twice.
 """
 
+from __future__ import annotations
+
 import shutil
 import sys
 

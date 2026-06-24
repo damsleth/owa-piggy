@@ -12,6 +12,8 @@ scraping the adjacent `pyproject.toml` so the launchd dev-path
 (`PYTHONPATH=<repo> python3 -m owa_piggy`) still reports a real version.
 """
 
+from __future__ import annotations
+
 
 def _read_version():
     # Repo-checkout path first: when running from a local clone (our

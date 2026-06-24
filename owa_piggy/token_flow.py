@@ -17,6 +17,8 @@ This module does NOT touch the access-token cache, do not call out to
 reseed, and does not print rotation NOTEs - those are caller policy.
 """
 
+from __future__ import annotations
+
 from .config import save_config
 from .oauth import CLIENT_ID, capture_errors, exchange_token
 

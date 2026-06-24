@@ -17,6 +17,8 @@ that fires before we even ask for getResponseBody still gets delivered
 to whoever is waiting for it.
 """
 
+from __future__ import annotations
+
 import base64
 import contextlib
 import json

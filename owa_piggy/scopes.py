@@ -5,6 +5,8 @@ scope-override) pair plus the env default into the `scope` string we
 POST to AAD. The CLI layer does the argv parsing; this module is pure.
 """
 
+from __future__ import annotations
+
 import os
 import sys
 

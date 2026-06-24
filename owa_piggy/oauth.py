@@ -5,6 +5,8 @@ very clear reason. Those values make AAD accept the request; changing
 them silently breaks the tool.
 """
 
+from __future__ import annotations
+
 import contextlib
 import http.client
 import io
