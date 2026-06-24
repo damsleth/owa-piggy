@@ -31,7 +31,7 @@ import sys
 from . import config as _config
 
 
-def migrate_if_needed():
+def migrate_if_needed() -> str | None:
     """Move legacy single-file config into profiles/default/ if needed.
 
     Returns the alias that got migrated (always 'default' today) or None

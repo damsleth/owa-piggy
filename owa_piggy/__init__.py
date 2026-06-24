@@ -15,7 +15,7 @@ scraping the adjacent `pyproject.toml` so the launchd dev-path
 from __future__ import annotations
 
 
-def _read_version():
+def _read_version() -> str:
     # Repo-checkout path first: when running from a local clone (our
     # primary dev and launchd-fallback mode), the source pyproject.toml
     # is the canonical version. Checking importlib.metadata first would

@@ -38,6 +38,9 @@ import socket
 import subprocess
 import sys
 import time
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
 
 from . import config as _config
 from .cdp import CdpError, CdpSession, find_tab
@@ -62,7 +65,7 @@ _EDGE_CANDIDATES = (
 )
 
 
-def find_edge():
+def find_edge() -> str | None:
     """Return the path to a Microsoft Edge binary, or None if absent.
 
     PATH lookup last so a brew-installed `microsoft-edge` shim doesn't
@@ -74,14 +77,24 @@ def find_edge():
     return on_path
 
 
-def find_free_port():
+def find_free_port() -> int:
     """Bind to port 0 to let the kernel pick an unused local port."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+        port: int = s.getsockname()[1]
+        return port
 
 
-def launch_edge(edge_dir, port, *, headless, url, edge_path=None, offscreen=False, user_agent=None):
+def launch_edge(
+    edge_dir: Path,
+    port: int,
+    *,
+    headless: bool,
+    url: str,
+    edge_path: str | None = None,
+    offscreen: bool = False,
+    user_agent: str | None = None,
+) -> subprocess.Popen[bytes]:
     """Launch Edge with a per-profile userdata dir + CDP listening on
     `port`. Returns the Popen handle.
 
@@ -136,7 +149,7 @@ def launch_edge(edge_dir, port, *, headless, url, edge_path=None, offscreen=Fals
     )
 
 
-def open_edge(alias, *, url=None):
+def open_edge(alias: str, *, url: str | None = None) -> tuple[subprocess.Popen[bytes], Path]:
     """Launch a normal, interactive Edge window bound to <alias>'s sidecar
     userdata dir and return (Popen, edge_dir). Does NOT capture, reload, or
     auto-close anything - this is the "just open my profile's browser" path.
@@ -184,7 +197,7 @@ def open_edge(alias, *, url=None):
     return proc, edge_dir
 
 
-def _terminate(proc):
+def _terminate(proc: subprocess.Popen[bytes] | None) -> None:
     if proc is None:
         return
     if proc.poll() is not None:
@@ -203,7 +216,7 @@ def _terminate(proc):
 # --- Pure helpers (unit-tested) --------------------------------------------
 
 
-def is_token_endpoint(url):
+def is_token_endpoint(url: object) -> bool:
     """True if `url` looks like an AAD v2 token endpoint.
 
     Accepts any login host (login.microsoftonline.com, login.microsoftonline.us,
@@ -215,7 +228,7 @@ def is_token_endpoint(url):
     return TOKEN_PATH_SUFFIX in url and "login." in url
 
 
-def decode_id_token_payload(id_token):
+def decode_id_token_payload(id_token: object) -> dict[str, Any] | None:
     """Decode the JWT payload of an id_token. Returns the claims dict, or
     None on malformed input. Pure - no signature verification (we trust
     AAD over TLS as the source).
@@ -231,7 +244,7 @@ def decode_id_token_payload(id_token):
         return None
 
 
-def email_matches_claims(email, claims):
+def email_matches_claims(email: str | None, claims: object) -> bool:
     """Case-insensitive compare against the claims most likely to hold
     the user's email-shaped identifier.
 
@@ -255,7 +268,13 @@ def email_matches_claims(email, claims):
 # --- Capture flow ----------------------------------------------------------
 
 
-def _capture_token_response(session, *, deadline, log=None, tick=None):
+def _capture_token_response(
+    session: CdpSession,
+    *,
+    deadline: float,
+    log: Callable[[str], None] | None = None,
+    tick: Callable[[int], None] | None = None,
+) -> dict[str, Any]:
     """Block until a /token response with refresh_token lands, then return
     its parsed body dict.
 
@@ -274,11 +293,11 @@ def _capture_token_response(session, *, deadline, log=None, tick=None):
     if tick is None:
         tick = lambda *_: None  # noqa: E731
 
-    pending_request_ids = set()
+    pending_request_ids: set[Any] = set()
     started = time.monotonic()
     last_tick = started
 
-    def _on_response_received(params):
+    def _on_response_received(params: dict[str, Any]) -> bool:
         resp = params.get("response", {})
         url = resp.get("url", "")
         if is_token_endpoint(url):
@@ -287,7 +306,7 @@ def _capture_token_response(session, *, deadline, log=None, tick=None):
             return True
         return False
 
-    def _on_loading_finished(params):
+    def _on_loading_finished(params: dict[str, Any]) -> bool:
         return params.get("requestId") in pending_request_ids
 
     while time.monotonic() < deadline:
@@ -352,23 +371,23 @@ def _capture_token_response(session, *, deadline, log=None, tick=None):
     raise TimeoutError("no /oauth2/v2.0/token response with refresh_token observed before deadline")
 
 
-def _open_session(port):
+def _open_session(port: int) -> CdpSession:
     """Wait for Edge to expose a page target, then open a CDP session."""
     tab = find_tab(port, timeout=20.0)
     return CdpSession(port, tab["webSocketDebuggerUrl"])
 
 
-def _verbose():
+def _verbose() -> bool:
     return bool(os.environ.get("OWA_CAPTURE_DEBUG"))
 
 
-def _logger(prefix):
+def _logger(prefix: str) -> Callable[[str], None]:
     if not _verbose():
         return lambda *_: None  # noqa: E731
     return lambda msg: print(f"[{prefix}] {msg}", file=sys.stderr)
 
 
-def _ticker(alias):
+def _ticker(alias: str) -> Callable[[int], None]:
     """Heartbeat printer for the wait-for-/token loop. Always on (not
     gated by OWA_CAPTURE_DEBUG) so a watching user sees the operation
     is alive, not hung."""
@@ -378,7 +397,7 @@ def _ticker(alias):
     )
 
 
-def _capture_url():
+def _capture_url() -> str:
     """Where the capture sidecar navigates to trigger a /token round-trip.
 
     Defaults to OWA (which mints the FOCI family RT). Override via
@@ -390,7 +409,7 @@ def _capture_url():
     return os.environ.get("OWA_CAPTURE_URL", "").strip() or OWA_URL
 
 
-def _capture_headless_default():
+def _capture_headless_default() -> bool:
     """Honor OWA_CAPTURE_HEADLESS=0 as the escape hatch for tenants whose
     Conditional Access / device-compliance check fails in headless mode
     (mirrors OWA_RESEED_HEADLESS for the legacy scrape path). Default is
@@ -398,7 +417,14 @@ def _capture_headless_default():
     return os.environ.get("OWA_CAPTURE_HEADLESS", "1").strip() != "0"
 
 
-def capture_signin(alias, email, *, timeout=300, user_agent=None, capture_url=None):
+def capture_signin(
+    alias: str,
+    email: str,
+    *,
+    timeout: int = 300,
+    user_agent: str | None = None,
+    capture_url: str | None = None,
+) -> dict[str, str]:
     """Visible Edge for first-time setup. Returns a config dict on
     success, or raises RuntimeError with a user-facing message.
 
@@ -483,7 +509,14 @@ def capture_signin(alias, email, *, timeout=300, user_agent=None, capture_url=No
     return _build_config(token_response, email=email, mode="capture")
 
 
-def capture_silent(alias, *, timeout=None, headless=None, user_agent=None, capture_url=None):
+def capture_silent(
+    alias: str,
+    *,
+    timeout: int | None = None,
+    headless: bool | None = None,
+    user_agent: str | None = None,
+    capture_url: str | None = None,
+) -> tuple[str, dict[str, str] | None]:
     """Headless Edge for scheduled reseed. Returns (status, config_dict):
 
       ('ok', dict)              success - dict has OWA_REFRESH_TOKEN/OWA_TENANT_ID
@@ -683,7 +716,9 @@ def capture_silent(alias, *, timeout=None, headless=None, user_agent=None, captu
     return "ok", _build_config(token_response, email=None, mode="capture")
 
 
-def _build_config(token_response, *, email, mode):
+def _build_config(
+    token_response: dict[str, Any], *, email: str | None, mode: str
+) -> dict[str, str]:
     """Translate an AAD /token JSON response into the KV dict the
     profile config expects. Validates email-vs-claims if `email` is set.
 

@@ -29,17 +29,17 @@ LABEL_PREFIX = "com.damsleth.owa-piggy"
 SHARED_LABEL = f"{LABEL_PREFIX}.scheduled"
 
 
-def shared_plist_path():
+def shared_plist_path() -> Path:
     """Return the shared LaunchAgent plist path."""
     return Path.home() / "Library" / "LaunchAgents" / f"{SHARED_LABEL}.plist"
 
 
-def shared_agent_installed():
+def shared_agent_installed() -> bool:
     """True when the shared LaunchAgent plist exists on disk."""
     return shared_plist_path().exists()
 
 
-def is_scheduled(alias):
+def is_scheduled(alias: str) -> bool:
     """True when `alias` is in OWA_SCHEDULED - i.e. the shared agent will
     reseed it. This is the consolidated replacement for the old
     "is a per-profile plist installed" check.
@@ -47,7 +47,7 @@ def is_scheduled(alias):
     return _config.is_scheduled(alias)
 
 
-def _run_setup_refresh_script(*script_args):
+def _run_setup_refresh_script(*script_args: str) -> int:
     """Invoke setup-refresh.sh with `script_args`. Returns its exit code,
     or 1 if the script can't be found / can't be launched.
     """
@@ -66,7 +66,7 @@ def _run_setup_refresh_script(*script_args):
         return 1
 
 
-def schedule(alias):
+def schedule(alias: str) -> int:
     """Add `alias` to the schedule and ensure the shared agent is installed.
 
     Edits OWA_SCHEDULED (a pure config write - never touches launchd) and,
@@ -84,7 +84,7 @@ def schedule(alias):
     return rc
 
 
-def unschedule(alias):
+def unschedule(alias: str) -> int:
     """Remove `alias` from the schedule. If the schedule becomes empty,
     bootout + remove the shared agent (no point keeping an hourly job that
     reseeds nothing). Returns 0 on success, non-zero on failure.

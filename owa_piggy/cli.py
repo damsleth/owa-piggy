@@ -20,6 +20,7 @@ import os
 import subprocess
 import sys
 import time
+from typing import Any
 
 from . import __version__
 from . import schema as schema_mod
@@ -138,7 +139,7 @@ config:
 )
 
 
-def _add_common_options(p, *, audience_scope=True):
+def _add_common_options(p: argparse.ArgumentParser, *, audience_scope: bool = True) -> None:
     """Attach the shared options a command accepts.
 
     Every command that touches a profile gets --profile. Commands that
@@ -177,7 +178,7 @@ def _add_common_options(p, *, audience_scope=True):
         )
 
 
-def _build_parser():
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="owa-piggy",
         description=f"owa-piggy {__version__} - exchange OWA's browser-stored "
@@ -415,7 +416,7 @@ COMMANDS = (
 )
 
 
-def _inject_default_command(argv):
+def _inject_default_command(argv: list[str]) -> list[str]:
     """Prepend `token` to argv when the user invoked owa-piggy without
     naming a subcommand - either bare (`owa-piggy`) or with only
     options (`owa-piggy --profile work`). `--help` and `--version` are
@@ -441,7 +442,9 @@ def _inject_default_command(argv):
     return ["token"] + list(argv)
 
 
-def _resolve_and_activate(args, *, allow_missing=False):
+def _resolve_and_activate(
+    args: argparse.Namespace, *, allow_missing: bool = False
+) -> tuple[str, int]:
     """Resolve args.profile into a concrete alias and activate it.
 
     Returns (alias, exit_code). exit_code is 0 on success, non-zero on
@@ -458,19 +461,19 @@ def _resolve_and_activate(args, *, allow_missing=False):
 # --- Command handlers ------------------------------------------------------
 
 
-def _cmd_token(args):
+def _cmd_token(args: argparse.Namespace) -> int:
     return _mint_and_emit(args, mode="raw")
 
 
-def _cmd_decode(args):
+def _cmd_decode(args: argparse.Namespace) -> int:
     return _mint_and_emit(args, mode="decode")
 
 
-def _cmd_remaining(args):
+def _cmd_remaining(args: argparse.Namespace) -> int:
     return _mint_and_emit(args, mode="remaining")
 
 
-def _mint_and_emit(args, *, mode):
+def _mint_and_emit(args: argparse.Namespace, *, mode: str) -> int:
     """Shared token-mint path for token/decode/remaining.
 
     `mode` is one of 'raw', 'decode', 'remaining', or (token-only)
@@ -644,7 +647,13 @@ def _mint_and_emit(args, *, mode):
     return _emit(access_token, mode, full_response=result)
 
 
-def _emit(access_token, mode, *, full_response=None, cache_hit_exp=None):
+def _emit(
+    access_token: str,
+    mode: str,
+    *,
+    full_response: dict[str, Any] | None = None,
+    cache_hit_exp: float | None = None,
+) -> int:
     """Print access token in the requested mode. Returns 0."""
     if mode == "json":
         # json is only used on fresh-exchange path (bypasses cache), so
@@ -667,7 +676,7 @@ def _emit(access_token, mode, *, full_response=None, cache_hit_exp=None):
     return 0
 
 
-def _cmd_setup(args):
+def _cmd_setup(args: argparse.Namespace) -> int:
     # setup is an interactive-class command - --json is
     # rejected with a clear pointer to a machine-friendly alternative.
     if getattr(args, "json", False):
@@ -688,7 +697,7 @@ def _cmd_setup(args):
     alias, rc = _resolve_and_activate(args, allow_missing=True)
     if rc:
         return rc
-    return create_profile(
+    setup_rc: int = create_profile(
         alias,
         email=email,
         audience=None,
@@ -699,15 +708,16 @@ def _cmd_setup(args):
         user_agent=(getattr(args, "user_agent", None) or os.environ.get("OWA_USER_AGENT") or None),
         sharepoint_tenant=getattr(args, "sharepoint_tenant", None),
     )
+    return setup_rc
 
 
-def _cmd_reseed(args):
+def _cmd_reseed(args: argparse.Namespace) -> int:
     as_json = bool(getattr(args, "json", False))
     t0 = time.monotonic()
     all_profiles = bool(getattr(args, "all_profiles", False))
     scheduled = bool(getattr(args, "scheduled_profiles", False))
 
-    def _usage_error(message):
+    def _usage_error(message: str) -> int:
         if as_json:
             from owa_piggy.conventions import (
                 EXIT_USER_ERROR,
@@ -801,7 +811,7 @@ def _cmd_reseed(args):
     return rc
 
 
-def _cmd_edge(args):
+def _cmd_edge(args: argparse.Namespace) -> int:
     """Open a normal, interactive Edge window against the profile's sidecar
     userdata dir, then return - leaving the browser running.
 
@@ -834,7 +844,7 @@ def _cmd_edge(args):
     return 0
 
 
-def _cmd_tui(args):
+def _cmd_tui(args: argparse.Namespace) -> int:
     """Interactive token-health dashboard: the profile registry plus a live
     per-profile freshness probe, with reseed/edge/setup actions on one
     screen. Deliberately not a machine command (excluded from
@@ -845,14 +855,15 @@ def _cmd_tui(args):
 
     if not list_profiles():
         return profile_tui.empty_state_setup_flow()
-    return profile_tui.run_dashboard(
+    rc: int = profile_tui.run_dashboard(
         audience=args.audience,
         scope=args.scope,
         sharepoint_tenant=getattr(args, "sharepoint_tenant", None),
     )
+    return rc
 
 
-def _cmd_status(args):
+def _cmd_status(args: argparse.Namespace) -> int:
     # No explicit profile + no OWA_PROFILE env: iterate every profile.
     # This bypasses resolve_profile()'s ambiguity error (multiple
     # profiles / no default) which would otherwise make the informational
@@ -869,12 +880,13 @@ def _cmd_status(args):
                 )
             )
             return 0
-        return do_status_all(
+        all_rc: int = do_status_all(
             audience=args.audience,
             scope=args.scope,
             sharepoint_tenant=sp_tenant,
             verbose=getattr(args, "verbose", False),
         )
+        return all_rc
 
     alias, rc = _resolve_and_activate(args)
     if rc:
@@ -885,28 +897,30 @@ def _cmd_status(args):
         )
         print(json.dumps(report, indent=2))
         return 0 if report.get("state") in ("ok", "warn", "disabled") else 1
-    return do_status(
+    status_rc: int = do_status(
         alias,
         audience=args.audience,
         scope=args.scope,
         sharepoint_tenant=sp_tenant,
         verbose=getattr(args, "verbose", False),
     )
+    return status_rc
 
 
-def _cmd_debug(args):
+def _cmd_debug(args: argparse.Namespace) -> int:
     alias, rc = _resolve_and_activate(args)
     if rc:
         return rc
-    return do_debug(
+    debug_rc: int = do_debug(
         alias,
         audience=args.audience,
         scope=args.scope,
         sharepoint_tenant=getattr(args, "sharepoint_tenant", None),
     )
+    return debug_rc
 
 
-def _cmd_audiences(_args):
+def _cmd_audiences(_args: argparse.Namespace) -> int:
     # Underscore-prefixed because the dispatcher contract passes args to
     # every handler but this one has nothing to read off it.
     all_items = list(KNOWN_AUDIENCES.items()) + list(KNOWN_AUDIENCE_TEMPLATES.items())
@@ -920,7 +934,7 @@ def _cmd_audiences(_args):
     return 0
 
 
-def _cmd_install_owa_tools(args):
+def _cmd_install_owa_tools(args: argparse.Namespace) -> int:
     """Hand off to Homebrew to install the companion owa-tools suite.
 
     Pure convenience shim - the canonical install path is documented as
@@ -940,7 +954,7 @@ def _cmd_install_owa_tools(args):
         return 1
 
 
-def _cmd_version(args):
+def _cmd_version(args: argparse.Namespace) -> int:
     if getattr(args, "json", False):
         print(json.dumps({"tool": "owa-piggy", "version": __version__}, indent=2))
     else:
@@ -948,7 +962,7 @@ def _cmd_version(args):
     return 0
 
 
-def _cmd_profiles(args):
+def _cmd_profiles(args: argparse.Namespace) -> int:
     sub = getattr(args, "profiles_command", None)
     # `list` uses a distinct dest (profiles_list_json) so the subparser
     # flag doesn't clobber the parent `--json`; OR them here so both
@@ -995,7 +1009,7 @@ def _cmd_profiles(args):
     return _do_profiles_list()
 
 
-def _profiles_report():
+def _profiles_report() -> dict[str, Any]:
     reg = load_profiles_conf()
     enabled = set(reg["OWA_PROFILES"])
     scheduled = set(reg.get("OWA_SCHEDULED", []))
@@ -1015,7 +1029,7 @@ def _profiles_report():
     }
 
 
-def _do_profiles_list():
+def _do_profiles_list() -> int:
     """Print configured profiles, marking the default with '*'.
 
     On an interactive stdout+stdin we hand off to the dashboard in
@@ -1045,7 +1059,7 @@ def _do_profiles_list():
     return profile_tui.print_plain_list()
 
 
-def _do_profiles_set_default(alias, as_json=False):
+def _do_profiles_set_default(alias: str, as_json: bool = False) -> int:
     """Mark `alias` as the default profile. Profile must exist on disk."""
     t0 = time.monotonic()
     ok, err = set_default_profile(alias)
@@ -1069,7 +1083,9 @@ def _do_profiles_set_default(alias, as_json=False):
     return 0
 
 
-def _do_profiles_delete(alias, force=False, yes=False, as_json=False):
+def _do_profiles_delete(
+    alias: str, force: bool = False, yes: bool = False, as_json: bool = False
+) -> int:
     """Remove profile <alias> from disk and from profiles.conf.
 
     Destructive. Refuses to delete the currently marked default without
@@ -1078,7 +1094,7 @@ def _do_profiles_delete(alias, force=False, yes=False, as_json=False):
     """
     t0 = time.monotonic()
 
-    def _fail(code, message, exit_code=1):
+    def _fail(code: str, message: str, exit_code: int = 1) -> int:
         if as_json:
             from owa_piggy.conventions import action_envelope, emit_action
 
@@ -1144,7 +1160,7 @@ def _do_profiles_delete(alias, force=False, yes=False, as_json=False):
     return 0
 
 
-def _do_profiles_schedule(alias, schedule, as_json=False):
+def _do_profiles_schedule(alias: str, schedule: bool, as_json: bool = False) -> int:
     """Add or remove `alias` from the shared launchd reseed schedule.
 
     `schedule=True` ensures the shared agent exists and adds `alias` to
@@ -1158,7 +1174,7 @@ def _do_profiles_schedule(alias, schedule, as_json=False):
     t0 = time.monotonic()
     verb = "profiles schedule" if schedule else "profiles unschedule"
 
-    def _fail(code, message):
+    def _fail(code: str, message: str) -> int:
         if as_json:
             from owa_piggy.conventions import action_envelope, emit_action
 
@@ -1224,7 +1240,7 @@ _DISPATCH = {
 assert set(COMMANDS) == set(_DISPATCH), "COMMANDS / _DISPATCH out of sync"
 
 
-def _dispatch(raw):
+def _dispatch(raw: list[str]) -> int:
     """Inject the default command, parse, migrate, and run a handler."""
     argv = _inject_default_command(raw)
     parser = _build_parser()
@@ -1241,7 +1257,7 @@ def _dispatch(raw):
     return handler(args)
 
 
-def _run_with_modes(raw, agent, err_json):
+def _run_with_modes(raw: list[str], agent: bool, err_json: bool) -> int:
     """Run a non-interactive command under --agent / --err-json.
 
     Mirrors owa_core.modes.run_with_output_modes: captures stdout and (for
@@ -1308,7 +1324,7 @@ def _run_with_modes(raw, agent, err_json):
     return 0
 
 
-def _agent_json_default(raw, command):
+def _agent_json_default(raw: list[str], command: str) -> list[str]:
     """Make `--agent <machine-command>` self-sufficient.
 
     The normal CLI stays text-first. Agent mode is schema-first, so commands
@@ -1325,7 +1341,7 @@ def _agent_json_default(raw, command):
     return argv
 
 
-def main():
+def main() -> int:
     raw = list(sys.argv[1:])
     # Top-level --doctor per owa-piggy's CLI conventions. Handle before
     # argparse so it composes with --json without touching the

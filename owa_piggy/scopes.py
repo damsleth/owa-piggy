@@ -64,7 +64,11 @@ KNOWN_AUDIENCE_TEMPLATES = {
 }
 
 
-def templated_audience_name(audience=None, scope=None, profile_default=None):
+def templated_audience_name(
+    audience: str | None = None,
+    scope: str | None = None,
+    profile_default: str | None = None,
+) -> str | None:
     """Return the tenant-templated audience short name that resolve_audience
     WOULD select (ignoring whether a tenant is actually available), or None.
 
@@ -86,7 +90,9 @@ def templated_audience_name(audience=None, scope=None, profile_default=None):
     return None
 
 
-def _resolve_sharepoint_tenant(sharepoint_tenant, profile_sharepoint_tenant):
+def _resolve_sharepoint_tenant(
+    sharepoint_tenant: str | None, profile_sharepoint_tenant: str | None
+) -> str:
     """Resolve the SharePoint tenant name, honoring precedence:
       1. `sharepoint_tenant`         - explicit --sharepoint-tenant flag
       2. OWA_SHAREPOINT_TENANT       - env
@@ -105,12 +111,12 @@ def _resolve_sharepoint_tenant(sharepoint_tenant, profile_sharepoint_tenant):
 
 
 def resolve_audience(
-    audience=None,
-    scope=None,
-    profile_default=None,
-    sharepoint_tenant=None,
-    profile_sharepoint_tenant=None,
-):
+    audience: str | None = None,
+    scope: str | None = None,
+    profile_default: str | None = None,
+    sharepoint_tenant: str | None = None,
+    profile_sharepoint_tenant: str | None = None,
+) -> tuple[str, str]:
     """Compute the scope string to request, honoring precedence:
       1. `scope`                 - explicit --scope value, returned as-is
       2. `audience`              - --audience short name (KNOWN_AUDIENCES or a
@@ -168,7 +174,7 @@ def resolve_audience(
     return f"{aud_url}/.default openid profile offline_access", ""
 
 
-def _audience_url_from_default(value, sp_tenant, label):
+def _audience_url_from_default(value: str, sp_tenant: str, label: str) -> tuple[str | None, str]:
     """Resolve a default-audience value (env or profile config) to an
     audience URL. Accepts a KNOWN_AUDIENCES short name, a tenant-templated
     name, or a full https URL. Returns `(url_or_None, err)`. A malformed

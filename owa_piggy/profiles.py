@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import shutil
 import sys
+from typing import Any
 
 from .cache import clear_cache
 from .config import (
@@ -33,7 +34,7 @@ from .launchd import unschedule as launchd_unschedule
 from .setup import interactive_setup
 
 
-def promote_default_if_missing():
+def promote_default_if_missing() -> dict[str, Any]:
     """Promote a remaining profile when the registry has no default."""
     reg = load_profiles_conf()
     if reg["OWA_DEFAULT_PROFILE"]:
@@ -48,7 +49,7 @@ def promote_default_if_missing():
     return reg
 
 
-def set_default_profile(alias):
+def set_default_profile(alias: str) -> tuple[bool, str]:
     """Mark `alias` as the default profile and ensure it's enabled.
 
     Validates the alias and that the profile exists on disk before
@@ -72,7 +73,7 @@ def set_default_profile(alias):
     return True, ""
 
 
-def enable_profile(alias):
+def enable_profile(alias: str) -> tuple[bool, str]:
     """Add `alias` to OWA_PROFILES (no-op if already there). Sets it as
     the default if no default is set. Thin wrapper around
     ``ensure_profile_registered`` so callers can stay inside this
@@ -86,17 +87,17 @@ def enable_profile(alias):
 
 
 def create_profile(
-    alias,
+    alias: str,
     *,
-    email=None,
-    audience=None,
-    full_banner=False,
-    trough_url=None,
-    trough_tenant=None,
-    trough_sub=None,
-    user_agent=None,
-    sharepoint_tenant=None,
-):
+    email: str | None = None,
+    audience: str | None = None,
+    full_banner: bool = False,
+    trough_url: str | None = None,
+    trough_tenant: str | None = None,
+    trough_sub: str | None = None,
+    user_agent: str | None = None,
+    sharepoint_tenant: str | None = None,
+) -> int:
     """Run interactive_setup for a profile, persist its preferred audience,
     and register the profile in profiles.conf.
 
@@ -140,7 +141,7 @@ def create_profile(
     return 0
 
 
-def disable_profile(alias, *, promote_replacement=True):
+def disable_profile(alias: str, *, promote_replacement: bool = True) -> tuple[bool, str]:
     """Remove `alias` from OWA_PROFILES. If it was the default, optionally
     promote the first remaining enabled profile as the new default so
     ``resolve_profile`` keeps working without an explicit --profile.
@@ -160,7 +161,9 @@ def disable_profile(alias, *, promote_replacement=True):
     return True, ""
 
 
-def delete_profile(alias, *, uninstall_launchd=True, promote_default=True):
+def delete_profile(
+    alias: str, *, uninstall_launchd: bool = True, promote_default: bool = True
+) -> tuple[bool, str]:
     """Delete one profile directory and unregister it.
 
     Returns ``(ok, error)``. Registry update happens before directory

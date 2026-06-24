@@ -19,6 +19,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 from . import config as _config
 from .config import (
@@ -42,11 +43,11 @@ from .scripts import find_reseed_script
 from .token_flow import exchange_fresh
 
 
-def _iso(ts):
+def _iso(ts: float) -> str:
     return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _humanize_minutes(m):
+def _humanize_minutes(m: int) -> str:
     """Compact human-readable duration: 29m, 1h29m, 2d3h."""
     if m < 60:
         return f"{m}m"
@@ -57,7 +58,7 @@ def _humanize_minutes(m):
     return f"{d}d{h}h"
 
 
-def _parse_iso(s):
+def _parse_iso(s: str) -> datetime | None:
     """Parse an `%Y-%m-%dT%H:%M:%SZ` UTC string, or None if malformed."""
     try:
         return datetime.strptime(s, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
@@ -65,19 +66,19 @@ def _parse_iso(s):
         return None
 
 
-def _minutes_until(dt):
+def _minutes_until(dt: datetime) -> int:
     """Whole minutes from now until `dt`, floored at 0."""
     return max(0, int((dt - datetime.now(timezone.utc)).total_seconds() / 60))
 
 
-def _rt_expires_at(config):
+def _rt_expires_at(config: dict[str, str]) -> str | None:
     dt = _parse_iso(config.get("OWA_RT_ISSUED_AT", "").strip())
     if dt is None:
         return None
     return (dt + timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _state(token_ok, minutes_remaining):
+def _state(token_ok: bool, minutes_remaining: int | None) -> str:
     if not token_ok:
         return "fail"
     if minutes_remaining is not None and minutes_remaining < 10:
@@ -85,7 +86,7 @@ def _state(token_ok, minutes_remaining):
     return "ok"
 
 
-def _profile_is_disabled(alias):
+def _profile_is_disabled(alias: str) -> bool:
     """Return True when profiles.conf exists and omits `alias`.
 
     Missing profiles.conf means a legacy/test layout that predates the
@@ -98,7 +99,12 @@ def _profile_is_disabled(alias):
     return alias not in registered
 
 
-def _probe_profile(alias, audience=None, scope=None, sharepoint_tenant=None):
+def _probe_profile(
+    alias: str,
+    audience: str | None = None,
+    scope: str | None = None,
+    sharepoint_tenant: str | None = None,
+) -> dict[str, Any]:
     """Live exchange probe for one profile, with no global side effects.
 
     Reads the profile's config by explicit path and persists any rotated RT
@@ -111,7 +117,7 @@ def _probe_profile(alias, audience=None, scope=None, sharepoint_tenant=None):
     config_path = _config.profile_config_path(alias)
     config, persist = load_config(config_path)
     rt = config.get("OWA_REFRESH_TOKEN", "").strip()
-    probe = {
+    probe: dict[str, Any] = {
         "alias": alias,
         "rt_present_cfg": bool(rt),
         "rt_expires_at": _rt_expires_at(config),
@@ -165,7 +171,12 @@ def _probe_profile(alias, audience=None, scope=None, sharepoint_tenant=None):
     return probe
 
 
-def _probe_all(profiles, audience, scope, sharepoint_tenant):
+def _probe_all(
+    profiles: list[str],
+    audience: str | None,
+    scope: str | None,
+    sharepoint_tenant: str | None,
+) -> list[dict[str, Any]]:
     """Probe every profile, returning results in the same order as `profiles`.
 
     The probes are network-bound (one AAD exchange each) and independent, so
@@ -181,9 +192,9 @@ def _probe_all(profiles, audience, scope, sharepoint_tenant):
         )
 
 
-def _status_json(probe):
+def _status_json(probe: dict[str, Any]) -> dict[str, Any]:
     """Render a probe result as the token-health report dict (no token values)."""
-    report = {
+    report: dict[str, Any] = {
         "profile": probe["alias"],
         "state": "fail",
         "audience": probe["default_audience"],
@@ -247,12 +258,21 @@ def _status_json(probe):
     return report
 
 
-def status_report(alias, audience=None, scope=None, sharepoint_tenant=None):
+def status_report(
+    alias: str,
+    audience: str | None = None,
+    scope: str | None = None,
+    sharepoint_tenant: str | None = None,
+) -> dict[str, Any]:
     """Return a token health report for profile <alias> without token values."""
     return _status_json(_probe_profile(alias, audience, scope, sharepoint_tenant))
 
 
-def status_all_report(audience=None, scope=None, sharepoint_tenant=None):
+def status_all_report(
+    audience: str | None = None,
+    scope: str | None = None,
+    sharepoint_tenant: str | None = None,
+) -> dict[str, Any]:
     profiles = list_profiles()
     reports = [
         _status_json(probe) for probe in _probe_all(profiles, audience, scope, sharepoint_tenant)
@@ -263,7 +283,7 @@ def status_all_report(audience=None, scope=None, sharepoint_tenant=None):
     return {"profiles": reports, "summary": summary}
 
 
-def _status_human(probe, multi=False, verbose=False):
+def _status_human(probe: dict[str, Any], multi: bool = False, verbose: bool = False) -> int:
     """Render a probe result as the compact ISO8601 health block. Prints the
     lines and returns the per-profile exit code (0 healthy, 1 otherwise).
 
@@ -365,7 +385,14 @@ def _status_human(probe, multi=False, verbose=False):
     return 0
 
 
-def do_status(alias, audience=None, scope=None, sharepoint_tenant=None, multi=False, verbose=False):
+def do_status(
+    alias: str,
+    audience: str | None = None,
+    scope: str | None = None,
+    sharepoint_tenant: str | None = None,
+    multi: bool = False,
+    verbose: bool = False,
+) -> int:
     """Compact health summary for profile <alias>. Does a live exchange
     probe to verify the RT actually works (rotates it as a side effect,
     which is fine - the RT rotates on every use anyway). Prints three
@@ -383,7 +410,12 @@ def do_status(alias, audience=None, scope=None, sharepoint_tenant=None, multi=Fa
     return _status_human(probe, multi=multi, verbose=verbose)
 
 
-def do_status_all(audience=None, scope=None, sharepoint_tenant=None, verbose=False):
+def do_status_all(
+    audience: str | None = None,
+    scope: str | None = None,
+    sharepoint_tenant: str | None = None,
+    verbose: bool = False,
+) -> int:
     """Run the status probe against every configured profile.
 
     Used when `status` is invoked with no explicit --profile / no
@@ -405,7 +437,12 @@ def do_status_all(audience=None, scope=None, sharepoint_tenant=None, verbose=Fal
     return rc
 
 
-def do_debug(alias, audience=None, scope=None, sharepoint_tenant=None):
+def do_debug(
+    alias: str,
+    audience: str | None = None,
+    scope: str | None = None,
+    sharepoint_tenant: str | None = None,
+) -> int:
     """Dump everything useful to diagnose a broken setup for profile <alias>:
     config file, refresh-token shape, live exchange probe, access-token
     claims, launchd agent status, PATH install, sidecar profile. Also
@@ -431,7 +468,7 @@ def do_debug(alias, audience=None, scope=None, sharepoint_tenant=None):
         print(f"ERROR: {scope_err}", file=sys.stderr)
         return 1
 
-    def row(status, label, detail=""):
+    def row(status: str, label: str, detail: str = "") -> None:
         print(f"  [{status}] {label}" + (f": {detail}" if detail else ""))
 
     print(f"owa-piggy debug [profile={alias}]\n")
@@ -588,10 +625,10 @@ def do_debug(alias, audience=None, scope=None, sharepoint_tenant=None):
 
     installed = shutil.which("owa-piggy")
     if installed:
-        p = Path(installed)
-        detail = str(p)
-        if p.is_symlink():
-            detail += f" -> {os.readlink(p)}"
+        installed_path = Path(installed)
+        detail = str(installed_path)
+        if installed_path.is_symlink():
+            detail += f" -> {os.readlink(installed_path)}"
         row("ok", "owa-piggy on PATH", detail)
     else:
         row("no", "owa-piggy not on PATH", "run ./scripts/add-to-path.sh or pipx install .")

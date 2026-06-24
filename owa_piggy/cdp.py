@@ -27,11 +27,13 @@ import socket
 import struct
 import time
 import urllib.request
+from collections.abc import Callable
+from typing import Any
 
 CDP_HELPER_PARITY_VERSION = 1
 
 
-def find_tab(port, timeout=15.0):
+def find_tab(port: int, timeout: float = 15.0) -> dict[str, Any]:
     """Poll http://localhost:<port>/json until at least one page-type
     target appears, then return that target's metadata dict.
 
@@ -44,7 +46,7 @@ def find_tab(port, timeout=15.0):
     while time.monotonic() < deadline:
         try:
             with urllib.request.urlopen(f"http://localhost:{port}/json", timeout=2) as r:
-                tabs = json.loads(r.read())
+                tabs: list[dict[str, Any]] = json.loads(r.read())
             pages = [t for t in tabs if t.get("type") == "page"]
             if pages:
                 return pages[0]
@@ -55,7 +57,7 @@ def find_tab(port, timeout=15.0):
     raise TimeoutError(f"CDP tab not ready on port {port}: {last_err}")
 
 
-def _ws_handshake(host, port, path):
+def _ws_handshake(host: str, port: int, path: str) -> socket.socket:
     """Open a raw WebSocket to ws://host:port<path>. Returns the socket
     after the 101 Switching Protocols response is consumed."""
     key = base64.b64encode(secrets.token_bytes(16)).decode()
@@ -82,7 +84,7 @@ def _ws_handshake(host, port, path):
     return s
 
 
-def _send_frame(s, opcode, payload):
+def _send_frame(s: socket.socket, opcode: int, payload: str | bytes) -> None:
     """Send one masked frame (client -> server, RFC 6455)."""
     data = payload.encode("utf-8") if isinstance(payload, str) else payload
     mask = secrets.token_bytes(4)
@@ -98,7 +100,7 @@ def _send_frame(s, opcode, payload):
     s.sendall(hdr + mask + masked)
 
 
-def _recv_exact(s, n):
+def _recv_exact(s: socket.socket, n: int) -> bytes:
     buf = b""
     while len(buf) < n:
         chunk = s.recv(n - len(buf))
@@ -108,11 +110,11 @@ def _recv_exact(s, n):
     return buf
 
 
-def _recv_frame(s):
+def _recv_frame(s: socket.socket) -> str:
     """Receive one frame, handling fragmentation and control frames.
     Returns the full text payload as a str, or raises if the server
     closes the connection. Pings are answered inline with a pong."""
-    parts = []
+    parts: list[bytes] = []
     while True:
         b1, b2 = _recv_exact(s, 2)
         fin = b1 & 0x80
@@ -148,13 +150,15 @@ class CdpSession:
     in order afterwards.
     """
 
-    def __init__(self, port, ws_url):
+    def __init__(self, port: int, ws_url: str) -> None:
         path = "/" + ws_url.split("/", 3)[3]
         self._sock = _ws_handshake("localhost", port, path)
         self._next_id = 0
-        self._buffered = []
+        self._buffered: list[dict[str, Any]] = []
 
-    def call(self, method, params=None, *, timeout=30.0):
+    def call(
+        self, method: str, params: dict[str, Any] | None = None, *, timeout: float = 30.0
+    ) -> dict[str, Any]:
         """Send a CDP command, return its `result` dict.
 
         Raises TimeoutError if no matching reply arrives within `timeout`.
@@ -175,17 +179,24 @@ class CdpSession:
         self._sock.settimeout(timeout)
         try:
             while True:
-                msg = json.loads(_recv_frame(self._sock))
+                msg: dict[str, Any] = json.loads(_recv_frame(self._sock))
                 if msg.get("id") == msg_id:
                     if "error" in msg:
                         raise CdpError(method, msg["error"])
-                    return msg.get("result", {})
+                    result: dict[str, Any] = msg.get("result", {})
+                    return result
                 if "method" in msg:
                     self._buffered.append(msg)
         finally:
             self._sock.settimeout(None)
 
-    def wait_event(self, method_name, predicate=None, *, timeout=60.0):
+    def wait_event(
+        self,
+        method_name: str,
+        predicate: Callable[[dict[str, Any]], bool] | None = None,
+        *,
+        timeout: float = 60.0,
+    ) -> dict[str, Any]:
         """Block until a matching event arrives. Returns the event's
         `params` dict.
 
@@ -197,17 +208,18 @@ class CdpSession:
             predicate = lambda *_: True  # noqa: E731
 
         # Drain buffered events first so a fast event isn't missed.
-        for i, msg in enumerate(self._buffered):
-            if msg.get("method") == method_name and predicate(msg.get("params", {})):
+        for i, buffered in enumerate(self._buffered):
+            if buffered.get("method") == method_name and predicate(buffered.get("params", {})):
                 self._buffered.pop(i)
-                return msg["params"]
+                params: dict[str, Any] = buffered["params"]
+                return params
 
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             remaining = deadline - time.monotonic()
             self._sock.settimeout(max(0.1, remaining))
             try:
-                msg = json.loads(_recv_frame(self._sock))
+                msg: dict[str, Any] = json.loads(_recv_frame(self._sock))
             except socket.timeout:
                 continue
             finally:
@@ -215,13 +227,14 @@ class CdpSession:
             if "id" in msg:
                 continue
             if msg.get("method") == method_name and predicate(msg.get("params", {})):
-                return msg["params"]
+                event_params: dict[str, Any] = msg["params"]
+                return event_params
             # Any other event - keep for a later wait_event with a
             # different filter (e.g. loadingFinished after responseReceived).
             self._buffered.append(msg)
         raise TimeoutError(f"no {method_name} event matching predicate within {timeout}s")
 
-    def close(self):
+    def close(self) -> None:
         with contextlib.suppress(Exception):
             self._sock.close()
 
@@ -229,7 +242,7 @@ class CdpSession:
 class CdpError(RuntimeError):
     """Raised when a CDP method returns an error envelope."""
 
-    def __init__(self, method, error):
+    def __init__(self, method: str, error: dict[str, Any]) -> None:
         super().__init__(f"CDP {method} failed: {error}")
         self.method = method
         self.error = error

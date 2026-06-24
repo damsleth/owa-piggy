@@ -25,7 +25,7 @@ from .config import iso_utc_now, parse_kv_stream, save_config
 CONFIG_PATH = _config.CONFIG_PATH
 
 
-def read_input(prompt, secret=False):
+def read_input(prompt: str, secret: bool = False) -> str:
     """Read input in raw tty mode to bypass the terminal line-length limit (~4096 bytes).
 
     Modern terminals wrap pasted text with bracketed-paste escape sequences
@@ -46,7 +46,7 @@ def read_input(prompt, secret=False):
 
         fd = sys.stdin.fileno()
         old = termios.tcgetattr(fd)
-        chars = []
+        chars: list[str] = []
         in_paste = False
         try:
             tty.setraw(fd)
@@ -111,15 +111,15 @@ def read_input(prompt, secret=False):
 
 
 def interactive_setup(
-    config,
-    alias="default",
+    config: dict[str, str],
+    alias: str = "default",
     *,
-    email=None,
-    trough_url=None,
-    trough_tenant=None,
-    trough_sub=None,
-    user_agent=None,
-):
+    email: str | None = None,
+    trough_url: str | None = None,
+    trough_tenant: str | None = None,
+    trough_sub: str | None = None,
+    user_agent: str | None = None,
+) -> bool:
     """Run the setup flow for profile <alias>. `CONFIG_PATH` must already
     be pointing at that profile's config file (caller's job, typically
     via `config.set_active_profile(alias)`).
@@ -215,7 +215,7 @@ def interactive_setup(
     return True
 
 
-def _ensure_edge_profile_dir(alias):
+def _ensure_edge_profile_dir(alias: str) -> None:
     """Create the per-profile Edge sidecar userdata dir if missing.
 
     Each profile needs its own dir so `reseed --profile <alias>` can
@@ -226,7 +226,9 @@ def _ensure_edge_profile_dir(alias):
     d.mkdir(parents=True, exist_ok=True, mode=0o700)
 
 
-def _capture_setup(config, alias, email, *, user_agent=None):
+def _capture_setup(
+    config: dict[str, str], alias: str, email: str, *, user_agent: str | None = None
+) -> bool:
     """Drive Edge visibly, capture the FOCI refresh token off the wire,
     and persist it to the profile config.
 
@@ -269,7 +271,14 @@ def _capture_setup(config, alias, email, *, user_agent=None):
     return True
 
 
-def _trough_setup(config, alias, trough_url, *, tenant=None, sub=None):
+def _trough_setup(
+    config: dict[str, str],
+    alias: str,
+    trough_url: str,
+    *,
+    tenant: str | None = None,
+    sub: str | None = None,
+) -> bool:
     """Seed the profile from a tailnet-side trough appliance.
 
     Imported lazily so a `setup` invocation that does not touch the

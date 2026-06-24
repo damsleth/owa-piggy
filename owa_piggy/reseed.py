@@ -38,7 +38,7 @@ from .config import (
 from .scripts import find_reseed_script
 
 
-def _profile_cdp_port(alias):
+def _profile_cdp_port(alias: str) -> int:
     """Derive a stable CDP debug port for `alias`.
 
     The legacy scrape backend (reseed-from-edge.sh) reads CDP_PORT from
@@ -53,7 +53,7 @@ def _profile_cdp_port(alias):
     return 9222 + (zlib.crc32(alias.encode()) % 10000)
 
 
-def do_reseed(alias):
+def do_reseed(alias: str) -> int:
     """Run the headless reseed flow for profile <alias>.
 
     Two backends, picked by the profile's OWA_AUTH_MODE:
@@ -76,7 +76,7 @@ def do_reseed(alias):
     return _do_reseed_scrape(alias)
 
 
-def _do_reseed_capture(alias, config):
+def _do_reseed_capture(alias: str, config: dict[str, str]) -> int:
     """Network-capture reseed: headless Edge, intercept /token, persist
     the rotated refresh token. No window appears under any condition;
     if the sidecar session has expired we exit non-zero and ask the
@@ -182,7 +182,7 @@ def _do_reseed_capture(alias, config):
     return 0
 
 
-def _do_reseed_scrape(alias):
+def _do_reseed_scrape(alias: str) -> int:
     """Legacy reseed: shell out to scripts/reseed-from-edge.sh.
 
     The shell script handles its own Edge lifecycle (headless attempt,
@@ -220,7 +220,7 @@ def _do_reseed_scrape(alias):
         return 1
 
 
-def do_reseed_all():
+def do_reseed_all() -> int:
     """Run the headless reseed flow for every configured profile, in order.
 
     Sequential rather than parallel: each profile drives its own Edge
@@ -261,7 +261,7 @@ def do_reseed_all():
     return _reseed_aliases(active)
 
 
-def do_reseed_scheduled():
+def do_reseed_scheduled() -> int:
     """Reseed only the profiles in OWA_SCHEDULED - the set the single
     shared launchd agent rotates hourly (`reseed --scheduled`).
 
@@ -289,7 +289,7 @@ def do_reseed_scheduled():
     return _reseed_aliases(aliases)
 
 
-def _reseed_aliases(aliases):
+def _reseed_aliases(aliases: list[str]) -> int:
     """Reseed each alias in `aliases` sequentially. Returns the max exit
     code so a partial failure is still surfaced. Shared by do_reseed_all
     and do_reseed_scheduled.

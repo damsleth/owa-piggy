@@ -26,6 +26,8 @@ jobs:
         run: ruff check owa_piggy tests
       - name: Ruff format
         run: ruff format --check owa_piggy tests
+      - name: Types
+        run: mypy owa_piggy
 
   test:
     runs-on: ubuntu-latest
