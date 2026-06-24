@@ -15,6 +15,7 @@ module centralizes the Python-side label/path conventions, the registry
 edits, and the call into that script so the CLI and diagnostics cannot
 drift.
 """
+
 import subprocess
 import sys
 from pathlib import Path
@@ -22,13 +23,13 @@ from pathlib import Path
 from . import config as _config
 from .scripts import find_setup_refresh_script
 
-LABEL_PREFIX = 'com.damsleth.owa-piggy'
-SHARED_LABEL = f'{LABEL_PREFIX}.scheduled'
+LABEL_PREFIX = "com.damsleth.owa-piggy"
+SHARED_LABEL = f"{LABEL_PREFIX}.scheduled"
 
 
 def shared_plist_path():
     """Return the shared LaunchAgent plist path."""
-    return Path.home() / 'Library' / 'LaunchAgents' / f'{SHARED_LABEL}.plist'
+    return Path.home() / "Library" / "LaunchAgents" / f"{SHARED_LABEL}.plist"
 
 
 def shared_agent_installed():
@@ -50,14 +51,16 @@ def _run_setup_refresh_script(*script_args):
     """
     script = find_setup_refresh_script()
     if not script:
-        print('ERROR: setup-refresh.sh not found. Reinstall owa-piggy or set '
-              'OWA_SETUP_REFRESH_SCRIPT=/path/to/setup-refresh.sh',
-              file=sys.stderr)
+        print(
+            "ERROR: setup-refresh.sh not found. Reinstall owa-piggy or set "
+            "OWA_SETUP_REFRESH_SCRIPT=/path/to/setup-refresh.sh",
+            file=sys.stderr,
+        )
         return 1
     try:
         return subprocess.call([str(script), *script_args])
     except OSError as e:
-        print(f'ERROR: failed to run {script}: {e}', file=sys.stderr)
+        print(f"ERROR: failed to run {script}: {e}", file=sys.stderr)
         return 1
 
 
@@ -73,7 +76,7 @@ def schedule(alias):
         # Already installed - the static plist reads OWA_SCHEDULED at run
         # time, so nothing else to do. No launchd churn, no re-prompt.
         return 0
-    rc = _run_setup_refresh_script('--install-shared')
+    rc = _run_setup_refresh_script("--install-shared")
     if rc != 0:
         _config.unschedule_profile(alias)
     return rc
@@ -85,9 +88,9 @@ def unschedule(alias):
     reseeds nothing). Returns 0 on success, non-zero on failure.
     """
     _config.unschedule_profile(alias)
-    remaining = _config.load_profiles_conf().get('OWA_SCHEDULED', [])
+    remaining = _config.load_profiles_conf().get("OWA_SCHEDULED", [])
     if remaining:
         return 0
     if shared_agent_installed():
-        return _run_setup_refresh_script('--uninstall-shared')
+        return _run_setup_refresh_script("--uninstall-shared")
     return 0

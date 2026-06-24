@@ -16,6 +16,7 @@ command keeps only its own cache / output-formatting concerns.
 This module does NOT touch the access-token cache, do not call out to
 reseed, and does not print rotation NOTEs - those are caller policy.
 """
+
 from .config import save_config
 from .oauth import CLIENT_ID, capture_errors, exchange_token
 
@@ -23,11 +24,10 @@ from .oauth import CLIENT_ID, capture_errors, exchange_token
 # reseed (sliding-window expiry, hard-cap expiry). Detected from
 # captured stderr so a structured return value is available without
 # changing exchange_token's signature.
-_RECOVERABLE_AAD_CODES = ('AADSTS70043', 'AADSTS700084')
+_RECOVERABLE_AAD_CODES = ("AADSTS70043", "AADSTS700084")
 
 
-def exchange_fresh(config, scope, *, persist, capture_stderr=False,
-                   config_path=None):
+def exchange_fresh(config, scope, *, persist, capture_stderr=False, config_path=None):
     """Live AAD exchange against the profile in `config` for `scope`.
 
     Returns ``(result, info)``:
@@ -57,20 +57,20 @@ def exchange_fresh(config, scope, *, persist, capture_stderr=False,
     per-profile writes never collide. The config dict is mutated in place
     either way so the caller's subsequent reads see the new token.
     """
-    rt = config.get('OWA_REFRESH_TOKEN', '').strip()
-    tid = config.get('OWA_TENANT_ID', '').strip()
-    cid = config.get('OWA_CLIENT_ID', CLIENT_ID).strip()
-    origin = config.get('OWA_ORIGIN', '').strip() or None
+    rt = config.get("OWA_REFRESH_TOKEN", "").strip()
+    tid = config.get("OWA_TENANT_ID", "").strip()
+    cid = config.get("OWA_CLIENT_ID", CLIENT_ID).strip()
+    origin = config.get("OWA_ORIGIN", "").strip() or None
     # Only forward an explicit OWA_ORIGIN override. When unset, let
     # exchange_token pick the per-client default origin — and keep the
     # call 4-positional so existing callers / test mocks are unaffected.
-    origin_kw = {'origin': origin} if origin else {}
+    origin_kw = {"origin": origin} if origin else {}
     info = {
-        'rt': rt,
-        'tid': tid,
-        'cid': cid,
-        'rt_present': bool(rt),
-        'tid_present': bool(tid),
+        "rt": rt,
+        "tid": tid,
+        "cid": cid,
+        "rt_present": bool(rt),
+        "tid_present": bool(tid),
         # The `1.`/`0.` prefix is a property of FOCI family tokens (the
         # default client). A profile pointed at a non-FOCI client — e.g.
         # the Azure DevOps app (OWA_CLIENT_ID set to its app id), whose
@@ -78,15 +78,13 @@ def exchange_fresh(config, scope, *, persist, capture_stderr=False,
         # no such prefix, so the shape check does not apply there. We only
         # know how to validate the FOCI shape; for other clients, defer to
         # AAD to reject a malformed RT.
-        'rt_shape_ok': bool(rt) and (
-            (rt.startswith('1.') or rt.startswith('0.'))
-            if cid == CLIENT_ID else True
-        ),
-        'stderr_text': '',
-        'aad_error': None,
-        'rotated': False,
+        "rt_shape_ok": bool(rt)
+        and ((rt.startswith("1.") or rt.startswith("0.")) if cid == CLIENT_ID else True),
+        "stderr_text": "",
+        "aad_error": None,
+        "rotated": False,
     }
-    if not info['rt_present'] or not info['tid_present'] or not info['rt_shape_ok']:
+    if not info["rt_present"] or not info["tid_present"] or not info["rt_shape_ok"]:
         return None, info
 
     if capture_stderr:
@@ -95,7 +93,7 @@ def exchange_fresh(config, scope, *, persist, capture_stderr=False,
         # profiles) don't clobber each other's buffer.
         with capture_errors() as captured:
             result = exchange_token(rt, tid, cid, scope, **origin_kw)
-        info['stderr_text'] = captured.getvalue()
+        info["stderr_text"] = captured.getvalue()
         # Note: the helper does NOT replay captured stderr. The cli
         # mint path wants the AAD error to reach the terminal verbatim
         # (callers grep for it); status/debug surface their own hint
@@ -106,15 +104,15 @@ def exchange_fresh(config, scope, *, persist, capture_stderr=False,
 
     if not result:
         for code in _RECOVERABLE_AAD_CODES:
-            if code in info['stderr_text']:
-                info['aad_error'] = code
+            if code in info["stderr_text"]:
+                info["aad_error"] = code
                 break
         return None, info
 
-    new_rt = result.get('refresh_token')
+    new_rt = result.get("refresh_token")
     if new_rt and new_rt != rt:
-        config['OWA_REFRESH_TOKEN'] = new_rt
-        info['rotated'] = True
+        config["OWA_REFRESH_TOKEN"] = new_rt
+        info["rotated"] = True
         if persist:
             save_config(config, config_path)
     return result, info

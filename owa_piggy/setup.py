@@ -10,6 +10,7 @@ the /token response off the wire (see capture.py). This is the path for
 tenants whose SPA uses MSAL.js encrypted-cache (e.g. Okta-federated
 accounts where the legacy localStorage scrape returns an opaque blob).
 """
+
 import sys
 
 from . import config as _config
@@ -34,11 +35,13 @@ def read_input(prompt, secret=False):
     When secret=True, characters are not echoed and backspace does not emit
     visual feedback."""
     import re
+
     print(prompt)
     sys.stdout.flush()
     try:
         import termios
         import tty
+
         fd = sys.stdin.fileno()
         old = termios.tcgetattr(fd)
         chars = []
@@ -48,36 +51,36 @@ def read_input(prompt, secret=False):
             while True:
                 ch = sys.stdin.read(1)
                 # Handle CSI escape sequences (bracketed paste + anything else)
-                if ch == '\x1b':
+                if ch == "\x1b":
                     seq = ch + sys.stdin.read(1)  # expect '['
-                    if seq == '\x1b[':
-                        tail = ''
+                    if seq == "\x1b[":
+                        tail = ""
                         while True:
                             c = sys.stdin.read(1)
                             tail += c
-                            if c.isalpha() or c == '~':
+                            if c.isalpha() or c == "~":
                                 break
                         full = seq + tail
-                        if full == '\x1b[200~':
+                        if full == "\x1b[200~":
                             in_paste = True
-                        elif full == '\x1b[201~':
+                        elif full == "\x1b[201~":
                             in_paste = False
                         # drop any other CSI sequence silently
                     continue
-                if ch in ('\r', '\n'):
+                if ch in ("\r", "\n"):
                     # Inside a pasted block, a newline is data, not submit.
                     if in_paste:
                         continue  # silently drop embedded newlines
                     if chars:
                         break
                     continue
-                if ch == '\x03':
+                if ch == "\x03":
                     raise KeyboardInterrupt
-                if ch in ('\x7f', '\x08'):  # backspace / ctrl-H
+                if ch in ("\x7f", "\x08"):  # backspace / ctrl-H
                     if chars and not in_paste:
                         chars.pop()
                         if not secret:
-                            sys.stdout.write('\b \b')
+                            sys.stdout.write("\b \b")
                             sys.stdout.flush()
                     continue
                 if ord(ch) < 0x20:
@@ -91,7 +94,7 @@ def read_input(prompt, secret=False):
         print()
         # Belt-and-suspenders: strip any residual CSI sequence that slipped
         # through a partial read, then trim whitespace.
-        cleaned = re.sub(r'\x1b\[[\d;]*[ -/]*[@-~]', '', ''.join(chars))
+        cleaned = re.sub(r"\x1b\[[\d;]*[ -/]*[@-~]", "", "".join(chars))
         return cleaned.strip()
     except ImportError:
         # No termios on this platform (Windows, etc.). Fall back to
@@ -100,12 +103,21 @@ def read_input(prompt, secret=False):
         # masked as "input got cooked-mode-truncated".
         if secret:
             import getpass
-            return getpass.getpass('').strip()
+
+            return getpass.getpass("").strip()
         return input().strip()
 
 
-def interactive_setup(config, alias='default', *, email=None, trough_url=None,
-                       trough_tenant=None, trough_sub=None, user_agent=None):
+def interactive_setup(
+    config,
+    alias="default",
+    *,
+    email=None,
+    trough_url=None,
+    trough_tenant=None,
+    trough_sub=None,
+    user_agent=None,
+):
     """Run the setup flow for profile <alias>. `CONFIG_PATH` must already
     be pointing at that profile's config file (caller's job, typically
     via `config.set_active_profile(alias)`).
@@ -132,10 +144,9 @@ def interactive_setup(config, alias='default', *, email=None, trough_url=None,
     # OWA_USER_AGENT to keep silent refresh runs UA-consistent with the
     # original sign-in.
     if user_agent:
-        config['OWA_USER_AGENT'] = user_agent
+        config["OWA_USER_AGENT"] = user_agent
     if trough_url is not None:
-        return _trough_setup(config, alias, trough_url,
-                             tenant=trough_tenant, sub=trough_sub)
+        return _trough_setup(config, alias, trough_url, tenant=trough_tenant, sub=trough_sub)
     if email is not None:
         return _capture_setup(config, alias, email, user_agent=user_agent)
 
@@ -145,54 +156,60 @@ def interactive_setup(config, alias='default', *, email=None, trough_url=None,
     # KEY=value output (e.g. `pbpaste | owa-piggy setup`).
     if not sys.stdin.isatty():
         parsed = parse_kv_stream(sys.stdin.read())
-        if not parsed.get('OWA_REFRESH_TOKEN') or not parsed.get('OWA_TENANT_ID'):
-            print('ERROR: stdin missing OWA_REFRESH_TOKEN and/or OWA_TENANT_ID. '
-                  'Expected KEY=value lines as printed by the browser snippet.',
-                  file=sys.stderr)
+        if not parsed.get("OWA_REFRESH_TOKEN") or not parsed.get("OWA_TENANT_ID"):
+            print(
+                "ERROR: stdin missing OWA_REFRESH_TOKEN and/or OWA_TENANT_ID. "
+                "Expected KEY=value lines as printed by the browser snippet.",
+                file=sys.stderr,
+            )
             return False
         config.update(parsed)
         # Stamp issuance time so `status` can show the 24h hard-cap. This is
         # set on setup/reseed paths only, never on ordinary rotation (which
         # does not reset the SPA hard-cap timer).
-        config['OWA_RT_ISSUED_AT'] = iso_utc_now()
+        config["OWA_RT_ISSUED_AT"] = iso_utc_now()
         save_config(config)
         _ensure_edge_profile_dir(alias)
-        print(f'Config saved to {_config.CONFIG_PATH} [profile={alias}]', file=sys.stderr)
+        print(f"Config saved to {_config.CONFIG_PATH} [profile={alias}]", file=sys.stderr)
         return True
 
-    print(f'owa-piggy setup [profile={alias}]\n')
-    print('1. Open https://outlook.cloud.microsoft in Microsoft Edge')
-    print('   (plain Chromium browsers store a session-bound token that')
-    print('    AAD rejects as malformed - seed from Edge only.)')
-    print('2. Open DevTools (F12) > Console')
-    print('3. Paste this snippet to print both values:\n')
-    print('   const find = s => Object.keys(localStorage).find(k => k.includes(s))')
-    print('   const parse = s => JSON.parse(localStorage[find(s)])')
-    print('   const rt = parse(\'|refreshtoken|\'), it = parse(\'|idtoken|\')')
-    print('   if (!rt.secret) console.warn(\'WARN: non-MSAL shape.\')')
+    print(f"owa-piggy setup [profile={alias}]\n")
+    print("1. Open https://outlook.cloud.microsoft in Microsoft Edge")
+    print("   (plain Chromium browsers store a session-bound token that")
+    print("    AAD rejects as malformed - seed from Edge only.)")
+    print("2. Open DevTools (F12) > Console")
+    print("3. Paste this snippet to print both values:\n")
+    print("   const find = s => Object.keys(localStorage).find(k => k.includes(s))")
+    print("   const parse = s => JSON.parse(localStorage[find(s)])")
+    print("   const rt = parse('|refreshtoken|'), it = parse('|idtoken|')")
+    print("   if (!rt.secret) console.warn('WARN: non-MSAL shape.')")
     # Single console.log so the "VMXXX:X" line that the devtools console
     # appends after the first call does not end up copied into the paste.
-    print('   console.log(`OWA_REFRESH_TOKEN=${rt.secret || rt.data}\\n'
-          'OWA_TENANT_ID=${(it.realm || find(\'|idtoken|\').split(\'|\')[5])}`)\n')
-    print('   Tip: to avoid terminal paste-corruption on very long tokens,')
-    print('   copy the two output lines and pipe them in instead:')
-    print(f'     pbpaste | owa-piggy setup --profile {alias}\n')
-    rt = read_input(f'[{alias}] Refresh token (starts with "1.AQ..."), then Enter (input hidden):', secret=True)
+    print(
+        "   console.log(`OWA_REFRESH_TOKEN=${rt.secret || rt.data}\\n"
+        "OWA_TENANT_ID=${(it.realm || find('|idtoken|').split('|')[5])}`)\n"
+    )
+    print("   Tip: to avoid terminal paste-corruption on very long tokens,")
+    print("   copy the two output lines and pipe them in instead:")
+    print(f"     pbpaste | owa-piggy setup --profile {alias}\n")
+    rt = read_input(
+        f'[{alias}] Refresh token (starts with "1.AQ..."), then Enter (input hidden):', secret=True
+    )
     if not rt:
-        print('ERROR: no refresh token provided', file=sys.stderr)
+        print("ERROR: no refresh token provided", file=sys.stderr)
         return False
 
-    tid = read_input(f'[{alias}] Tenant ID (a UUID), then Enter:')
+    tid = read_input(f"[{alias}] Tenant ID (a UUID), then Enter:")
     if not tid:
-        print('ERROR: no tenant ID provided', file=sys.stderr)
+        print("ERROR: no tenant ID provided", file=sys.stderr)
         return False
 
-    config['OWA_REFRESH_TOKEN'] = rt
-    config['OWA_TENANT_ID'] = tid
-    config['OWA_RT_ISSUED_AT'] = iso_utc_now()
+    config["OWA_REFRESH_TOKEN"] = rt
+    config["OWA_TENANT_ID"] = tid
+    config["OWA_RT_ISSUED_AT"] = iso_utc_now()
     save_config(config)
     _ensure_edge_profile_dir(alias)
-    print(f'\nConfig saved to {_config.CONFIG_PATH} [profile={alias}]')
+    print(f"\nConfig saved to {_config.CONFIG_PATH} [profile={alias}]")
     return True
 
 
@@ -223,31 +240,30 @@ def _capture_setup(config, alias, email, *, user_agent=None):
     # paste-only path used by every existing profile.
     from . import capture
 
-    print(f'owa-piggy setup [profile={alias}, email={email}]\n', file=sys.stderr)
-    print('Opening Microsoft Edge so you can sign in.', file=sys.stderr)
-    print('owa-piggy will capture the refresh token off the wire and close',
-          file=sys.stderr)
-    print('the window automatically once authentication completes.\n',
-          file=sys.stderr)
+    print(f"owa-piggy setup [profile={alias}, email={email}]\n", file=sys.stderr)
+    print("Opening Microsoft Edge so you can sign in.", file=sys.stderr)
+    print("owa-piggy will capture the refresh token off the wire and close", file=sys.stderr)
+    print("the window automatically once authentication completes.\n", file=sys.stderr)
 
     try:
         captured = capture.capture_signin(alias, email, user_agent=user_agent)
     except TimeoutError:
-        print('ERROR: timed out waiting for sign-in to complete. '
-              'Re-run setup --email to try again.', file=sys.stderr)
+        print(
+            "ERROR: timed out waiting for sign-in to complete. Re-run setup --email to try again.",
+            file=sys.stderr,
+        )
         return False
     except RuntimeError as e:
-        print(f'ERROR: {e}', file=sys.stderr)
+        print(f"ERROR: {e}", file=sys.stderr)
         return False
     except KeyboardInterrupt:
-        print('\nABORTED.', file=sys.stderr)
+        print("\nABORTED.", file=sys.stderr)
         return False
 
     config.update(captured)
-    config['OWA_RT_ISSUED_AT'] = iso_utc_now()
+    config["OWA_RT_ISSUED_AT"] = iso_utc_now()
     save_config(config)
-    print(f'Config saved to {_config.CONFIG_PATH} [profile={alias}]',
-          file=sys.stderr)
+    print(f"Config saved to {_config.CONFIG_PATH} [profile={alias}]", file=sys.stderr)
     return True
 
 
@@ -259,34 +275,34 @@ def _trough_setup(config, alias, trough_url, *, tenant=None, sub=None):
     """
     from . import trough
 
-    print(f'owa-piggy setup [profile={alias}, trough={trough_url}]\n',
-          file=sys.stderr)
+    print(f"owa-piggy setup [profile={alias}, trough={trough_url}]\n", file=sys.stderr)
     filt = []
     if tenant:
-        filt.append(f'tenant={tenant}')
+        filt.append(f"tenant={tenant}")
     if sub:
-        filt.append(f'sub={sub}')
+        filt.append(f"sub={sub}")
     if filt:
-        print(f'Filtering by {" ".join(filt)}.', file=sys.stderr)
+        print(f"Filtering by {' '.join(filt)}.", file=sys.stderr)
     else:
-        print('No tenant/sub filter - taking the freshest FOCI RT in the trough.',
-              file=sys.stderr)
+        print("No tenant/sub filter - taking the freshest FOCI RT in the trough.", file=sys.stderr)
 
     try:
         rt, tid, info = trough.fetch_foci(trough_url, tenant=tenant, sub=sub)
     except RuntimeError as e:
-        print(f'ERROR: {e}', file=sys.stderr)
+        print(f"ERROR: {e}", file=sys.stderr)
         return False
 
-    print(f'Captured FOCI RT: tid={tid} sub={info["sub"]} '
-          f'src_host={info["src_host"]} bytes={info["token_len"]} '
-          f'last_seen={info["last_seen"]}', file=sys.stderr)
+    print(
+        f"Captured FOCI RT: tid={tid} sub={info['sub']} "
+        f"src_host={info['src_host']} bytes={info['token_len']} "
+        f"last_seen={info['last_seen']}",
+        file=sys.stderr,
+    )
 
-    config['OWA_REFRESH_TOKEN'] = rt
-    config['OWA_TENANT_ID'] = tid
-    config['OWA_RT_ISSUED_AT'] = iso_utc_now()
+    config["OWA_REFRESH_TOKEN"] = rt
+    config["OWA_TENANT_ID"] = tid
+    config["OWA_RT_ISSUED_AT"] = iso_utc_now()
     save_config(config)
     _ensure_edge_profile_dir(alias)
-    print(f'Config saved to {_config.CONFIG_PATH} [profile={alias}]',
-          file=sys.stderr)
+    print(f"Config saved to {_config.CONFIG_PATH} [profile={alias}]", file=sys.stderr)
     return True
