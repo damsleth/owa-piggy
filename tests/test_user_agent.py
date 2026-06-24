@@ -31,7 +31,8 @@ def test_launch_edge_omits_ua_flag_when_unset(monkeypatch, tmp_path):
     def _fake_popen(args, **kwargs):
         seen['args'] = args
 
-        class _P: pass
+        class _P:
+            pass
         return _P()
 
     monkeypatch.setattr(capture, 'find_edge', lambda: '/usr/bin/edge')
