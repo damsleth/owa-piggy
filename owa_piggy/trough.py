@@ -24,9 +24,9 @@ def _http_get_json(url, *, timeout):
             return json.loads(resp.read())
     except urllib.error.HTTPError as e:
         body = e.read().decode('utf-8', 'replace')[:200]
-        raise RuntimeError(f'trough HTTP {e.code} from {url}: {body}')
+        raise RuntimeError(f'trough HTTP {e.code} from {url}: {body}') from e
     except urllib.error.URLError as e:
-        raise RuntimeError(f'trough unreachable at {url}: {e.reason}')
+        raise RuntimeError(f'trough unreachable at {url}: {e.reason}') from e
 
 
 def fetch_foci(trough_url, *, tenant=None, sub=None, timeout=10, limit=50):

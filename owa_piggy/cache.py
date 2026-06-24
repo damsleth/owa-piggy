@@ -14,6 +14,7 @@ Cache path is derived at call time from config.CONFIG_PATH so that
 test fixtures which monkeypatch the config path get the cache
 redirected into tmp_path automatically.
 """
+import contextlib
 import json
 import time
 
@@ -93,7 +94,5 @@ def clear_cache():
     """Remove the cache file if present. Called by `setup` and `reseed`
     so the cache never outlives an identity change."""
     path = _cache_path()
-    try:
+    with contextlib.suppress(FileNotFoundError):
         path.unlink()
-    except FileNotFoundError:
-        pass
