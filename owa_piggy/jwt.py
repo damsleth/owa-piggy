@@ -5,6 +5,8 @@ locally for the `decode`/`status`/`remaining` subcommands. These are stdlib base
 JSON, nothing more.
 """
 
+from __future__ import annotations
+
 import base64
 import json
 import time
