@@ -16,6 +16,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import webbrowser
+from collections.abc import Sequence
+from typing import Any
 
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -35,7 +37,7 @@ class ConsentError(RuntimeError):
     pass
 
 
-def _consent_url(client_id, redirect_uri, scopes, state):
+def _consent_url(client_id: str, redirect_uri: str, scopes: Sequence[str], state: str) -> str:
     params = {
         "client_id": client_id,
         "redirect_uri": redirect_uri,
@@ -51,8 +53,21 @@ def _consent_url(client_id, redirect_uri, scopes, state):
     return f"{AUTH_URL}?{urllib.parse.urlencode(params)}"
 
 
+class _CallbackServer(http.server.HTTPServer):
+    """Loopback server that carries the redirect's query back to the caller.
+
+    The handler runs on another thread and has nowhere else to put what it
+    parsed. Declaring the attribute on a subclass beats stapling it onto a
+    stock HTTPServer, which no type checker can follow.
+    """
+
+    result: dict[str, list[str]] | None = None
+
+
 class _CallbackHandler(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
+    server: _CallbackServer
+
+    def do_GET(self) -> None:
         qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
         self.server.result = qs
         body = b"<html><body>owa-piggy: signed in, you can close this tab.</body></html>"
@@ -62,17 +77,22 @@ class _CallbackHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def log_message(self, *args):
+    def log_message(self, *args: Any) -> None:
         pass  # ponytail: silence the default stderr access log, not useful here
 
 
-def run_local_consent_flow(client_id, client_secret, scopes=DEFAULT_SCOPES, timeout=300):
+def run_local_consent_flow(
+    client_id: str,
+    client_secret: str,
+    scopes: Sequence[str] = DEFAULT_SCOPES,
+    timeout: int = 300,
+) -> dict[str, Any]:
     """Open the Google consent screen, catch the redirect on a loopback
     server, exchange the code for tokens. Returns the token endpoint's
     JSON dict (access_token/refresh_token/expires_in/scope) or raises
     ConsentError.
     """
-    server = http.server.HTTPServer((REDIRECT_HOST, 0), _CallbackHandler)
+    server = _CallbackServer((REDIRECT_HOST, 0), _CallbackHandler)
     server.result = None
     server.timeout = timeout
     port = server.server_address[1]
@@ -107,7 +127,9 @@ def run_local_consent_flow(client_id, client_secret, scopes=DEFAULT_SCOPES, time
     )
 
 
-def refresh_access_token(client_id, client_secret, refresh_token):
+def refresh_access_token(
+    client_id: str, client_secret: str, refresh_token: str
+) -> dict[str, Any] | None:
     """Refresh_token grant. Returns the token endpoint's JSON dict, or
     None on failure (error already printed to stderr, matching
     oauth.exchange_token's contract)."""
@@ -125,7 +147,9 @@ def refresh_access_token(client_id, client_secret, refresh_token):
         return None
 
 
-def _exchange(client_id, client_secret, grant_fields):
+def _exchange(
+    client_id: str, client_secret: str, grant_fields: dict[str, str]
+) -> dict[str, Any] | None:
     data = urllib.parse.urlencode(
         {
             "client_id": client_id,
@@ -141,7 +165,8 @@ def _exchange(client_id, client_secret, grant_fields):
     )
     try:
         with urllib.request.urlopen(req, timeout=EXCHANGE_TIMEOUT) as resp:
-            return json.loads(resp.read())
+            tokens: dict[str, Any] = json.loads(resp.read())
+            return tokens
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace")
         try:

@@ -99,12 +99,14 @@ def iso_utc_now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
-def parse_iso_utc(s):
+def parse_iso_utc(s: str | None) -> datetime | None:
     """Inverse of iso_utc_now(): parse `%Y-%m-%dT%H:%M:%SZ`, or None if the
     string is missing or malformed."""
+    if s is None:
+        return None
     try:
         return datetime.strptime(s, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-    except (ValueError, TypeError):
+    except ValueError:
         return None
 
 

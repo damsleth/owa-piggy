@@ -15,8 +15,9 @@ from __future__ import annotations
 import json
 import re
 import sys
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterable, Mapping, TextIO
+from typing import Any, Callable, TextIO
 
 __all__ = [
     "EXIT_OK",
@@ -61,13 +62,12 @@ _BODY_FIELD_RE = re.compile(r'(?i)"(body|content|text|html_body|plain_body)"\s*:
 def redact(text: Any) -> str:
     if text is None:
         return ""
-    if not isinstance(text, str):
-        text = str(text)
-    text = _JWT_RE.sub("<redacted-jwt>", text)
-    text = _BEARER_RE.sub("Bearer <redacted>", text)
-    text = _TOKEN_FIELD_RE.sub(lambda m: f'"{m.group(1)}":"<redacted>"', text)
-    text = _BODY_FIELD_RE.sub(lambda m: f'"{m.group(1)}":"<redacted>"', text)
-    return text
+    s: str = text if isinstance(text, str) else str(text)
+    s = _JWT_RE.sub("<redacted-jwt>", s)
+    s = _BEARER_RE.sub("Bearer <redacted>", s)
+    s = _TOKEN_FIELD_RE.sub(lambda m: f'"{m.group(1)}":"<redacted>"', s)
+    s = _BODY_FIELD_RE.sub(lambda m: f'"{m.group(1)}":"<redacted>"', s)
+    return s
 
 
 # --- internals -------------------------------------------------------------

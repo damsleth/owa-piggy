@@ -15,7 +15,7 @@ scraping the adjacent `pyproject.toml` so the launchd dev-path
 from __future__ import annotations
 
 
-def _read_version():
+def _read_version() -> str:
     """Version string for `--version`.
 
     The source pyproject.toml wins when we're running from a checkout (our
