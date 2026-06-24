@@ -4,6 +4,7 @@
 scope-override) pair plus the env default into the `scope` string we
 POST to AAD. The CLI layer does the argv parsing; this module is pure.
 """
+
 import os
 import sys
 
@@ -13,29 +14,35 @@ import sys
 # so it's the more useful default. Override per-call with `--audience`
 # or `--scope`, or persistently via OWA_DEFAULT_AUDIENCE which accepts
 # either a KNOWN_AUDIENCES short name or a full https URL.
-DEFAULT_AUDIENCE = 'https://graph.microsoft.com'
+DEFAULT_AUDIENCE = "https://graph.microsoft.com"
 
 # Well-known FOCI-accessible audiences (same refresh token works for all).
 # Short names map to audience URLs; `{audience}/.default` is the scope we
 # actually ask AAD for.
 KNOWN_AUDIENCES = {
-    'outlook':    ('https://outlook.office.com',                   'Outlook REST'),
-    'graph':      ('https://graph.microsoft.com',                  'Microsoft Graph (default)'),
-    'teams':      ('https://api.spaces.skype.com',                 'Microsoft Teams middle-tier (mt/part, Skype audience)'),
-    'ic3':        ('https://ic3.teams.office.com',                 'Microsoft Teams chatsvc / asyncgw (modern)'),
-    'csa':        ('https://chatsvcagg.teams.microsoft.com',       'Microsoft Teams chat-service aggregator (csa: updates, chatsAndTeams)'),
-    'presence':   ('https://presence.teams.microsoft.com',        'Microsoft Teams presence / pubsub (ups)'),
-    'uis':        ('https://uis.teams.microsoft.com',              'Microsoft Teams user/notification settings (nss)'),
-    'azure':      ('https://management.azure.com',                 'Azure Resource Manager'),
-    'keyvault':   ('https://vault.azure.net',                      'Azure Key Vault'),
-    'storage':    ('https://storage.azure.com',                    'Azure Blob/Table/Queue Storage'),
-    'sql':        ('https://database.windows.net',                 'Azure SQL'),
-    'outlook365': ('https://outlook.office365.com',                'Outlook REST (alternate)'),
-    'substrate':  ('https://substrate.office.com',                 'Office Substrate (Copilot, search)'),
-    'manage':     ('https://manage.office.com',                    'Office Management API'),
-    'powerbi':    ('https://analysis.windows.net/powerbi/api',     'Power BI'),
-    'flow':       ('https://service.flow.microsoft.com',           'Power Automate'),
-    'devops':     ('https://app.vssps.visualstudio.com',           'Azure DevOps'),
+    "outlook": ("https://outlook.office.com", "Outlook REST"),
+    "graph": ("https://graph.microsoft.com", "Microsoft Graph (default)"),
+    "teams": (
+        "https://api.spaces.skype.com",
+        "Microsoft Teams middle-tier (mt/part, Skype audience)",
+    ),
+    "ic3": ("https://ic3.teams.office.com", "Microsoft Teams chatsvc / asyncgw (modern)"),
+    "csa": (
+        "https://chatsvcagg.teams.microsoft.com",
+        "Microsoft Teams chat-service aggregator (csa: updates, chatsAndTeams)",
+    ),
+    "presence": ("https://presence.teams.microsoft.com", "Microsoft Teams presence / pubsub (ups)"),
+    "uis": ("https://uis.teams.microsoft.com", "Microsoft Teams user/notification settings (nss)"),
+    "azure": ("https://management.azure.com", "Azure Resource Manager"),
+    "keyvault": ("https://vault.azure.net", "Azure Key Vault"),
+    "storage": ("https://storage.azure.com", "Azure Blob/Table/Queue Storage"),
+    "sql": ("https://database.windows.net", "Azure SQL"),
+    "outlook365": ("https://outlook.office365.com", "Outlook REST (alternate)"),
+    "substrate": ("https://substrate.office.com", "Office Substrate (Copilot, search)"),
+    "manage": ("https://manage.office.com", "Office Management API"),
+    "powerbi": ("https://analysis.windows.net/powerbi/api", "Power BI"),
+    "flow": ("https://service.flow.microsoft.com", "Power Automate"),
+    "devops": ("https://app.vssps.visualstudio.com", "Azure DevOps"),
 }
 
 # A profile bound to a non-default client (OWA_CLIENT_ID) can only reach the
@@ -45,10 +52,10 @@ KNOWN_AUDIENCES = {
 # explicit override still wins) and above the graph fallback.
 CLIENT_DEFAULT_AUDIENCE = {
     # Azure DevOps public client (see the nc-ado profile).
-    '499b84ac-1321-427f-aa17-267ca6975798': 'devops',
+    "499b84ac-1321-427f-aa17-267ca6975798": "devops",
     # Teams web client - the only client authsvc still answers for, so
     # profiles captured against it exist to talk to Teams.
-    '5e3ce6c0-2b1f-4285-8d4b-75ee78787346': 'teams',
+    "5e3ce6c0-2b1f-4285-8d4b-75ee78787346": "teams",
 }
 
 # Tenant-templated audiences. Unlike KNOWN_AUDIENCES, SharePoint's resource
@@ -60,8 +67,11 @@ CLIENT_DEFAULT_AUDIENCE = {
 # config field. The FOCI refresh token captured from the Outlook sign-in
 # works for these resources unchanged - only the requested scope differs.
 KNOWN_AUDIENCE_TEMPLATES = {
-    'sharepoint':       ('https://{tenant}.sharepoint.com',       'SharePoint site collections / content'),
-    'sharepoint-admin': ('https://{tenant}-admin.sharepoint.com', 'SharePoint tenant admin (CSOM/REST)'),
+    "sharepoint": ("https://{tenant}.sharepoint.com", "SharePoint site collections / content"),
+    "sharepoint-admin": (
+        "https://{tenant}-admin.sharepoint.com",
+        "SharePoint tenant admin (CSOM/REST)",
+    ),
 }
 
 
@@ -78,7 +88,7 @@ def templated_audience_name(audience=None, scope=None, profile_default=None):
         return None
     if audience:
         return audience if audience in KNOWN_AUDIENCE_TEMPLATES else None
-    env = os.environ.get('OWA_DEFAULT_AUDIENCE', '').strip()
+    env = os.environ.get("OWA_DEFAULT_AUDIENCE", "").strip()
     if env:
         return env if env in KNOWN_AUDIENCE_TEMPLATES else None
     if profile_default:
@@ -97,17 +107,22 @@ def _resolve_sharepoint_tenant(sharepoint_tenant, profile_sharepoint_tenant):
     """
     if sharepoint_tenant and sharepoint_tenant.strip():
         return sharepoint_tenant.strip()
-    env = os.environ.get('OWA_SHAREPOINT_TENANT', '').strip()
+    env = os.environ.get("OWA_SHAREPOINT_TENANT", "").strip()
     if env:
         return env
     if profile_sharepoint_tenant and profile_sharepoint_tenant.strip():
         return profile_sharepoint_tenant.strip()
-    return ''
+    return ""
 
 
-def resolve_audience(audience=None, scope=None, profile_default=None,
-                     sharepoint_tenant=None, profile_sharepoint_tenant=None,
-                     client_id=None):
+def resolve_audience(
+    audience=None,
+    scope=None,
+    profile_default=None,
+    sharepoint_tenant=None,
+    profile_sharepoint_tenant=None,
+    client_id=None,
+):
     """Compute the scope string to request, honoring precedence:
       1. `scope`                 - explicit --scope value, returned as-is
       2. `audience`              - --audience short name (KNOWN_AUDIENCES or a
@@ -130,45 +145,45 @@ def resolve_audience(audience=None, scope=None, profile_default=None,
     treated the same way - warn and fall through to graph.
     """
     if scope:
-        return scope, ''
+        return scope, ""
 
-    sp_tenant = _resolve_sharepoint_tenant(sharepoint_tenant,
-                                           profile_sharepoint_tenant)
+    sp_tenant = _resolve_sharepoint_tenant(sharepoint_tenant, profile_sharepoint_tenant)
 
     if audience:
         if audience in KNOWN_AUDIENCES:
             url = KNOWN_AUDIENCES[audience][0]
         elif audience in KNOWN_AUDIENCE_TEMPLATES:
             if not sp_tenant:
-                return '', (
-                    f'audience {audience!r} needs a SharePoint tenant name. '
-                    f'Pass --sharepoint-tenant <name>, set OWA_SHAREPOINT_TENANT, '
-                    f'or add OWA_SHAREPOINT_TENANT=<name> to the profile config.'
+                return "", (
+                    f"audience {audience!r} needs a SharePoint tenant name. "
+                    f"Pass --sharepoint-tenant <name>, set OWA_SHAREPOINT_TENANT, "
+                    f"or add OWA_SHAREPOINT_TENANT=<name> to the profile config."
                 )
             url = KNOWN_AUDIENCE_TEMPLATES[audience][0].format(tenant=sp_tenant)
         else:
-            return '', (
-                f'unknown audience {audience!r}. '
-                f'Run `owa-piggy audiences` for the list of known names.'
+            return "", (
+                f"unknown audience {audience!r}. "
+                f"Run `owa-piggy audiences` for the list of known names."
             )
-        return f'{url}/.default openid profile offline_access', ''
+        return f"{url}/.default openid profile offline_access", ""
 
-    env = os.environ.get('OWA_DEFAULT_AUDIENCE', '').strip()
-    aud_url, env_err = _audience_url_from_default(env, sp_tenant, 'OWA_DEFAULT_AUDIENCE')
+    env = os.environ.get("OWA_DEFAULT_AUDIENCE", "").strip()
+    aud_url, env_err = _audience_url_from_default(env, sp_tenant, "OWA_DEFAULT_AUDIENCE")
     if env_err:
-        return '', env_err
+        return "", env_err
     if aud_url is None and profile_default:
         aud_url, pd_err = _audience_url_from_default(
-            profile_default.strip(), sp_tenant, 'profile OWA_DEFAULT_AUDIENCE')
+            profile_default.strip(), sp_tenant, "profile OWA_DEFAULT_AUDIENCE"
+        )
         if pd_err:
-            return '', pd_err
+            return "", pd_err
     if aud_url is None and client_id:
         implied = CLIENT_DEFAULT_AUDIENCE.get(client_id.strip())
         if implied:
             aud_url = KNOWN_AUDIENCES[implied][0]
     if aud_url is None:
         aud_url = DEFAULT_AUDIENCE
-    return f'{aud_url}/.default openid profile offline_access', ''
+    return f"{aud_url}/.default openid profile offline_access", ""
 
 
 def _audience_url_from_default(value, sp_tenant, label):
@@ -179,19 +194,21 @@ def _audience_url_from_default(value, sp_tenant, label):
     through to the next layer; a templated name missing its tenant is a
     hard error (the user clearly meant SharePoint)."""
     if not value:
-        return None, ''
+        return None, ""
     if value in KNOWN_AUDIENCES:
-        return KNOWN_AUDIENCES[value][0], ''
+        return KNOWN_AUDIENCES[value][0], ""
     if value in KNOWN_AUDIENCE_TEMPLATES:
         if not sp_tenant:
             return None, (
-                f'{label}={value!r} needs a SharePoint tenant name. '
-                f'Pass --sharepoint-tenant <name>, set OWA_SHAREPOINT_TENANT, '
-                f'or add OWA_SHAREPOINT_TENANT=<name> to the profile config.'
+                f"{label}={value!r} needs a SharePoint tenant name. "
+                f"Pass --sharepoint-tenant <name>, set OWA_SHAREPOINT_TENANT, "
+                f"or add OWA_SHAREPOINT_TENANT=<name> to the profile config."
             )
-        return KNOWN_AUDIENCE_TEMPLATES[value][0].format(tenant=sp_tenant), ''
-    if value.startswith('https://'):
-        return value.rstrip('/'), ''
-    print(f'WARNING: {label}={value!r} is not a known short name or an '
-          f'https URL; using default', file=sys.stderr)
-    return None, ''
+        return KNOWN_AUDIENCE_TEMPLATES[value][0].format(tenant=sp_tenant), ""
+    if value.startswith("https://"):
+        return value.rstrip("/"), ""
+    print(
+        f"WARNING: {label}={value!r} is not a known short name or an https URL; using default",
+        file=sys.stderr,
+    )
+    return None, ""
