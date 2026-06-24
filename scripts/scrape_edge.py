@@ -16,6 +16,7 @@ Zero external deps - minimal WS client over the stdlib.
 """
 
 import base64
+import contextlib
 import json
 import os
 import secrets
@@ -27,11 +28,11 @@ import urllib.request
 
 CDP_HELPER_PARITY_VERSION = 1
 
-PORT = int(os.environ.get('CDP_PORT', '9222'))
+PORT = int(os.environ.get("CDP_PORT", "9222"))
 # Match either the OWA tab or a login redirect so we notice when the SPA
 # gives up and hands off to AAD.
-TAB_URL_SUBSTRING = os.environ.get('CDP_TAB_MATCH', '')
-WAIT_SECONDS = int(os.environ.get('CDP_WAIT', '90'))
+TAB_URL_SUBSTRING = os.environ.get("CDP_TAB_MATCH", "")
+WAIT_SECONDS = int(os.environ.get("CDP_WAIT", "90"))
 # Freshness threshold for the cached ID token. The 23h heuristic this
 # replaced was a trap: it let the scrape exit success on its first poll
 # (~0.5s) whenever the iat looked younger than 23h, so cleanup_edge
@@ -46,7 +47,7 @@ WAIT_SECONDS = int(os.environ.get('CDP_WAIT', '90'))
 # MSAL room to fall back to ssoSilent (iframe authorize against ESTSAUTH
 # cookies, mints a fresh RT with a reset 24h cap). Both empirically
 # need ~10-30s of patient polling to actually complete.
-STALE_AFTER_SECONDS = int(os.environ.get('OWA_RESEED_STALE_AFTER', str(30 * 60)))
+STALE_AFTER_SECONDS = int(os.environ.get("OWA_RESEED_STALE_AFTER", str(30 * 60)))
 # Exit codes used by the shell wrapper to decide what to do next.
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -166,7 +167,7 @@ EXPR_TEMPLATE = r"""(() => {
   }
 })()"""
 
-EXPR = EXPR_TEMPLATE.replace('__STALE__', str(STALE_AFTER_SECONDS))
+EXPR = EXPR_TEMPLATE.replace("__STALE__", str(STALE_AFTER_SECONDS))
 
 
 def find_tab():
@@ -180,20 +181,20 @@ def find_tab():
     last_err = None
     while time.time() < deadline:
         try:
-            with urllib.request.urlopen(f'http://localhost:{PORT}/json', timeout=2) as r:
+            with urllib.request.urlopen(f"http://localhost:{PORT}/json", timeout=2) as r:
                 tabs = json.loads(r.read())
-            pages = [t for t in tabs if t.get('type') == 'page']
+            pages = [t for t in tabs if t.get("type") == "page"]
             if TAB_URL_SUBSTRING:
-                matched = [t for t in pages if TAB_URL_SUBSTRING in t.get('url', '').lower()]
+                matched = [t for t in pages if TAB_URL_SUBSTRING in t.get("url", "").lower()]
                 if matched:
                     return matched[0]
             elif pages:
                 return pages[0]
-            last_err = f'no page-type target yet (saw {len(tabs)} targets)'
+            last_err = f"no page-type target yet (saw {len(tabs)} targets)"
         except Exception as e:
             last_err = str(e)
         time.sleep(0.5)
-    raise TimeoutError(f'CDP tab not ready: {last_err}')
+    raise TimeoutError(f"CDP tab not ready: {last_err}")
 
 
 # --- WebSocket framing -----------------------------------------------------
@@ -204,45 +205,46 @@ def find_tab():
 # tests/test_cdp.py; mirror any fix to the length encodings, masking, or
 # ping/pong handling here.
 
+
 def ws_handshake(path):
     """Open a WS connection to localhost:PORT at `path`. Returns the raw socket."""
     key = base64.b64encode(secrets.token_bytes(16)).decode()
-    s = socket.create_connection(('localhost', PORT))
+    s = socket.create_connection(("localhost", PORT))
     req = (
-        f'GET {path} HTTP/1.1\r\n'
-        f'Host: localhost:{PORT}\r\n'
-        'Upgrade: websocket\r\n'
-        'Connection: Upgrade\r\n'
-        f'Sec-WebSocket-Key: {key}\r\n'
-        'Sec-WebSocket-Version: 13\r\n'
-        '\r\n'
+        f"GET {path} HTTP/1.1\r\n"
+        f"Host: localhost:{PORT}\r\n"
+        "Upgrade: websocket\r\n"
+        "Connection: Upgrade\r\n"
+        f"Sec-WebSocket-Key: {key}\r\n"
+        "Sec-WebSocket-Version: 13\r\n"
+        "\r\n"
     )
     s.sendall(req.encode())
-    buf = b''
-    while b'\r\n\r\n' not in buf:
+    buf = b""
+    while b"\r\n\r\n" not in buf:
         chunk = s.recv(4096)
         if not chunk:
-            raise ConnectionError('WS handshake: connection closed')
+            raise ConnectionError("WS handshake: connection closed")
         buf += chunk
-    status_line = buf.split(b'\r\n', 1)[0]
-    if b' 101 ' not in status_line:
-        raise ConnectionError(f'WS handshake: {status_line!r}')
+    status_line = buf.split(b"\r\n", 1)[0]
+    if b" 101 " not in status_line:
+        raise ConnectionError(f"WS handshake: {status_line!r}")
     return s
 
 
 def _ws_send_frame(s, opcode, payload):
     """Send a single masked frame with the given opcode (client -> server)."""
-    data = payload.encode('utf-8') if isinstance(payload, str) else payload
+    data = payload.encode("utf-8") if isinstance(payload, str) else payload
     mask = secrets.token_bytes(4)
     masked = bytes(b ^ mask[i % 4] for i, b in enumerate(data))
     L = len(data)
-    hdr = bytes([0x80 | (opcode & 0x0f)])  # FIN + opcode
+    hdr = bytes([0x80 | (opcode & 0x0F)])  # FIN + opcode
     if L < 126:
         hdr += bytes([0x80 | L])
     elif L < 65536:
-        hdr += bytes([0x80 | 126]) + struct.pack('>H', L)
+        hdr += bytes([0x80 | 126]) + struct.pack(">H", L)
     else:
-        hdr += bytes([0x80 | 127]) + struct.pack('>Q', L)
+        hdr += bytes([0x80 | 127]) + struct.pack(">Q", L)
     s.sendall(hdr + mask + masked)
 
 
@@ -250,18 +252,19 @@ def ws_send_text(s, payload):
     _ws_send_frame(s, 0x1, payload)
 
 
-def ws_send_pong(s, payload=b''):
+def ws_send_pong(s, payload=b""):
     _ws_send_frame(s, 0xA, payload)
 
 
 def ws_recv_text(s):
     """Receive a single text frame (server -> client, unmasked)."""
+
     def recv_n(n):
-        buf = b''
+        buf = b""
         while len(buf) < n:
             chunk = s.recv(n - len(buf))
             if not chunk:
-                raise ConnectionError('WS: connection closed mid-frame')
+                raise ConnectionError("WS: connection closed mid-frame")
             buf += chunk
         return buf
 
@@ -270,13 +273,13 @@ def ws_recv_text(s):
     while True:
         b1, b2 = recv_n(2)
         fin = b1 & 0x80
-        opcode = b1 & 0x0f
+        opcode = b1 & 0x0F
         masked = b2 & 0x80
-        L = b2 & 0x7f
+        L = b2 & 0x7F
         if L == 126:
-            L = struct.unpack('>H', recv_n(2))[0]
+            L = struct.unpack(">H", recv_n(2))[0]
         elif L == 127:
-            L = struct.unpack('>Q', recv_n(8))[0]
+            L = struct.unpack(">Q", recv_n(8))[0]
         if masked:
             mask = recv_n(4)
             payload = bytes(b ^ mask[i % 4] for i, b in enumerate(recv_n(L)))
@@ -286,11 +289,11 @@ def ws_recv_text(s):
             ws_send_pong(s, payload)
             continue
         if opcode == 0x8:  # close
-            raise ConnectionError('WS: server sent close')
+            raise ConnectionError("WS: server sent close")
         parts.append(payload)
         if fin:
             break
-    return b''.join(parts).decode('utf-8')
+    return b"".join(parts).decode("utf-8")
 
 
 def cdp_call(path, method, params=None):
@@ -299,14 +302,19 @@ def cdp_call(path, method, params=None):
     handshake cost is negligible against the 0.5s poll interval."""
     s = ws_handshake(path)
     try:
-        ws_send_text(s, json.dumps({
-            'id': 1,
-            'method': method,
-            'params': params or {},
-        }))
+        ws_send_text(
+            s,
+            json.dumps(
+                {
+                    "id": 1,
+                    "method": method,
+                    "params": params or {},
+                }
+            ),
+        )
         while True:
             msg = json.loads(ws_recv_text(s))
-            if msg.get('id') == 1:
+            if msg.get("id") == 1:
                 return msg
     finally:
         s.close()
@@ -314,38 +322,40 @@ def cdp_call(path, method, params=None):
 
 def eval_once(path):
     """Run EXPR in the page and return the parsed JS return value."""
-    msg = cdp_call(path, 'Runtime.evaluate', {
-        'expression': EXPR,
-        'returnByValue': True,
-        'awaitPromise': False,
-    })
-    result = msg.get('result', {}).get('result', {})
-    if result.get('type') != 'object' or 'value' not in result:
-        return {'err': f'unexpected CDP response: {msg}'}
-    return result['value']
+    msg = cdp_call(
+        path,
+        "Runtime.evaluate",
+        {
+            "expression": EXPR,
+            "returnByValue": True,
+            "awaitPromise": False,
+        },
+    )
+    result = msg.get("result", {}).get("result", {})
+    if result.get("type") != "object" or "value" not in result:
+        return {"err": f"unexpected CDP response: {msg}"}
+    return result["value"]
 
 
 def reload_page(path):
     """Force a hard reload to kickstart MSAL's state machine when a stale
     cache has the SPA wedged. Ignore errors - if the reload call fails the
     outer loop will just keep polling and eventually time out."""
-    try:
-        cdp_call(path, 'Page.reload', {'ignoreCache': True})
-    except Exception:
-        pass
+    with contextlib.suppress(Exception):
+        cdp_call(path, "Page.reload", {"ignoreCache": True})
 
 
 def main():
     try:
         tab = find_tab()
     except TimeoutError as e:
-        print(f'ERROR: {e}', file=sys.stderr)
-        print(f'  Is Edge running with --remote-debugging-port={PORT}?', file=sys.stderr)
+        print(f"ERROR: {e}", file=sys.stderr)
+        print(f"  Is Edge running with --remote-debugging-port={PORT}?", file=sys.stderr)
         return EXIT_ERROR
 
-    ws_url = tab['webSocketDebuggerUrl']
+    ws_url = tab["webSocketDebuggerUrl"]
     # Extract path component (CDP gives ws://localhost:9222/devtools/page/<id>)
-    path = '/' + ws_url.split('/', 3)[3]
+    path = "/" + ws_url.split("/", 3)[3]
 
     # Poll until the SPA lands on OWA with a fresh MSAL cache, OR until it
     # redirects to login (session expired), OR we hit a hard error. For
@@ -354,51 +364,56 @@ def main():
     # force it off a wedged state.
     STALE_RELOAD_AFTER = 8  # seconds
     deadline = time.time() + WAIT_SECONDS
-    last_retry = 'no attempts yet'
+    last_retry = "no attempts yet"
     stale_since = None
     reloaded = False
 
     while time.time() < deadline:
         v = eval_once(path)
 
-        if v.get('err'):
-            print(f'ERROR: {v["err"]}', file=sys.stderr)
+        if v.get("err"):
+            print(f"ERROR: {v['err']}", file=sys.stderr)
             return EXIT_ERROR
 
-        if v.get('reauth'):
-            print(f'REAUTH: {v["reauth"]}', file=sys.stderr)
+        if v.get("reauth"):
+            print(f"REAUTH: {v['reauth']}", file=sys.stderr)
             return EXIT_NEEDS_REAUTH
 
-        if v.get('rt') and v.get('tid'):
-            age_raw = v.get('age')
+        if v.get("rt") and v.get("tid"):
+            age_raw = v.get("age")
             try:
                 age_min = int(age_raw) // 60 if age_raw is not None else None
             except (TypeError, ValueError):
                 age_min = None
             # "cache age" is ID-token iat age, not RT age - see the comment
             # on the EXPR_TEMPLATE staleness check for why these can drift.
-            age_hint = (f' (ID-token age ~{age_min}min; not a guarantee of '
-                        f'RT freshness)' if age_min is not None else '')
-            print(f'# scraped token{age_hint}', file=sys.stderr)
-            if os.environ.get('OWA_RESEED_DEBUG'):
-                hid = v.get('hid', '')
-                print(f'# homeAccountId={hid}', file=sys.stderr)
-            print(f'OWA_REFRESH_TOKEN={v["rt"]}')
-            print(f'OWA_TENANT_ID={v["tid"]}')
+            age_hint = (
+                f" (ID-token age ~{age_min}min; not a guarantee of RT freshness)"
+                if age_min is not None
+                else ""
+            )
+            print(f"# scraped token{age_hint}", file=sys.stderr)
+            if os.environ.get("OWA_RESEED_DEBUG"):
+                hid = v.get("hid", "")
+                print(f"# homeAccountId={hid}", file=sys.stderr)
+            print(f"OWA_REFRESH_TOKEN={v['rt']}")
+            print(f"OWA_TENANT_ID={v['tid']}")
             return EXIT_OK
 
-        if v.get('retry'):
-            last_retry = v['retry']
+        if v.get("retry"):
+            last_retry = v["retry"]
             # Track how long we have been seeing a stale-cache retry. The
             # SPA's silent refresh is normally a few seconds; if it hasn't
             # moved after STALE_RELOAD_AFTER the SPA is likely wedged - a
             # hard reload kicks MSAL back into its auth state machine.
-            if 'stale' in last_retry.lower():
+            if "stale" in last_retry.lower():
                 if stale_since is None:
                     stale_since = time.time()
                 elif not reloaded and time.time() - stale_since > STALE_RELOAD_AFTER:
-                    print(f'# cache still stale after {STALE_RELOAD_AFTER}s, '
-                          f'forcing page reload', file=sys.stderr)
+                    print(
+                        f"# cache still stale after {STALE_RELOAD_AFTER}s, forcing page reload",
+                        file=sys.stderr,
+                    )
                     reload_page(path)
                     reloaded = True
                     stale_since = None
@@ -407,22 +422,23 @@ def main():
             time.sleep(0.5)
             continue
 
-        print(f'ERROR: unexpected result shape: {v}', file=sys.stderr)
+        print(f"ERROR: unexpected result shape: {v}", file=sys.stderr)
         return EXIT_ERROR
 
     # Timeout. If the last state we saw was a stale cache, the session likely
     # needs interactive sign-in - escalate to exit 2 so the shell wrapper can
     # reopen Edge for the user instead of just reporting the timeout.
-    if 'stale' in last_retry.lower():
-        print(f'REAUTH: cache remained stale past {WAIT_SECONDS}s; '
-              f'silent refresh failed, interactive sign-in needed',
-              file=sys.stderr)
+    if "stale" in last_retry.lower():
+        print(
+            f"REAUTH: cache remained stale past {WAIT_SECONDS}s; "
+            f"silent refresh failed, interactive sign-in needed",
+            file=sys.stderr,
+        )
         return EXIT_NEEDS_REAUTH
 
-    print(f'ERROR: timed out waiting for OWA SPA; last status: {last_retry}',
-          file=sys.stderr)
+    print(f"ERROR: timed out waiting for OWA SPA; last status: {last_retry}", file=sys.stderr)
     return EXIT_ERROR
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     sys.exit(main())
