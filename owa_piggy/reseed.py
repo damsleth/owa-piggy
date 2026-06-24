@@ -17,6 +17,8 @@ Two backends:
   localStorage cache (modern Okta-federated SPAs).
 """
 
+from __future__ import annotations
+
 import os
 import subprocess
 import sys

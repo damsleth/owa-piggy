@@ -27,6 +27,8 @@ the cached AT in memory and never makes a /token call - the entire
 point of this dance.
 """
 
+from __future__ import annotations
+
 import base64
 import contextlib
 import json

@@ -11,6 +11,8 @@ tenants whose SPA uses MSAL.js encrypted-cache (e.g. Okta-federated
 accounts where the legacy localStorage scrape returns an opaque blob).
 """
 
+from __future__ import annotations
+
 import sys
 
 from . import config as _config
