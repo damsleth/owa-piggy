@@ -5,6 +5,7 @@ broker sees the same introspection surface. These
 exercises need no auth: schema/help are static, --agent uses `version`,
 and --err-json is triggered with an argparse usage error.
 """
+
 from __future__ import annotations
 
 import json
@@ -15,7 +16,8 @@ import sys
 def _run(*args):
     return subprocess.run(
         [sys.executable, "-m", "owa_piggy", *args],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
 
 
@@ -68,11 +70,11 @@ def test_agent_wraps_json_output():
 
 
 def test_agent_adds_json_default_for_machine_command():
-  result = _run("--agent", "version")
-  assert result.returncode == 0
-  payload = json.loads(result.stdout)
-  assert payload["_owa"]["command"] == "version"
-  assert payload["data"]["tool"] == "owa-piggy"
+    result = _run("--agent", "version")
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    assert payload["_owa"]["command"] == "version"
+    assert payload["data"]["tool"] == "owa-piggy"
 
 
 def test_err_json_emits_structured_error_on_stderr():

@@ -12,6 +12,7 @@ We round-trip through socket.socketpair() with the send happening on a
 background thread so a large payload can't deadlock against an unread
 receive buffer.
 """
+
 import importlib.util
 import socket
 import threading
@@ -39,24 +40,27 @@ def _roundtrip(payload, opcode=0x1):
         b.close()
 
 
-@pytest.mark.parametrize('size', [
-    0,        # empty payload
-    5,        # tiny
-    125,      # last value of the 7-bit length
-    126,      # first value needing the 16-bit length
-    65535,    # last value of the 16-bit length
-    65536,    # first value needing the 64-bit length
-    70000,    # comfortably into the 64-bit length path
-])
+@pytest.mark.parametrize(
+    "size",
+    [
+        0,  # empty payload
+        5,  # tiny
+        125,  # last value of the 7-bit length
+        126,  # first value needing the 16-bit length
+        65535,  # last value of the 16-bit length
+        65536,  # first value needing the 64-bit length
+        70000,  # comfortably into the 64-bit length path
+    ],
+)
 def test_frame_roundtrip_all_length_encodings(size):
-    payload = 'x' * size
+    payload = "x" * size
     assert _roundtrip(payload) == payload
 
 
 def test_frame_roundtrip_unicode():
     # Multi-byte UTF-8 must survive masking + length accounting (length is
     # in bytes, not codepoints).
-    payload = 'héllo — ✓ 𝟙'
+    payload = "héllo — ✓ 𝟙"
     assert _roundtrip(payload) == payload
 
 
@@ -67,18 +71,20 @@ def test_recv_frame_answers_ping_then_returns_text():
     a.settimeout(5)
     b.settimeout(5)
     try:
+
         def sender():
-            cdp._send_frame(a, 0x9, b'pingdata')   # ping
-            cdp._send_frame(a, 0x1, 'after-ping')  # text
+            cdp._send_frame(a, 0x9, b"pingdata")  # ping
+            cdp._send_frame(a, 0x1, "after-ping")  # text
+
         t = threading.Thread(target=sender)
         t.start()
         # _recv_frame should swallow the ping (replying with a pong on b's
         # peer, i.e. back to a) and return the text frame.
-        assert cdp._recv_frame(b) == 'after-ping'
+        assert cdp._recv_frame(b) == "after-ping"
         t.join(5)
         # The pong (opcode 0xA) the receiver sent should be readable on a.
         pong = cdp._recv_frame(a)
-        assert pong == 'pingdata'  # _recv_frame decodes any non-control body
+        assert pong == "pingdata"  # _recv_frame decodes any non-control body
     finally:
         a.close()
         b.close()
@@ -90,7 +96,7 @@ def test_recv_frame_raises_on_close():
     b.settimeout(5)
     try:
         # 0x8 = close frame.
-        threading.Thread(target=cdp._send_frame, args=(a, 0x8, b'')).start()
+        threading.Thread(target=cdp._send_frame, args=(a, 0x8, b"")).start()
         with pytest.raises(ConnectionError):
             cdp._recv_frame(b)
     finally:
@@ -100,8 +106,8 @@ def test_recv_frame_raises_on_close():
 
 def test_standalone_scraper_declares_matching_cdp_parity_version():
     spec = importlib.util.spec_from_file_location(
-        'scrape_edge_parity',
-        Path('scripts/scrape_edge.py'),
+        "scrape_edge_parity",
+        Path("scripts/scrape_edge.py"),
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
