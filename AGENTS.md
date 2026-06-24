@@ -201,31 +201,31 @@ When the user says "cut a release" / "new patch version" / "ship it":
    here are live in launchd the moment they hit disk - you do not
    need to reinstall after editing `scripts/scrape_edge.py` or any
    Python module. The brew copy is what end users get.
-9. Publish the sdist + wheel to PyPI **locally** with `uv`. The PyPI API
-   token lives in `UV_PUBLISH_TOKEN` in `./.env` at the repo root (do NOT
-   commit it; `.gitignore` already excludes it). `uv publish` reads that
-   exact env var, so sourcing `.env` is enough:
-   ```
-   rm -rf dist build
-   uv build
-   set -a && . ./.env && set +a && uv publish dist/owa_piggy-X.Y.Z*
-   ```
-   `uv publish` is idempotent on retry: if it reports "File already exists"
-   but `pypi.org/pypi/owa-piggy/X.Y.Z/json` returns 200, the upload
-   succeeded and the JSON index is just lagging (it can run a few minutes
-   behind) - don't re-tag or re-build to "fix" it.
+9. PyPI publishing is automatic. The tag push from step 4 triggers
+   `.github/workflows/release.yml`, which re-runs the ci.yml gates, rebuilds the
+   wheel + sdist with `uv build`, attaches build-provenance attestations, and
+   then **publishes to PyPI via Trusted Publishing (OIDC)** in the `pypi-publish`
+   job - no stored credential. It also creates the GitHub Release at the tag with
+   the wheel, sdist, and the three PyInstaller binaries attached (each attested).
+   You do **not** run `uv publish` by hand anymore.
 
-   The tag push from step 4 also triggers `.github/workflows/release.yml`,
-   which re-runs the ci.yml gates, rebuilds the wheel + sdist with `uv
-   build`, and creates the GitHub Release at the tag with both artifacts
-   attached. That workflow does **not** touch PyPI - the local `uv publish`
-   above is the only thing that uploads there.
+   One-time setup (already done once per project, listed here for the record):
+   - On PyPI, under the project's *Publishing* settings, add `damsleth/owa-piggy`
+     as a Trusted Publisher with workflow `release.yml` and environment `pypi`.
+   - Delete the old `UV_PUBLISH_TOKEN` from `./.env` and from shell history - it
+     is no longer used and a long-lived token in the release path is exactly the
+     thing v1-08 removed.
+
+   Verify a released artifact's provenance with:
+   ```
+   gh attestation verify owa_piggy-X.Y.Z-py3-none-any.whl --repo damsleth/owa-piggy
+   ```
 
 If any step fails midway (tag push rejected, sha mismatch, tap push
-rejected, PyPI 4xx that isn't "File already exists"), stop and
-surface the error - do not try to "fix" a published tag by
-force-pushing, and never bump the patch version a second time to
-work around an already-published file.
+rejected, the release workflow's PyPI publish erroring on an
+already-published file), stop and surface the error - do not try to
+"fix" a published tag by force-pushing, and never bump the patch
+version a second time to work around an already-published file.
 
 ## What NOT to do
 

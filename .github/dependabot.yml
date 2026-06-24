@@ -1,0 +1,8 @@
+version: 2
+updates:
+  # Keep the SHA-pinned actions in ci.yml / release.yml from rotting. Dependabot
+  # opens weekly PRs that bump the pin and update the trailing version comment.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
