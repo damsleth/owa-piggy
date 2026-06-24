@@ -25,6 +25,8 @@ Pre-migration (legacy) installs keep `CONFIG_PATH` at the flat
 into `profiles/default/` the first time a profile-aware code path runs.
 """
 
+from __future__ import annotations
+
 import contextlib
 import os
 import re

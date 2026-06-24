@@ -6,6 +6,8 @@ the search order here prevents each command from growing its own copy of
 the same path dance.
 """
 
+from __future__ import annotations
+
 import os
 import sys
 from pathlib import Path
