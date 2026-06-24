@@ -18,6 +18,8 @@ import threading
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Iterator
+from typing import Any
 
 CLIENT_ID = "9199bf20-a13f-4107-85dc-02114787ef48"
 ORIGIN = "https://outlook.cloud.microsoft"
@@ -45,7 +47,7 @@ KNOWN_CLIENT_ORIGINS = {
 }
 
 
-def origin_for_client(client_id, override=None):
+def origin_for_client(client_id: str, override: str | None = None) -> str:
     """Resolve the Origin header for a token exchange. An explicit
     override (OWA_ORIGIN) wins; otherwise fall back to the per-client
     default, then the global Outlook origin."""
@@ -63,7 +65,7 @@ def origin_for_client(client_id, override=None):
 # a multi-minute hang. We interleave the families and cap each attempt instead.
 
 
-def _interleave_by_family(infos):
+def _interleave_by_family(infos: list[tuple[Any, ...]]) -> list[tuple[Any, ...]]:
     """Reorder getaddrinfo results to alternate IPv6/IPv4 so a dead family
     can't monopolise the front of the attempt list."""
     v6 = [i for i in infos if i[0] == socket.AF_INET6]
@@ -77,13 +79,13 @@ def _interleave_by_family(infos):
     return out
 
 
-def _coerce_timeout(timeout):
+def _coerce_timeout(timeout: Any) -> float | None:
     """http.client may hand us its _GLOBAL_DEFAULT_TIMEOUT sentinel; settimeout
     only accepts a number or None."""
     return timeout if isinstance(timeout, (int, float)) else None
 
 
-def happy_eyeballs_connect(host, port, timeout):
+def happy_eyeballs_connect(host: str, port: int, timeout: Any) -> socket.socket:
     """Connect to host:port, trying the resolved addresses IPv6/IPv4-
     interleaved with a short per-address connect timeout. Returns the first
     socket that connects; raises the last error if none do.
@@ -122,17 +124,23 @@ class _HappyEyeballsHTTPSConnection(http.client.HTTPSConnection):
     the normal TLS handshake (cert + hostname verification preserved via the
     handler's SSL context)."""
 
-    def connect(self):
+    def connect(self) -> None:
         self.sock = happy_eyeballs_connect(self.host, self.port, self.timeout)
         if getattr(self, "_tunnel_host", None):
-            self._tunnel()
-        server_hostname = self._tunnel_host or self.host
-        self.sock = self._context.wrap_socket(self.sock, server_hostname=server_hostname)
+            self._tunnel()  # type: ignore[attr-defined]
+        server_hostname = self._tunnel_host or self.host  # type: ignore[attr-defined]
+        self.sock = self._context.wrap_socket(  # type: ignore[attr-defined]
+            self.sock, server_hostname=server_hostname
+        )
 
 
 class _HappyEyeballsHTTPSHandler(urllib.request.HTTPSHandler):
-    def https_open(self, req):
-        return self.do_open(_HappyEyeballsHTTPSConnection, req, context=self._context)
+    def https_open(self, req: urllib.request.Request) -> http.client.HTTPResponse:
+        return self.do_open(
+            _HappyEyeballsHTTPSConnection,
+            req,
+            context=self._context,  # type: ignore[attr-defined]
+        )
 
 
 # Built once and reused: a default opener whose only deviation from the stock
@@ -149,12 +157,12 @@ _OPENER = urllib.request.build_opener(_HappyEyeballsHTTPSHandler())
 _err_sink = threading.local()
 
 
-def _err_stream():
+def _err_stream() -> Any:
     return getattr(_err_sink, "stream", None) or sys.stderr
 
 
 @contextlib.contextmanager
-def capture_errors():
+def capture_errors() -> Iterator[io.StringIO]:
     """Redirect exchange_token's ERROR/hint output to a buffer for the calling
     thread only. Yields the buffer; restores the previous sink on exit."""
     buf = io.StringIO()
@@ -166,7 +174,13 @@ def capture_errors():
         _err_sink.stream = prev
 
 
-def exchange_token(refresh_token, tenant_id, client_id, scope, origin=None):
+def exchange_token(
+    refresh_token: str,
+    tenant_id: str,
+    client_id: str,
+    scope: str,
+    origin: str | None = None,
+) -> dict[str, Any] | None:
     url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
     data = urllib.parse.urlencode(
         {
@@ -188,7 +202,8 @@ def exchange_token(refresh_token, tenant_id, client_id, scope, origin=None):
     )
     try:
         with _OPENER.open(req, timeout=EXCHANGE_TIMEOUT) as resp:
-            return json.loads(resp.read())
+            payload: dict[str, Any] = json.loads(resp.read())
+            return payload
     except urllib.error.HTTPError as e:
         err_body = e.read().decode("utf-8", errors="replace")
         try:
