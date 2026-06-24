@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 
-def find_packaged_script(name, *, env_override=None):
+def find_packaged_script(name: str, *, env_override: str | None = None) -> Path | None:
     """Return the first existing helper script path, or None.
 
     Search order is: explicit env var override, repo checkout, pip/pipx
@@ -45,13 +45,13 @@ def find_packaged_script(name, *, env_override=None):
 # the env var name, both encoded as a single line below.
 
 
-def find_reseed_script():
+def find_reseed_script() -> Path | None:
     """Locate reseed-from-edge.sh across install layouts. Honors
     OWA_RESEED_SCRIPT for explicit overrides."""
     return find_packaged_script("reseed-from-edge.sh", env_override="OWA_RESEED_SCRIPT")
 
 
-def find_setup_refresh_script():
+def find_setup_refresh_script() -> Path | None:
     """Locate setup-refresh.sh across install layouts. Honors
     OWA_SETUP_REFRESH_SCRIPT for explicit overrides."""
     return find_packaged_script("setup-refresh.sh", env_override="OWA_SETUP_REFRESH_SCRIPT")
