@@ -11,6 +11,8 @@ module owns terminal rendering and key dispatch; everything else is
 borrowed.
 """
 
+from __future__ import annotations
+
 import sys
 
 from .cache import clear_cache
