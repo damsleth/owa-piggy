@@ -31,16 +31,17 @@ Storage (mode 0600, atomically written, same as the config):
       }
     }
 """
+
 import json
 
 from .config import DEVOPS_CLIENT_ID, atomic_write, iso_utc_now, profile_dir
 
-CLIENTS_FILENAME = 'clients.json'
+CLIENTS_FILENAME = "clients.json"
 
 # Teams web app. The only client teams authsvc still answers, and a full
 # FOCI-family member besides (verified: it mints graph, outlook, and every
 # Teams audience), so routing an audience to it never costs reach.
-TEAMS_WEB_CLIENT_ID = '5e3ce6c0-2b1f-4285-8d4b-75ee78787346'
+TEAMS_WEB_CLIENT_ID = "5e3ce6c0-2b1f-4285-8d4b-75ee78787346"
 
 # Clients a profile can hold beyond its FOCI token. `capture_url` is where
 # the sidecar navigates to make that client mint; None means the URL is
@@ -48,14 +49,14 @@ TEAMS_WEB_CLIENT_ID = '5e3ce6c0-2b1f-4285-8d4b-75ee78787346'
 # path, e.g. https://dev.azure.com/<org>/<project>/_workitems).
 KNOWN_CLIENTS = {
     TEAMS_WEB_CLIENT_ID: {
-        'name': 'teams',
-        'origin': 'https://teams.microsoft.com',
-        'capture_url': 'https://teams.microsoft.com/',
+        "name": "teams",
+        "origin": "https://teams.microsoft.com",
+        "capture_url": "https://teams.microsoft.com/",
     },
     DEVOPS_CLIENT_ID: {
-        'name': 'devops',
-        'origin': 'https://dev.azure.com',
-        'capture_url': None,
+        "name": "devops",
+        "origin": "https://dev.azure.com",
+        "capture_url": None,
     },
 }
 
@@ -70,28 +71,28 @@ AUDIENCE_CLIENT = {
     # Skype token, and the one that answers 410 ApiRestricted for anyone
     # but the Teams client. Callers that ask for it by scope rather than by
     # audience name (teaminal does) route here too.
-    'https://teams.microsoft.com': TEAMS_WEB_CLIENT_ID,
-    'https://api.spaces.skype.com': TEAMS_WEB_CLIENT_ID,
-    'https://ic3.teams.office.com': TEAMS_WEB_CLIENT_ID,
-    'https://chatsvcagg.teams.microsoft.com': TEAMS_WEB_CLIENT_ID,
-    'https://presence.teams.microsoft.com': TEAMS_WEB_CLIENT_ID,
-    'https://uis.teams.microsoft.com': TEAMS_WEB_CLIENT_ID,
-    'https://app.vssps.visualstudio.com': DEVOPS_CLIENT_ID,
+    "https://teams.microsoft.com": TEAMS_WEB_CLIENT_ID,
+    "https://api.spaces.skype.com": TEAMS_WEB_CLIENT_ID,
+    "https://ic3.teams.office.com": TEAMS_WEB_CLIENT_ID,
+    "https://chatsvcagg.teams.microsoft.com": TEAMS_WEB_CLIENT_ID,
+    "https://presence.teams.microsoft.com": TEAMS_WEB_CLIENT_ID,
+    "https://uis.teams.microsoft.com": TEAMS_WEB_CLIENT_ID,
+    "https://app.vssps.visualstudio.com": DEVOPS_CLIENT_ID,
 }
 
 
 def client_id_for_name(name):
     """Resolve a short client name ('teams', 'devops') to its client id."""
     for cid, meta in KNOWN_CLIENTS.items():
-        if meta['name'] == name:
+        if meta["name"] == name:
             return cid
     return None
 
 
 def client_name(client_id):
     """Short name for a client id, or the id itself when unknown."""
-    meta = KNOWN_CLIENTS.get((client_id or '').strip())
-    return meta['name'] if meta else (client_id or '')
+    meta = KNOWN_CLIENTS.get((client_id or "").strip())
+    return meta["name"] if meta else (client_id or "")
 
 
 def clients_path(alias):
@@ -129,19 +130,19 @@ def declare_client(alias, client_id, *, origin=None, capture_url=None):
     meta = KNOWN_CLIENTS.get(client_id, {})
     clients = load_clients(alias)
     entry = dict(clients.get(client_id, {}))
-    entry.setdefault('refresh_token', '')
-    resolved_url = capture_url or entry.get('capture_url') or meta.get('capture_url')
+    entry.setdefault("refresh_token", "")
+    resolved_url = capture_url or entry.get("capture_url") or meta.get("capture_url")
     if not resolved_url:
         return None, (
-            f'client {client_name(client_id)!r} needs an explicit capture URL '
-            f'(its sign-in URL is org-specific). Pass '
-            f'--with-client {client_name(client_id)}=<url>'
+            f"client {client_name(client_id)!r} needs an explicit capture URL "
+            f"(its sign-in URL is org-specific). Pass "
+            f"--with-client {client_name(client_id)}=<url>"
         )
-    entry['capture_url'] = resolved_url
-    entry['origin'] = origin or entry.get('origin') or meta.get('origin') or ''
-    clients[client_id] = {k: v for k, v in entry.items() if v or k == 'refresh_token'}
-    atomic_write(clients_path(alias), json.dumps(clients, indent=2) + '\n')
-    return clients[client_id], ''
+    entry["capture_url"] = resolved_url
+    entry["origin"] = origin or entry.get("origin") or meta.get("origin") or ""
+    clients[client_id] = {k: v for k, v in entry.items() if v or k == "refresh_token"}
+    atomic_write(clients_path(alias), json.dumps(clients, indent=2) + "\n")
+    return clients[client_id], ""
 
 
 def forget_client(alias, client_id):
@@ -155,7 +156,7 @@ def forget_client(alias, client_id):
     if client_id not in clients:
         return False
     del clients[client_id]
-    atomic_write(clients_path(alias), json.dumps(clients, indent=2) + '\n')
+    atomic_write(clients_path(alias), json.dumps(clients, indent=2) + "\n")
     return True
 
 
@@ -165,19 +166,22 @@ def parse_spec(spec):
     Accepts `teams`, `devops=https://dev.azure.com/org/proj/_workitems`, or
     a raw client id with an explicit URL for a client we don't know yet.
     """
-    text = (spec or '').strip()
+    text = (spec or "").strip()
     if not text:
-        return None, None, 'empty --with-client value'
-    name, _, url = text.partition('=')
+        return None, None, "empty --with-client value"
+    name, _, url = text.partition("=")
     name, url = name.strip(), url.strip()
     client_id = client_id_for_name(name) or (name if len(name) == 36 else None)
     if not client_id:
-        known = ', '.join(sorted(m['name'] for m in KNOWN_CLIENTS.values()))
-        return None, None, (f'unknown client {name!r}; known names: {known} '
-                            f'(or pass a client id with =<url>)')
+        known = ", ".join(sorted(m["name"] for m in KNOWN_CLIENTS.values()))
+        return (
+            None,
+            None,
+            (f"unknown client {name!r}; known names: {known} (or pass a client id with =<url>)"),
+        )
     if client_id not in KNOWN_CLIENTS and not url:
-        return None, None, f'client {name!r} needs an explicit =<url>'
-    return client_id, url or None, ''
+        return None, None, f"client {name!r} needs an explicit =<url>"
+    return client_id, url or None, ""
 
 
 def capture_targets(alias):
@@ -190,8 +194,9 @@ def capture_targets(alias):
     return list(load_clients(alias).items())
 
 
-def save_client(alias, client_id, *, refresh_token, origin=None,
-                capture_url=None, rt_issued_at=None):
+def save_client(
+    alias, client_id, *, refresh_token, origin=None, capture_url=None, rt_issued_at=None
+):
     """Add or update one bound client, preserving the rest of the store.
 
     Read-modify-write rather than a whole-file rewrite: `reseed` rotates
@@ -202,14 +207,15 @@ def save_client(alias, client_id, *, refresh_token, origin=None,
     meta = KNOWN_CLIENTS.get(client_id, {})
     existing = clients.get(client_id, {})
     entry = {
-        'refresh_token': refresh_token,
-        'origin': origin or existing.get('origin') or meta.get('origin') or '',
-        'capture_url': (capture_url or existing.get('capture_url')
-                        or meta.get('capture_url') or ''),
-        'rt_issued_at': rt_issued_at or iso_utc_now(),
+        "refresh_token": refresh_token,
+        "origin": origin or existing.get("origin") or meta.get("origin") or "",
+        "capture_url": (
+            capture_url or existing.get("capture_url") or meta.get("capture_url") or ""
+        ),
+        "rt_issued_at": rt_issued_at or iso_utc_now(),
     }
     clients[client_id] = {k: v for k, v in entry.items() if v}
-    atomic_write(clients_path(alias), json.dumps(clients, indent=2) + '\n')
+    atomic_write(clients_path(alias), json.dumps(clients, indent=2) + "\n")
     return clients[client_id]
 
 
@@ -221,11 +227,11 @@ def audience_from_scope(scope):
     there is no audience to route on and we return ''.
     """
     if not scope:
-        return ''
+        return ""
     first = scope.split()[0]
-    if not first.endswith('/.default'):
-        return ''
-    return first[: -len('/.default')]
+    if not first.endswith("/.default"):
+        return ""
+    return first[: -len("/.default")]
 
 
 def select_for_scope(alias, scope):
@@ -245,7 +251,7 @@ def select_for_scope(alias, scope):
     if not client_id:
         return None, None
     entry = load_clients(alias).get(client_id)
-    if not entry or not entry.get('refresh_token'):
+    if not entry or not entry.get("refresh_token"):
         return None, None
     return client_id, entry
 
@@ -258,11 +264,11 @@ def overlay_config(config, client_id, entry):
     written back (via `save_client`, not `save_config`).
     """
     overlaid = dict(config)
-    overlaid['OWA_CLIENT_ID'] = client_id
-    overlaid['OWA_REFRESH_TOKEN'] = entry.get('refresh_token', '')
-    origin = entry.get('origin') or KNOWN_CLIENTS.get(client_id, {}).get('origin')
+    overlaid["OWA_CLIENT_ID"] = client_id
+    overlaid["OWA_REFRESH_TOKEN"] = entry.get("refresh_token", "")
+    origin = entry.get("origin") or KNOWN_CLIENTS.get(client_id, {}).get("origin")
     if origin:
-        overlaid['OWA_ORIGIN'] = origin
+        overlaid["OWA_ORIGIN"] = origin
     return overlaid
 
 
@@ -271,6 +277,7 @@ def overlay_config(config, client_id, entry):
 
 def _read_config_file(path):
     from .config import _iter_kv
+
     try:
         return dict(_iter_kv(path.read_text()))
     except OSError:
@@ -300,17 +307,19 @@ def fold_candidates():
         profiles[alias] = _read_config_file(path)
 
     def identity(cfg):
-        return ((cfg.get('OWA_EMAIL', '') or '').strip().lower(),
-                (cfg.get('OWA_TENANT_ID', '') or '').strip().lower())
+        return (
+            (cfg.get("OWA_EMAIL", "") or "").strip().lower(),
+            (cfg.get("OWA_TENANT_ID", "") or "").strip().lower(),
+        )
 
     out = []
     for alias, cfg in profiles.items():
-        client_id = (cfg.get('OWA_CLIENT_ID', '') or '').strip()
+        client_id = (cfg.get("OWA_CLIENT_ID", "") or "").strip()
         if not client_id or client_id == CLIENT_ID or client_id not in KNOWN_CLIENTS:
             continue
-        if (cfg.get('OWA_FOLDED_INTO', '') or '').strip():
+        if (cfg.get("OWA_FOLDED_INTO", "") or "").strip():
             continue
-        if not cfg.get('OWA_REFRESH_TOKEN', '').strip():
+        if not cfg.get("OWA_REFRESH_TOKEN", "").strip():
             continue
         email, tenant = identity(cfg)
         if not email or not tenant:
@@ -318,7 +327,7 @@ def fold_candidates():
         for parent, pcfg in profiles.items():
             if parent == alias:
                 continue
-            pclient = (pcfg.get('OWA_CLIENT_ID', '') or '').strip()
+            pclient = (pcfg.get("OWA_CLIENT_ID", "") or "").strip()
             if pclient and pclient != CLIENT_ID:
                 continue
             if identity(pcfg) == (email, tenant):
@@ -339,14 +348,18 @@ def fold_into_parent(bound_alias, parent_alias, client_id):
     from .config import profile_config_path, save_config
 
     cfg = _read_config_file(profile_config_path(bound_alias))
-    rt = (cfg.get('OWA_REFRESH_TOKEN', '') or '').strip()
+    rt = (cfg.get("OWA_REFRESH_TOKEN", "") or "").strip()
     if not rt:
         return False
-    save_client(parent_alias, client_id, refresh_token=rt,
-                origin=(cfg.get('OWA_ORIGIN', '') or '').strip() or None,
-                capture_url=(cfg.get('OWA_CAPTURE_URL', '') or '').strip() or None,
-                rt_issued_at=(cfg.get('OWA_RT_ISSUED_AT', '') or '').strip() or None)
-    cfg['OWA_REFRESH_TOKEN'] = ''
-    cfg['OWA_FOLDED_INTO'] = parent_alias
+    save_client(
+        parent_alias,
+        client_id,
+        refresh_token=rt,
+        origin=(cfg.get("OWA_ORIGIN", "") or "").strip() or None,
+        capture_url=(cfg.get("OWA_CAPTURE_URL", "") or "").strip() or None,
+        rt_issued_at=(cfg.get("OWA_RT_ISSUED_AT", "") or "").strip() or None,
+    )
+    cfg["OWA_REFRESH_TOKEN"] = ""
+    cfg["OWA_FOLDED_INTO"] = parent_alias
     save_config(cfg, profile_config_path(bound_alias))
     return True

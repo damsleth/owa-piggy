@@ -10,6 +10,7 @@ The picker only mutates state through the shared registry ops in
 module owns terminal rendering and key dispatch; everything else is
 borrowed.
 """
+
 import sys
 
 from .cache import clear_cache
@@ -40,24 +41,25 @@ from .reseed import do_reseed, do_reseed_all
 # --- ANSI escapes ------------------------------------------------------
 # Named for readability; otherwise the picker is mostly punctuation.
 
-CLEAR_SCREEN = '\x1b[2J\x1b[H'
-CLEAR_EOL = '\x1b[K'
-HIDE_CURSOR = '\x1b[?25l'
-SHOW_CURSOR = '\x1b[?25h'
-DIM = '\x1b[2m'
-GREEN = '\x1b[32m'
-YELLOW = '\x1b[33m'
-RED = '\x1b[31m'
-CYAN = '\x1b[36m'
-RESET = '\x1b[0m'
+CLEAR_SCREEN = "\x1b[2J\x1b[H"
+CLEAR_EOL = "\x1b[K"
+HIDE_CURSOR = "\x1b[?25l"
+SHOW_CURSOR = "\x1b[?25h"
+DIM = "\x1b[2m"
+GREEN = "\x1b[32m"
+YELLOW = "\x1b[33m"
+RED = "\x1b[31m"
+CYAN = "\x1b[36m"
+RESET = "\x1b[0m"
 
 # Suggested audiences shown in the new-profile prompt. This is a
 # usability hint, not a constraint - any KNOWN_AUDIENCES short name or
 # https URL is accepted by resolve_audience.
-_AUDIENCE_HINTS = ('graph', 'outlook', 'teams', 'azure')
+_AUDIENCE_HINTS = ("graph", "outlook", "teams", "azure")
 
 
 # --- Empty-state and add-profile flows ---------------------------------
+
 
 def empty_state_setup_flow():
     """Walk a fresh-install user through creating their first profile.
@@ -68,8 +70,8 @@ def empty_state_setup_flow():
     After success, drops into the dashboard so the user sees what they
     just built (and its token health).
     """
-    print('owa-piggy: no profiles configured yet.')
-    print('Let\'s set one up. Press Ctrl-C to abort.\n')
+    print("owa-piggy: no profiles configured yet.")
+    print("Let's set one up. Press Ctrl-C to abort.\n")
     alias, email, audience = prompt_new_profile_fields()
     if alias is None:
         return 1
@@ -78,7 +80,7 @@ def empty_state_setup_flow():
     return run_dashboard()
 
 
-def prompt_new_profile_fields(default_alias=''):
+def prompt_new_profile_fields(default_alias=""):
     """Prompt for (alias, email, audience). Returns (None, None, None)
     on abort.
 
@@ -89,22 +91,21 @@ def prompt_new_profile_fields(default_alias=''):
     while True:
         try:
             raw = input(
-                f'profile name (alias)'
-                f'{f" [{default_alias}]" if default_alias else ""}: '
+                f"profile name (alias){f' [{default_alias}]' if default_alias else ''}: "
             ).strip()
         except (EOFError, KeyboardInterrupt):
             print()
             return None, None, None
         alias = raw or default_alias
         if not alias:
-            print('  alias required.')
+            print("  alias required.")
             continue
         ok, err = validate_alias(alias)
         if not ok:
-            print(f'  {err}')
+            print(f"  {err}")
             continue
         if alias in list_profiles():
-            print(f'  profile {alias!r} already exists.')
+            print(f"  profile {alias!r} already exists.")
             continue
         break
     # Empty email => legacy paste flow (faster, works on plain MSAL
@@ -114,8 +115,7 @@ def prompt_new_profile_fields(default_alias=''):
     while True:
         try:
             email = input(
-                'email address for Edge sign-in capture '
-                '(blank = legacy paste flow): '
+                "email address for Edge sign-in capture (blank = legacy paste flow): "
             ).strip()
         except (EOFError, KeyboardInterrupt):
             print()
@@ -123,22 +123,24 @@ def prompt_new_profile_fields(default_alias=''):
         if not email:
             email = None
             break
-        if '@' in email:
+        if "@" in email:
             break
-        print('  enter an email address (e.g. you@example.com), '
-              'or leave blank for the paste flow.')
-    print(f'default audience for this profile [{"/".join(_AUDIENCE_HINTS)}, '
-          f'or full https URL] (default: graph):')
+        print("  enter an email address (e.g. you@example.com), or leave blank for the paste flow.")
+    print(
+        f"default audience for this profile [{'/'.join(_AUDIENCE_HINTS)}, "
+        f"or full https URL] (default: graph):"
+    )
     try:
-        aud_raw = input('  audience: ').strip()
+        aud_raw = input("  audience: ").strip()
     except (EOFError, KeyboardInterrupt):
         print()
         return None, None, None
-    audience = aud_raw or 'graph'
+    audience = aud_raw or "graph"
     return alias, email, audience
 
 
 # --- Picker state ------------------------------------------------------
+
 
 class PickerState:
     """Owns the picker's mutable state plus the raw/cooked toggle.
@@ -153,14 +155,16 @@ class PickerState:
         self.fd = fd
         self.old = old_termios
         self.idx = 0
-        self.message = ''
+        self.message = ""
 
     def go_raw(self):
         import tty
+
         tty.setraw(self.fd)
 
     def restore(self):
         import termios
+
         termios.tcsetattr(self.fd, termios.TCSADRAIN, self.old)
 
     def cooked_action(self, fn):
@@ -181,11 +185,11 @@ class PickerState:
 def _confirm(prompt):
     """y/N confirmation in cooked mode. Default no."""
     try:
-        ans = input(f'{prompt} [y/N]: ').strip().lower()
+        ans = input(f"{prompt} [y/N]: ").strip().lower()
     except (EOFError, KeyboardInterrupt):
         print()
         return False
-    return ans in ('y', 'yes')
+    return ans in ("y", "yes")
 
 
 # --- Action functions --------------------------------------------------
@@ -193,20 +197,20 @@ def _confirm(prompt):
 # highlighted profile alias, performs a registry mutation or shells out,
 # and returns the status-line message to display on next redraw.
 
+
 def _action_toggle(current, enabled):
     if current in enabled:
         disable_profile(current)
-        return f'disabled {current!r}.'
+        return f"disabled {current!r}."
     ok, err = enable_profile(current)
-    return f'enabled {current!r}.' if ok else f'enable failed: {err}'
+    return f"enabled {current!r}." if ok else f"enable failed: {err}"
 
 
 def _action_set_default(current, default):
     if current == default:
-        return f'{current!r} is already the default.'
+        return f"{current!r} is already the default."
     ok, err = set_default_profile(current)
-    return (f'default profile set to {current!r}.' if ok
-            else f'set-default failed: {err}')
+    return f"default profile set to {current!r}." if ok else f"set-default failed: {err}"
 
 
 def _action_add(state):
@@ -223,19 +227,19 @@ def _action_add(state):
     profiles = list_profiles()
     if new_alias and new_alias in profiles:
         state.idx = profiles.index(new_alias)
-        return f'added profile {new_alias!r}.'
-    return 'add cancelled or failed.'
+        return f"added profile {new_alias!r}."
+    return "add cancelled or failed."
 
 
 def _action_delete(state, current):
     def do():
         print()
-        print(f'About to delete profile {current!r}:')
-        print(f'  - removes {profile_dir(current)}')
-        print('  - unregisters from profiles.conf')
+        print(f"About to delete profile {current!r}:")
+        print(f"  - removes {profile_dir(current)}")
+        print("  - unregisters from profiles.conf")
         if launchd_is_scheduled(current):
-            print('  - removes from launchd schedule')
-        if not _confirm(f'delete {current!r}?'):
+            print("  - removes from launchd schedule")
+        if not _confirm(f"delete {current!r}?"):
             return False
         ok, err = delete_profile(
             current,
@@ -243,13 +247,13 @@ def _action_delete(state, current):
             promote_default=True,
         )
         if not ok:
-            print(f'ERROR: {err}', file=sys.stderr)
-            input('press enter to continue...')
+            print(f"ERROR: {err}", file=sys.stderr)
+            input("press enter to continue...")
             return False
         return True
 
     deleted = state.cooked_action(do)
-    return f'deleted {current!r}.' if deleted else 'delete cancelled.'
+    return f"deleted {current!r}." if deleted else "delete cancelled."
 
 
 def _action_install(state, current):
@@ -258,47 +262,44 @@ def _action_install(state, current):
         sys.stdout.flush()
         rc = launchd_schedule(current)
         if rc == 0:
-            print(f'\n{current!r} added to launchd schedule.')
-        input('press enter to continue...')
+            print(f"\n{current!r} added to launchd schedule.")
+        input("press enter to continue...")
         return rc
 
     rc = state.cooked_action(do)
-    return (f'{current!r} scheduled.' if rc == 0
-            else f'scheduling {current!r} failed.')
+    return f"{current!r} scheduled." if rc == 0 else f"scheduling {current!r} failed."
 
 
 def _action_uninstall(state, current):
     if not launchd_is_scheduled(current):
-        return f'{current!r} is not scheduled.'
+        return f"{current!r} is not scheduled."
 
     def do():
         sys.stdout.write(CLEAR_SCREEN)
         sys.stdout.flush()
         rc = launchd_unschedule(current)
         if rc == 0:
-            print(f'\n{current!r} removed from launchd schedule.')
-        input('press enter to continue...')
+            print(f"\n{current!r} removed from launchd schedule.")
+        input("press enter to continue...")
         return rc
 
     rc = state.cooked_action(do)
-    return (f'{current!r} unscheduled.' if rc == 0
-            else f'unscheduling {current!r} failed.')
+    return f"{current!r} unscheduled." if rc == 0 else f"unscheduling {current!r} failed."
 
 
 def _action_reseed(state, current):
     def do():
         sys.stdout.write(CLEAR_SCREEN)
         sys.stdout.flush()
-        print(f'Reseeding {current!r}...\n')
+        print(f"Reseeding {current!r}...\n")
         clear_cache()
         rc = do_reseed(current)
         print()
-        input('press enter to continue...')
+        input("press enter to continue...")
         return rc
 
     rc = state.cooked_action(do)
-    return (f'reseed succeeded for {current!r}.' if rc == 0
-            else f'reseed failed for {current!r}.')
+    return f"reseed succeeded for {current!r}." if rc == 0 else f"reseed failed for {current!r}."
 
 
 def _action_open_edge(current):
@@ -308,11 +309,12 @@ def _action_open_edge(current):
     picker and just report what happened on the status line.
     """
     from .capture import open_edge
+
     try:
         open_edge(current)
     except RuntimeError as e:
-        return f'edge launch failed for {current!r}: {e}'
-    return f'opened Edge for {current!r}; sign in, CLOSE Edge, then reseed (r).'
+        return f"edge launch failed for {current!r}: {e}"
+    return f"opened Edge for {current!r}; sign in, CLOSE Edge, then reseed (r)."
 
 
 def _action_reseed_all(state):
@@ -322,18 +324,18 @@ def _action_reseed_all(state):
     the picker so the routine "Monday morning, all RTs are stale" flow
     doesn't require dropping out to the shell.
     """
+
     def do():
         sys.stdout.write(CLEAR_SCREEN)
         sys.stdout.flush()
-        print('Reseeding all profiles...\n')
+        print("Reseeding all profiles...\n")
         rc = do_reseed_all()
         print()
-        input('press enter to continue...')
+        input("press enter to continue...")
         return rc
 
     rc = state.cooked_action(do)
-    return ('reseed --all succeeded.' if rc == 0
-            else 'reseed --all failed (see above).')
+    return "reseed --all succeeded." if rc == 0 else "reseed --all failed (see above)."
 
 
 def print_plain_list():
@@ -346,17 +348,18 @@ def print_plain_list():
     """
     profiles = list_profiles()
     reg = load_profiles_conf()
-    default = reg['OWA_DEFAULT_PROFILE']
-    enabled = set(reg['OWA_PROFILES'])
-    scheduled = set(reg.get('OWA_SCHEDULED', []))
+    default = reg["OWA_DEFAULT_PROFILE"]
+    enabled = set(reg["OWA_PROFILES"])
+    scheduled = set(reg.get("OWA_SCHEDULED", []))
     for alias in profiles:
-        marker = '*' if alias == default else ('x' if alias in enabled else ' ')
-        sched = ' (S)' if alias in scheduled else ''
-        print(f' {marker} {alias}{sched}')
+        marker = "*" if alias == default else ("x" if alias in enabled else " ")
+        sched = " (S)" if alias in scheduled else ""
+        print(f" {marker} {alias}{sched}")
     return 0
 
 
 # --- Dashboard (token health) ------------------------------------------
+
 
 def _freshness_cell(report):
     """Map one status report to a (text, ansi_color) pair for the dashboard.
@@ -372,30 +375,30 @@ def _freshness_cell(report):
     --profile X"), `disabled` -> dim. Unprobed -> dim "probing...".
     """
     if report is None:
-        return 'probing...', DIM
+        return "probing...", DIM
 
     from .status import _humanize_minutes
 
-    st = report.get('state', 'fail')
-    if st == 'disabled':
-        return 'disabled', DIM
+    st = report.get("state", "fail")
+    if st == "disabled":
+        return "disabled", DIM
 
-    at = report.get('access_token') or {}
-    mins = at.get('minutes_remaining')
+    at = report.get("access_token") or {}
+    mins = at.get("minutes_remaining")
 
-    if st == 'ok':
-        text = f'fresh {_humanize_minutes(mins)}' if mins is not None else 'fresh'
+    if st == "ok":
+        text = f"fresh {_humanize_minutes(mins)}" if mins is not None else "fresh"
         return text, GREEN
-    if st == 'warn':
-        text = f'expiring {_humanize_minutes(mins)}' if mins is not None else 'expiring'
+    if st == "warn":
+        text = f"expiring {_humanize_minutes(mins)}" if mins is not None else "expiring"
         return text, YELLOW
 
     # fail: surface the first hint so the user knows the fix, truncated so
     # one broken profile can't blow out the row width.
-    hints = report.get('hints') or []
-    label = hints[0] if hints else 'needs reseed (r)'
+    hints = report.get("hints") or []
+    label = hints[0] if hints else "needs reseed (r)"
     if len(label) > 44:
-        label = label[:43] + '...'
+        label = label[:43] + "..."
     return label, RED
 
 
@@ -409,19 +412,21 @@ def print_plain_status(audience=None, scope=None, sharepoint_tenant=None):
     """
     profiles = list_profiles()
     if not profiles:
-        print('no profiles configured. Run: owa-piggy setup --profile <alias>')
+        print("no profiles configured. Run: owa-piggy setup --profile <alias>")
         return 0
     from . import status as status_mod
+
     data = status_mod.status_all_report(
-        audience=audience, scope=scope, sharepoint_tenant=sharepoint_tenant)
+        audience=audience, scope=scope, sharepoint_tenant=sharepoint_tenant
+    )
     reg = load_profiles_conf()
-    default = reg['OWA_DEFAULT_PROFILE']
-    reports = {r['profile']: r for r in data['profiles']}
+    default = reg["OWA_DEFAULT_PROFILE"]
+    reports = {r["profile"]: r for r in data["profiles"]}
     width = max((len(a) for a in profiles), default=0)
     for alias in profiles:
-        marker = '*' if alias == default else ' '
+        marker = "*" if alias == default else " "
         text, _color = _freshness_cell(reports.get(alias))
-        print(f' {marker} {alias.ljust(width)}  {text}')
+        print(f" {marker} {alias.ljust(width)}  {text}")
     return 0
 
 
@@ -455,11 +460,13 @@ def run_dashboard(audience=None, scope=None, sharepoint_tenant=None):
     try:
         import termios
     except ImportError:
-        return print_plain_status(audience=audience, scope=scope,
-                                  sharepoint_tenant=sharepoint_tenant)
+        return print_plain_status(
+            audience=audience, scope=scope, sharepoint_tenant=sharepoint_tenant
+        )
     if not sys.stdin.isatty() or not sys.stdout.isatty():
-        return print_plain_status(audience=audience, scope=scope,
-                                  sharepoint_tenant=sharepoint_tenant)
+        return print_plain_status(
+            audience=audience, scope=scope, sharepoint_tenant=sharepoint_tenant
+        )
 
     fd = sys.stdin.fileno()
     old = termios.tcgetattr(fd)
@@ -471,7 +478,7 @@ def run_dashboard(audience=None, scope=None, sharepoint_tenant=None):
     def load_state():
         profiles = list_profiles()
         reg = load_profiles_conf()
-        return profiles, reg['OWA_DEFAULT_PROFILE'], set(reg['OWA_PROFILES'])
+        return profiles, reg["OWA_DEFAULT_PROFILE"], set(reg["OWA_PROFILES"])
 
     def clamp_cursor(profiles):
         if not profiles:
@@ -483,47 +490,49 @@ def run_dashboard(audience=None, scope=None, sharepoint_tenant=None):
 
     def refresh():
         from . import status as status_mod
+
         data = status_mod.status_all_report(
-            audience=audience, scope=scope, sharepoint_tenant=sharepoint_tenant)
-        state.reports = {r['profile']: r for r in data['profiles']}
+            audience=audience, scope=scope, sharepoint_tenant=sharepoint_tenant
+        )
+        state.reports = {r["profile"]: r for r in data["profiles"]}
 
     def draw():
         profiles, default, enabled = load_state()
         clamp_cursor(profiles)
-        scheduled = set(load_profiles_conf().get('OWA_SCHEDULED', []))
+        scheduled = set(load_profiles_conf().get("OWA_SCHEDULED", []))
         launchd_state = {alias: alias in scheduled for alias in profiles}
         width = max((len(a) for a in profiles), default=0)
         sys.stdout.write(CLEAR_SCREEN)
-        sys.stdout.write('owa-piggy dashboard\r\n')
+        sys.stdout.write("owa-piggy dashboard\r\n")
         sys.stdout.write(
-            f'  {DIM}'
-            'up/down  navigate  ·  space toggle  ·  enter set default  ·  g refresh\r\n'
-            '  a add  ·  d delete  ·  l schedule  ·  u unschedule  ·  r reseed  ·  R reseed all  ·  e edge  ·  q quit'  # noqa: E501  (single-line key legend)
-            f'{RESET}\r\n\r\n'
+            f"  {DIM}"
+            "up/down  navigate  ·  space toggle  ·  enter set default  ·  g refresh\r\n"
+            "  a add  ·  d delete  ·  l schedule  ·  u unschedule  ·  r reseed  ·  R reseed all  ·  e edge  ·  q quit"  # noqa: E501  (single-line key legend)
+            f"{RESET}\r\n\r\n"
         )
         if not profiles:
             sys.stdout.write('  (no profiles - press "a" to add one, q to quit)\r\n')
         else:
             for i, alias in enumerate(profiles):
-                cursor = '>' if i == state.idx else ' '
+                cursor = ">" if i == state.idx else " "
                 if alias == default:
-                    state_marker = f'{GREEN}*{RESET}'
+                    state_marker = f"{GREEN}*{RESET}"
                 elif alias in enabled:
-                    state_marker = f'{GREEN}x{RESET}'
+                    state_marker = f"{GREEN}x{RESET}"
                 else:
-                    state_marker = f'{DIM} {RESET}'
-                launchd_marker = f' {CYAN}(S){RESET}' if launchd_state[alias] else ''
+                    state_marker = f"{DIM} {RESET}"
+                launchd_marker = f" {CYAN}(S){RESET}" if launchd_state[alias] else ""
                 text, color = _freshness_cell(state.reports.get(alias))
-                cell = f'{color}{text}{RESET}'
+                cell = f"{color}{text}{RESET}"
                 sys.stdout.write(
-                    f' {cursor} [{state_marker}] {alias.ljust(width)}{launchd_marker}'
-                    f'  {cell}{CLEAR_EOL}\r\n'
+                    f" {cursor} [{state_marker}] {alias.ljust(width)}{launchd_marker}"
+                    f"  {cell}{CLEAR_EOL}\r\n"
                 )
-        sys.stdout.write('\r\n')
+        sys.stdout.write("\r\n")
         if state.message:
-            sys.stdout.write(f'  {state.message}{CLEAR_EOL}\r\n')
+            sys.stdout.write(f"  {state.message}{CLEAR_EOL}\r\n")
         else:
-            sys.stdout.write(f'{CLEAR_EOL}\r\n')
+            sys.stdout.write(f"{CLEAR_EOL}\r\n")
         sys.stdout.flush()
 
     def reprobe():
@@ -548,92 +557,92 @@ def run_dashboard(audience=None, scope=None, sharepoint_tenant=None):
             clamp_cursor(profiles)
             current = profiles[state.idx] if profiles else None
 
-            if ch == '\x03':
+            if ch == "\x03":
                 raise KeyboardInterrupt
-            if ch in ('q', 'Q'):
+            if ch in ("q", "Q"):
                 break
-            if ch == '\x1b':
+            if ch == "\x1b":
                 seq = sys.stdin.read(1)
-                if seq == '[':
+                if seq == "[":
                     arrow = sys.stdin.read(1)
-                    if arrow == 'A':
+                    if arrow == "A":
                         state.idx = max(0, state.idx - 1)
-                    elif arrow == 'B':
+                    elif arrow == "B":
                         state.idx = min(max(0, len(profiles) - 1), state.idx + 1)
-                    state.message = ''
+                    state.message = ""
                     draw()
                     continue
                 # Bare ESC = quit.
                 break
-            if ch == 'k':
+            if ch == "k":
                 state.idx = max(0, state.idx - 1)
-                state.message = ''
+                state.message = ""
                 draw()
                 continue
-            if ch == 'j':
+            if ch == "j":
                 state.idx = min(max(0, len(profiles) - 1), state.idx + 1)
-                state.message = ''
+                state.message = ""
                 draw()
                 continue
 
-            if ch in ('g', 'G'):
-                state.message = ''
+            if ch in ("g", "G"):
+                state.message = ""
                 reprobe()
                 continue
 
-            if ch == 'a':
-                state.message = _action_add(state) or ''
+            if ch == "a":
+                state.message = _action_add(state) or ""
                 reprobe()
                 continue
 
-            if ch == 'R':
-                state.message = _action_reseed_all(state) or ''
+            if ch == "R":
+                state.message = _action_reseed_all(state) or ""
                 reprobe()
                 continue
 
             if not current:
                 # All remaining keys need a selected profile.
-                state.message = 'no profile selected.'
+                state.message = "no profile selected."
                 draw()
                 continue
 
-            if ch == ' ':
-                state.message = _action_toggle(current, enabled) or ''
+            if ch == " ":
+                state.message = _action_toggle(current, enabled) or ""
                 reprobe()
                 continue
 
-            if ch in ('\r', '\n'):
-                state.message = _action_set_default(current, default) or ''
+            if ch in ("\r", "\n"):
+                state.message = _action_set_default(current, default) or ""
                 draw()
                 continue
 
-            if ch == 'd':
-                state.message = _action_delete(state, current) or ''
+            if ch == "d":
+                state.message = _action_delete(state, current) or ""
                 draw()
                 continue
 
-            if ch == 'l':
-                state.message = _action_install(state, current) or ''
+            if ch == "l":
+                state.message = _action_install(state, current) or ""
                 draw()
                 continue
 
-            if ch == 'u':
-                state.message = _action_uninstall(state, current) or ''
+            if ch == "u":
+                state.message = _action_uninstall(state, current) or ""
                 draw()
                 continue
 
-            if ch == 'r':
-                state.message = _action_reseed(state, current) or ''
+            if ch == "r":
+                state.message = _action_reseed(state, current) or ""
                 reprobe()
                 continue
 
-            if ch == 'e':
-                state.message = _action_open_edge(current) or ''
+            if ch == "e":
+                state.message = _action_open_edge(current) or ""
                 draw()
                 continue
 
             # Unknown key - just clear any stale message.
-            state.message = ''
+            state.message = ""
             draw()
     finally:
         sys.stdout.write(SHOW_CURSOR)
