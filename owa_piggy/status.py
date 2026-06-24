@@ -10,6 +10,8 @@ Both take an `alias` parameter so output can be labeled with the active
 profile and the launchd plist we probe is the right one for that profile.
 """
 
+from __future__ import annotations
+
 import os
 import subprocess
 import sys

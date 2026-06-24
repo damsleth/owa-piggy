@@ -12,6 +12,8 @@ with a known subcommand and injecting `token` explicitly when it does
 not. The subsequent argparse pass sees a consistent shape either way.
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import os

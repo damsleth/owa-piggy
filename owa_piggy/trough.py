@@ -12,6 +12,8 @@ Opt-in plumbing - imported only when the user invokes
 imports this module, so a vanilla install pays nothing for it.
 """
 
+from __future__ import annotations
+
 import json
 import urllib.error
 import urllib.parse

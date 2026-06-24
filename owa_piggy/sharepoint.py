@@ -14,6 +14,8 @@ the SharePoint audience itself. Stays urllib-only to honour the suite's
 no-third-party-runtime-dependency axiom.
 """
 
+from __future__ import annotations
+
 import json
 import urllib.error
 import urllib.request
