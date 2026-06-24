@@ -18,9 +18,10 @@ import json
 import urllib.error
 import urllib.parse
 import urllib.request
+from typing import Any
 
 
-def _http_get_json(url, *, timeout):
+def _http_get_json(url: str, *, timeout: float) -> Any:
     req = urllib.request.Request(url, headers={"Accept": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -32,7 +33,14 @@ def _http_get_json(url, *, timeout):
         raise RuntimeError(f"trough unreachable at {url}: {e.reason}") from e
 
 
-def fetch_foci(trough_url, *, tenant=None, sub=None, timeout=10, limit=50):
+def fetch_foci(
+    trough_url: str,
+    *,
+    tenant: str | None = None,
+    sub: str | None = None,
+    timeout: float = 10,
+    limit: int = 50,
+) -> tuple[str, str, dict[str, Any]]:
     """Return ``(refresh_token, tid, info)`` for the freshest FOCI RT in the
     trough matching the filter.
 
@@ -53,11 +61,11 @@ def fetch_foci(trough_url, *, tenant=None, sub=None, timeout=10, limit=50):
         }
     )
     body = _http_get_json(f"{base}/tokens?{qs}", timeout=timeout)
-    tokens = body.get("tokens") or []
+    tokens: list[Any] = body.get("tokens") or []
     if not tokens:
         raise RuntimeError(f"no FOCI refresh tokens at {base}")
 
-    matches = []
+    matches: list[tuple[Any, Any, Any, Any]] = []
     for t in tokens:
         if (t.get("kind") or "") != "refresh":
             continue
@@ -76,7 +84,7 @@ def fetch_foci(trough_url, *, tenant=None, sub=None, timeout=10, limit=50):
         matches.append((t, payload, t_tid, t_sub))
 
     if not matches:
-        criteria = []
+        criteria: list[str] = []
         if tenant:
             criteria.append(f"tenant={tenant}")
         if sub:
@@ -89,7 +97,7 @@ def fetch_foci(trough_url, *, tenant=None, sub=None, timeout=10, limit=50):
     # Trough already returns last_seen DESC, but be defensive.
     matches.sort(key=lambda m: m[0].get("last_seen") or 0, reverse=True)
     top, payload, tid, sub_oid = matches[0]
-    info = {
+    info: dict[str, Any] = {
         "tid": tid,
         "sub": sub_oid,
         "src_host": top.get("src_host"),
@@ -99,4 +107,6 @@ def fetch_foci(trough_url, *, tenant=None, sub=None, timeout=10, limit=50):
         "matched": len(matches),
         "token_len": len(top["token"]),
     }
-    return top["token"], tid, info
+    token: str = top["token"]
+    tid_str: str = tid
+    return token, tid_str, info

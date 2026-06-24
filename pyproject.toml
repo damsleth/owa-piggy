@@ -55,7 +55,9 @@ packages = ["owa_piggy"]
 # Phase 2 (mypy), and Phase 3 (coverage). All three run with the `dev` extra.
 
 [tool.ruff]
-target-version = "py38"
+# Matches `requires-python` and the CI test matrix floor, so UP cannot push
+# syntax or stdlib calls past what the oldest supported interpreter runs.
+target-version = "py39"
 line-length = 100
 
 [tool.ruff.lint]
@@ -68,11 +70,12 @@ select = ["E", "F", "W", "I", "B", "C4", "SIM", "UP"]
 known-first-party = ["owa_piggy"]
 
 [tool.mypy]
-# Runtime floor stays 3.8 (CI tests it), but mypy >= 1.15 only accepts 3.9+ as
-# a check target. `from __future__ import annotations` in every module keeps the
-# list[str] / dict[str, X] syntax safe at runtime on 3.8; ruff UP guards against
-# 3.9-only stdlib calls sneaking in.
-python_version = "3.9"
+# The runtime floor is 3.9 (requires-python, and the CI matrix runs 3.9), but
+# mypy 2.x only accepts 3.10+ as a check target. `from __future__ import
+# annotations` in every module keeps the list[str] / dict[str, X] syntax safe
+# at runtime, ruff's py39 target rejects newer stdlib calls, and CI's
+# compileall + pytest on 3.9 catch anything 3.10-only that mypy would allow.
+python_version = "3.10"
 warn_unused_ignores = true
 warn_redundant_casts = true
 warn_return_any = true

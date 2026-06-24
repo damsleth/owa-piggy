@@ -14,6 +14,7 @@ borrowed.
 from __future__ import annotations
 
 import sys
+from typing import Any, Callable, TypeVar
 
 from .cache import clear_cache
 from .config import (
@@ -59,11 +60,13 @@ RESET = "\x1b[0m"
 # https URL is accepted by resolve_audience.
 _AUDIENCE_HINTS = ("graph", "outlook", "teams", "azure")
 
+_T = TypeVar("_T")
+
 
 # --- Empty-state and add-profile flows ---------------------------------
 
 
-def empty_state_setup_flow():
+def empty_state_setup_flow() -> int:
     """Walk a fresh-install user through creating their first profile.
 
     Asks for alias, email (network-capture mode is the right default
@@ -82,7 +85,9 @@ def empty_state_setup_flow():
     return run_dashboard()
 
 
-def prompt_new_profile_fields(default_alias=""):
+def prompt_new_profile_fields(
+    default_alias: str = "",
+) -> tuple[str, str | None, str] | tuple[None, None, None]:
     """Prompt for (alias, email, audience). Returns (None, None, None)
     on abort.
 
@@ -114,6 +119,7 @@ def prompt_new_profile_fields(default_alias=""):
     # tenants). Set email => network-capture flow (required for
     # encrypted-MSAL / Okta-federated tenants). The free-form prompt
     # lets the user choose without making them remember `--email`.
+    email: str | None
     while True:
         try:
             email = input(
@@ -153,23 +159,25 @@ class PickerState:
     position with the loop.
     """
 
-    def __init__(self, fd, old_termios):
+    def __init__(self, fd: int, old_termios: list[Any]) -> None:
         self.fd = fd
         self.old = old_termios
         self.idx = 0
         self.message = ""
+        # alias -> status report, populated by the dashboard's reprobe().
+        self.reports: dict[str, Any] = {}
 
-    def go_raw(self):
+    def go_raw(self) -> None:
         import tty
 
         tty.setraw(self.fd)
 
-    def restore(self):
+    def restore(self) -> None:
         import termios
 
         termios.tcsetattr(self.fd, termios.TCSADRAIN, self.old)
 
-    def cooked_action(self, fn):
+    def cooked_action(self, fn: Callable[[], _T]) -> _T:
         """Run fn() outside raw mode (so input() / print() work normally),
         then restore raw mode. Returns whatever fn returns.
         """
@@ -184,7 +192,7 @@ class PickerState:
             self.go_raw()
 
 
-def _confirm(prompt):
+def _confirm(prompt: str) -> bool:
     """y/N confirmation in cooked mode. Default no."""
     try:
         ans = input(f"{prompt} [y/N]: ").strip().lower()
@@ -200,7 +208,7 @@ def _confirm(prompt):
 # and returns the status-line message to display on next redraw.
 
 
-def _action_toggle(current, enabled):
+def _action_toggle(current: str, enabled: set[str]) -> str:
     if current in enabled:
         disable_profile(current)
         return f"disabled {current!r}."
@@ -208,15 +216,15 @@ def _action_toggle(current, enabled):
     return f"enabled {current!r}." if ok else f"enable failed: {err}"
 
 
-def _action_set_default(current, default):
+def _action_set_default(current: str, default: str) -> str:
     if current == default:
         return f"{current!r} is already the default."
     ok, err = set_default_profile(current)
     return f"default profile set to {current!r}." if ok else f"set-default failed: {err}"
 
 
-def _action_add(state):
-    def do():
+def _action_add(state: PickerState) -> str:
+    def do() -> str | None:
         sys.stdout.write(CLEAR_SCREEN)
         sys.stdout.flush()
         alias, email, audience = prompt_new_profile_fields()
@@ -233,8 +241,8 @@ def _action_add(state):
     return "add cancelled or failed."
 
 
-def _action_delete(state, current):
-    def do():
+def _action_delete(state: PickerState, current: str) -> str:
+    def do() -> bool:
         print()
         print(f"About to delete profile {current!r}:")
         print(f"  - removes {profile_dir(current)}")
@@ -258,8 +266,8 @@ def _action_delete(state, current):
     return f"deleted {current!r}." if deleted else "delete cancelled."
 
 
-def _action_install(state, current):
-    def do():
+def _action_install(state: PickerState, current: str) -> str:
+    def do() -> int:
         sys.stdout.write(CLEAR_SCREEN)
         sys.stdout.flush()
         rc = launchd_schedule(current)
@@ -272,11 +280,11 @@ def _action_install(state, current):
     return f"{current!r} scheduled." if rc == 0 else f"scheduling {current!r} failed."
 
 
-def _action_uninstall(state, current):
+def _action_uninstall(state: PickerState, current: str) -> str:
     if not launchd_is_scheduled(current):
         return f"{current!r} is not scheduled."
 
-    def do():
+    def do() -> int:
         sys.stdout.write(CLEAR_SCREEN)
         sys.stdout.flush()
         rc = launchd_unschedule(current)
@@ -289,8 +297,8 @@ def _action_uninstall(state, current):
     return f"{current!r} unscheduled." if rc == 0 else f"unscheduling {current!r} failed."
 
 
-def _action_reseed(state, current):
-    def do():
+def _action_reseed(state: PickerState, current: str) -> str:
+    def do() -> int:
         sys.stdout.write(CLEAR_SCREEN)
         sys.stdout.flush()
         print(f"Reseeding {current!r}...\n")
@@ -304,7 +312,7 @@ def _action_reseed(state, current):
     return f"reseed succeeded for {current!r}." if rc == 0 else f"reseed failed for {current!r}."
 
 
-def _action_open_edge(current):
+def _action_open_edge(current: str) -> str:
     """Open a normal Edge window against <current>'s sidecar userdata dir
     and leave it running. No cooked-mode drop: open_edge is detached and
     returns immediately, so there's nothing to wait on - we stay in the
@@ -319,7 +327,7 @@ def _action_open_edge(current):
     return f"opened Edge for {current!r}; sign in, CLOSE Edge, then reseed (r)."
 
 
-def _action_reseed_all(state):
+def _action_reseed_all(state: PickerState) -> str:
     """Shift-r: reseed every configured profile sequentially.
 
     Surfaces the same capability as `owa-piggy reseed --all` from inside
@@ -327,11 +335,11 @@ def _action_reseed_all(state):
     doesn't require dropping out to the shell.
     """
 
-    def do():
+    def do() -> int:
         sys.stdout.write(CLEAR_SCREEN)
         sys.stdout.flush()
         print("Reseeding all profiles...\n")
-        rc = do_reseed_all()
+        rc: int = do_reseed_all()
         print()
         input("press enter to continue...")
         return rc
@@ -340,7 +348,7 @@ def _action_reseed_all(state):
     return "reseed --all succeeded." if rc == 0 else "reseed --all failed (see above)."
 
 
-def print_plain_list():
+def print_plain_list() -> int:
     """Plain printed listing of profiles, marking default with '*' and
     enabled-but-not-default with 'x'.
 
@@ -363,7 +371,7 @@ def print_plain_list():
 # --- Dashboard (token health) ------------------------------------------
 
 
-def _freshness_cell(report):
+def _freshness_cell(report: dict[str, Any] | None) -> tuple[str, str]:
     """Map one status report to a (text, ansi_color) pair for the dashboard.
 
     Pure - no I/O. `report` is one entry from
@@ -404,7 +412,11 @@ def _freshness_cell(report):
     return label, RED
 
 
-def print_plain_status(audience=None, scope=None, sharepoint_tenant=None):
+def print_plain_status(
+    audience: str | None = None,
+    scope: str | None = None,
+    sharepoint_tenant: str | None = None,
+) -> int:
     """Non-TTY fallback for `owa-piggy tui`: one line per profile with its
     token freshness, no escapes.
 
@@ -432,7 +444,11 @@ def print_plain_status(audience=None, scope=None, sharepoint_tenant=None):
     return 0
 
 
-def run_dashboard(audience=None, scope=None, sharepoint_tenant=None):
+def run_dashboard(
+    audience: str | None = None,
+    scope: str | None = None,
+    sharepoint_tenant: str | None = None,
+) -> int:
     """Interactive token-health dashboard for `owa-piggy tui`.
 
     Also the screen bare `owa-piggy profiles` opens on a TTY. Combines the
@@ -477,12 +493,12 @@ def run_dashboard(audience=None, scope=None, sharepoint_tenant=None):
     # cooked-mode action helpers can't see a stale closure.
     state.reports = {}
 
-    def load_state():
+    def load_state() -> tuple[list[str], str, set[str]]:
         profiles = list_profiles()
         reg = load_profiles_conf()
         return profiles, reg["OWA_DEFAULT_PROFILE"], set(reg["OWA_PROFILES"])
 
-    def clamp_cursor(profiles):
+    def clamp_cursor(profiles: list[str]) -> None:
         if not profiles:
             state.idx = 0
         elif state.idx >= len(profiles):
@@ -490,7 +506,7 @@ def run_dashboard(audience=None, scope=None, sharepoint_tenant=None):
         elif state.idx < 0:
             state.idx = 0
 
-    def refresh():
+    def refresh() -> None:
         from . import status as status_mod
 
         data = status_mod.status_all_report(
@@ -498,7 +514,7 @@ def run_dashboard(audience=None, scope=None, sharepoint_tenant=None):
         )
         state.reports = {r["profile"]: r for r in data["profiles"]}
 
-    def draw():
+    def draw() -> None:
         profiles, default, enabled = load_state()
         clamp_cursor(profiles)
         scheduled = set(load_profiles_conf().get("OWA_SCHEDULED", []))
@@ -537,7 +553,7 @@ def run_dashboard(audience=None, scope=None, sharepoint_tenant=None):
             sys.stdout.write(f"{CLEAR_EOL}\r\n")
         sys.stdout.flush()
 
-    def reprobe():
+    def reprobe() -> None:
         # Clear cached reports so every row shows "probing..." during the
         # blocking network call, then repopulate and redraw.
         state.reports = {}

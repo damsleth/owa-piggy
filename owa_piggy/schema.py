@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from typing import Any
 
 from . import __version__
 
@@ -38,8 +39,15 @@ _TRUTHY = {"1", "true", "yes", "on"}
 # --- schema builders (mirror owa_core.schema) ---------------------------
 
 
-def flag(name, *, value=None, summary="", required=False, repeatable=False):
-    row = {"name": name}
+def flag(
+    name: str,
+    *,
+    value: str | None = None,
+    summary: str = "",
+    required: bool = False,
+    repeatable: bool = False,
+) -> dict[str, Any]:
+    row: dict[str, Any] = {"name": name}
     if value is not None:
         row["value"] = value
     if summary:
@@ -52,17 +60,17 @@ def flag(name, *, value=None, summary="", required=False, repeatable=False):
 
 
 def command(
-    name,
-    summary="",
+    name: str,
+    summary: str = "",
     *,
-    output="json",
-    flags=None,
-    mutates=False,
-    destructive=False,
-    confirmation=False,
-    idempotent=None,
-):
-    row = {
+    output: str = "json",
+    flags: list[dict[str, Any]] | None = None,
+    mutates: bool = False,
+    destructive: bool = False,
+    confirmation: bool = False,
+    idempotent: bool | None = None,
+) -> dict[str, Any]:
+    row: dict[str, Any] = {
         "name": name,
         "summary": summary,
         "output": {"type": output},
@@ -79,7 +87,7 @@ def command(
     return row
 
 
-def schema_for(commands):
+def schema_for(commands: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "tool": "owa-piggy",
         "suite": SUITE,
@@ -89,13 +97,13 @@ def schema_for(commands):
     }
 
 
-def _emit_json(payload):
+def _emit_json(payload: dict[str, Any]) -> int:
     json.dump(payload, sys.stdout, ensure_ascii=False, indent=2)
     sys.stdout.write("\n")
     return 0
 
 
-def maybe_emit_schema(argv, *, commands):
+def maybe_emit_schema(argv: list[str], *, commands: list[dict[str, Any]]) -> int | None:
     """Handle ``schema``, ``schema <command>`` and ``--help --json``.
 
     Returns an exit code when handled, otherwise None.
@@ -121,14 +129,14 @@ def maybe_emit_schema(argv, *, commands):
 # --- agent / error mode helpers (mirror owa_core.modes) -----------------
 
 
-def env_truthy(name):
+def env_truthy(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in _TRUTHY
 
 
-def split_mode_flags(argv):
+def split_mode_flags(argv: list[str]) -> tuple[bool, bool, list[str]]:
     agent = env_truthy("OWA_AGENT")
     err_json = env_truthy("OWA_ERR_JSON")
-    filtered = []
+    filtered: list[str] = []
     for arg in argv:
         if arg == "--agent":
             agent = True
@@ -139,7 +147,7 @@ def split_mode_flags(argv):
     return agent, err_json, filtered
 
 
-def command_name(argv):
+def command_name(argv: list[str]) -> str:
     for arg in argv:
         if arg == "--":
             return ""
@@ -148,8 +156,8 @@ def command_name(argv):
     return ""
 
 
-def envelope(command, data):
-    meta = {
+def envelope(command: str, data: Any) -> dict[str, Any]:
+    meta: dict[str, Any] = {
         "suite": SUITE,
         "tool": "owa-piggy",
         "version": __version__,
