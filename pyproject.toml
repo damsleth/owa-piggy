@@ -29,8 +29,9 @@ Source = "https://github.com/damsleth/owa-piggy"
 owa-piggy = "owa_piggy:main"
 
 [project.optional-dependencies]
-# Kept as the historical alias CI used pre-v1-08; `dev` is the superset.
-test = ["pytest"]
+# Used by the CI test matrix (incl. the 3.8 leg, where mypy/hypothesis can't
+# install). pytest-cov backs the coverage gate; `dev` is the full superset.
+test = ["pytest", "pytest-cov"]
 # All quality tooling lives here so runtime `dependencies` stays empty - the
 # zero-dependency invariant (see AGENTS.md) is non-negotiable. hypothesis backs
 # the optional property tests in Phase 4.
