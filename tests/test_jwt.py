@@ -73,6 +73,29 @@ def test_decode_jwt_handles_malformed_middle(capsys):
     assert isinstance(out, str)
 
 
+def test_decode_jwt_single_segment_stops_at_payload(make_jwt):
+    """A token with only a Header segment: the loop decodes Header, then
+    breaks before Payload because there is no second segment (covers the
+    `i >= len(parts)` branch). Must not raise and returns just the Header."""
+    token = make_jwt({"alg": "none"})
+    header_only = token.split(".")[0]
+    out = decode_jwt(header_only)
+    assert "=== Header ===" in out
+    assert "=== Payload ===" not in out
+
+
+def test_decode_jwt_payload_decode_error_prints(make_jwt, capsys):
+    """Header decodes fine but the Payload segment is not valid base64url
+    JSON: the except branch prints 'Error decoding Payload' to stderr
+    (covers line 41) without raising, returning the partial Header output."""
+    token = make_jwt({"alg": "RS256", "typ": "JWT"})
+    header_b64 = token.split(".")[0]
+    out = decode_jwt(f"{header_b64}.not_base64!!!.sig")
+    assert "=== Header ===" in out
+    assert "Error decoding Payload" in capsys.readouterr().err
+    assert isinstance(out, str)
+
+
 # --- Token-shape validation ---------------------------------------------
 # owa-piggy never validates JWT signatures (it is a client, not an RP).
 # "Shape" here means: three dot-separated base64url segments where the
