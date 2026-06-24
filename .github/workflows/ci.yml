@@ -10,6 +10,23 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  quality:
+    # Lint + format gate (v1-08). Runs once on a single Python; the rules are
+    # version-independent. mypy (Phase 2) and coverage (Phase 3) extend this.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: pip install -e '.[dev]'
+      - name: Ruff lint
+        run: ruff check owa_piggy tests
+      - name: Ruff format
+        run: ruff format --check owa_piggy tests
+
   test:
     runs-on: ubuntu-latest
     strategy:
