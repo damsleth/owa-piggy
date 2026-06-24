@@ -48,6 +48,12 @@ jobs:
       - name: Tests
         run: >
           pytest -q --cov=owa_piggy --cov-branch
-          --cov-report=term-missing --cov-fail-under=63
+          --cov-report=term-missing --cov-fail-under=67
+      - name: Core modules 100% branch
+        # The token-on-disk / token-on-the-wire core must stay fully covered.
+        # Reads the .coverage data the test step just wrote.
+        run: >
+          coverage report --fail-under=100
+          --include=owa_piggy/oauth.py,owa_piggy/config.py,owa_piggy/cache.py,owa_piggy/token_flow.py,owa_piggy/jwt.py
       - name: Shellcheck
         run: shellcheck scripts/*.sh
