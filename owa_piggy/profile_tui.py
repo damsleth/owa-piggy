@@ -21,7 +21,11 @@ from .config import (
 )
 from .launchd import (
     is_scheduled as launchd_is_scheduled,
+)
+from .launchd import (
     schedule as launchd_schedule,
+)
+from .launchd import (
     unschedule as launchd_unschedule,
 )
 from .profiles import (
@@ -494,7 +498,7 @@ def run_dashboard(audience=None, scope=None, sharepoint_tenant=None):
         sys.stdout.write(
             f'  {DIM}'
             'up/down  navigate  ·  space toggle  ·  enter set default  ·  g refresh\r\n'
-            '  a add  ·  d delete  ·  l schedule  ·  u unschedule  ·  r reseed  ·  R reseed all  ·  e edge  ·  q quit'
+            '  a add  ·  d delete  ·  l schedule  ·  u unschedule  ·  r reseed  ·  R reseed all  ·  e edge  ·  q quit'  # noqa: E501  (single-line key legend)
             f'{RESET}\r\n\r\n'
         )
         if not profiles:
