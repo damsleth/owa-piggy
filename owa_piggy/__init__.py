@@ -12,8 +12,10 @@ scraping the adjacent `pyproject.toml` so the launchd dev-path
 (`PYTHONPATH=<repo> python3 -m owa_piggy`) still reports a real version.
 """
 
+from __future__ import annotations
 
-def _read_version():
+
+def _read_version() -> str:
     # Repo-checkout path first: when running from a local clone (our
     # primary dev and launchd-fallback mode), the source pyproject.toml
     # is the canonical version. Checking importlib.metadata first would
@@ -22,7 +24,8 @@ def _read_version():
     try:
         import re
         from pathlib import Path
-        pp = Path(__file__).resolve().parent.parent / 'pyproject.toml'
+
+        pp = Path(__file__).resolve().parent.parent / "pyproject.toml"
         if pp.is_file():
             for line in pp.read_text().splitlines():
                 m = re.match(r'\s*version\s*=\s*"([^"]+)"', line)
@@ -33,13 +36,14 @@ def _read_version():
     # Installed path: brew/pipx/pip. No sibling pyproject.toml exists.
     try:
         from importlib.metadata import PackageNotFoundError, version
+
         try:
-            return version('owa-piggy')
+            return version("owa-piggy")
         except PackageNotFoundError:
             pass
     except ImportError:
         pass
-    return 'unknown'
+    return "unknown"
 
 
 __version__ = _read_version()
@@ -47,4 +51,4 @@ __version__ = _read_version()
 # Defined after __version__ so cli.py can safely `from . import __version__`.
 from .cli import main  # noqa: E402
 
-__all__ = ['main', '__version__']
+__all__ = ["main", "__version__"]

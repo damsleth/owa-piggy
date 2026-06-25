@@ -10,8 +10,12 @@ present the error (CLI prints to stderr; the TUI surfaces it as a status
 line). ``create_profile`` returns the int rc convention (0/1) instead,
 because it embeds a setup banner that already goes to stderr.
 """
+
+from __future__ import annotations
+
 import shutil
 import sys
+from typing import Any
 
 from .cache import clear_cache
 from .config import (
@@ -30,22 +34,22 @@ from .launchd import unschedule as launchd_unschedule
 from .setup import interactive_setup
 
 
-def promote_default_if_missing():
+def promote_default_if_missing() -> dict[str, Any]:
     """Promote a remaining profile when the registry has no default."""
     reg = load_profiles_conf()
-    if reg['OWA_DEFAULT_PROFILE']:
+    if reg["OWA_DEFAULT_PROFILE"]:
         return reg
     remaining = list_profiles()
     if remaining:
-        promoted = (reg['OWA_PROFILES'] or remaining)[0]
-        reg['OWA_DEFAULT_PROFILE'] = promoted
-        if promoted not in reg['OWA_PROFILES']:
-            reg['OWA_PROFILES'].append(promoted)
+        promoted = (reg["OWA_PROFILES"] or remaining)[0]
+        reg["OWA_DEFAULT_PROFILE"] = promoted
+        if promoted not in reg["OWA_PROFILES"]:
+            reg["OWA_PROFILES"].append(promoted)
         save_profiles_conf(reg)
     return reg
 
 
-def set_default_profile(alias):
+def set_default_profile(alias: str) -> tuple[bool, str]:
     """Mark `alias` as the default profile and ensure it's enabled.
 
     Validates the alias and that the profile exists on disk before
@@ -57,20 +61,19 @@ def set_default_profile(alias):
         return False, verr
     if alias not in list_profiles():
         return False, (
-            f'profile {alias!r} not found. Available: '
-            f'{", ".join(list_profiles()) or "(none)"}'
+            f"profile {alias!r} not found. Available: {', '.join(list_profiles()) or '(none)'}"
         )
     reg = load_profiles_conf()
-    reg['OWA_DEFAULT_PROFILE'] = alias
+    reg["OWA_DEFAULT_PROFILE"] = alias
     # Re-register so the profile appears in OWA_PROFILES even if this is
     # a pre-registry profile (shouldn't happen post-migration but harmless).
-    if alias not in reg['OWA_PROFILES']:
-        reg['OWA_PROFILES'].append(alias)
+    if alias not in reg["OWA_PROFILES"]:
+        reg["OWA_PROFILES"].append(alias)
     save_profiles_conf(reg)
-    return True, ''
+    return True, ""
 
 
-def enable_profile(alias):
+def enable_profile(alias: str) -> tuple[bool, str]:
     """Add `alias` to OWA_PROFILES (no-op if already there). Sets it as
     the default if no default is set. Thin wrapper around
     ``ensure_profile_registered`` so callers can stay inside this
@@ -80,12 +83,21 @@ def enable_profile(alias):
         ensure_profile_registered(alias, make_default_if_first=True)
     except ValueError as e:
         return False, str(e)
-    return True, ''
+    return True, ""
 
 
-def create_profile(alias, *, email=None, audience=None, full_banner=False,
-                    trough_url=None, trough_tenant=None, trough_sub=None,
-                    user_agent=None, sharepoint_tenant=None):
+def create_profile(
+    alias: str,
+    *,
+    email: str | None = None,
+    audience: str | None = None,
+    full_banner: bool = False,
+    trough_url: str | None = None,
+    trough_tenant: str | None = None,
+    trough_sub: str | None = None,
+    user_agent: str | None = None,
+    sharepoint_tenant: str | None = None,
+) -> int:
     """Run interactive_setup for a profile, persist its preferred audience,
     and register the profile in profiles.conf.
 
@@ -102,30 +114,34 @@ def create_profile(alias, *, email=None, audience=None, full_banner=False,
     # the pre-setup identity and must not leak past this point.
     clear_cache()
     config, _ = load_config()
-    if audience and audience != 'graph':
+    if audience and audience != "graph":
         # Pre-set OWA_DEFAULT_AUDIENCE on the in-memory config so
         # interactive_setup's save_config call writes it alongside the
         # tokens in one disk write.
-        config['OWA_DEFAULT_AUDIENCE'] = audience
+        config["OWA_DEFAULT_AUDIENCE"] = audience
     if sharepoint_tenant and sharepoint_tenant.strip():
         # Same one-write piggyback as the audience: persist the SharePoint
         # tenant name so `--audience sharepoint` works on this profile
         # without re-passing --sharepoint-tenant every call.
-        config['OWA_SHAREPOINT_TENANT'] = sharepoint_tenant.strip()
-    if not interactive_setup(config, alias, email=email,
-                              trough_url=trough_url,
-                              trough_tenant=trough_tenant,
-                              trough_sub=trough_sub,
-                              user_agent=user_agent):
+        config["OWA_SHAREPOINT_TENANT"] = sharepoint_tenant.strip()
+    if not interactive_setup(
+        config,
+        alias,
+        email=email,
+        trough_url=trough_url,
+        trough_tenant=trough_tenant,
+        trough_sub=trough_sub,
+        user_agent=user_agent,
+    ):
         return 1
     ensure_profile_registered(alias, make_default_if_first=True)
-    print(f'\n\tOWA-PIGGY 🐽  CONFIGURED [{alias}]', file=sys.stderr)
+    print(f"\n\tOWA-PIGGY 🐽  CONFIGURED [{alias}]", file=sys.stderr)
     if full_banner:
-        print('\n\tENJOY YOUR APP-REG-FREE SCOPES\n', file=sys.stderr)
+        print("\n\tENJOY YOUR APP-REG-FREE SCOPES\n", file=sys.stderr)
     return 0
 
 
-def disable_profile(alias, *, promote_replacement=True):
+def disable_profile(alias: str, *, promote_replacement: bool = True) -> tuple[bool, str]:
     """Remove `alias` from OWA_PROFILES. If it was the default, optionally
     promote the first remaining enabled profile as the new default so
     ``resolve_profile`` keeps working without an explicit --profile.
@@ -135,17 +151,19 @@ def disable_profile(alias, *, promote_replacement=True):
     something that isn't there is idempotent).
     """
     reg = load_profiles_conf()
-    reg['OWA_PROFILES'] = [p for p in reg['OWA_PROFILES'] if p != alias]
-    if reg['OWA_DEFAULT_PROFILE'] == alias:
-        if promote_replacement and reg['OWA_PROFILES']:
-            reg['OWA_DEFAULT_PROFILE'] = reg['OWA_PROFILES'][0]
+    reg["OWA_PROFILES"] = [p for p in reg["OWA_PROFILES"] if p != alias]
+    if reg["OWA_DEFAULT_PROFILE"] == alias:
+        if promote_replacement and reg["OWA_PROFILES"]:
+            reg["OWA_DEFAULT_PROFILE"] = reg["OWA_PROFILES"][0]
         else:
-            reg['OWA_DEFAULT_PROFILE'] = ''
+            reg["OWA_DEFAULT_PROFILE"] = ""
     save_profiles_conf(reg)
-    return True, ''
+    return True, ""
 
 
-def delete_profile(alias, *, uninstall_launchd=True, promote_default=True):
+def delete_profile(
+    alias: str, *, uninstall_launchd: bool = True, promote_default: bool = True
+) -> tuple[bool, str]:
     """Delete one profile directory and unregister it.
 
     Returns ``(ok, error)``. Registry update happens before directory
@@ -156,22 +174,22 @@ def delete_profile(alias, *, uninstall_launchd=True, promote_default=True):
     if uninstall_launchd and launchd_is_scheduled(alias):
         rc = launchd_unschedule(alias)
         if rc != 0:
-            return False, f'failed to unschedule launchd for {alias!r}'
+            return False, f"failed to unschedule launchd for {alias!r}"
 
     try:
         unregister_profile(alias)
     except OSError as e:
-        return False, f'profile registry update failed: {e}'
+        return False, f"profile registry update failed: {e}"
 
     target = profile_dir(alias)
     try:
         shutil.rmtree(target)
     except OSError as e:
-        return False, f'was unregistered but failed to remove {target}: {e}'
+        return False, f"was unregistered but failed to remove {target}: {e}"
 
     if promote_default:
         try:
             promote_default_if_missing()
         except OSError as e:
-            return False, f'deleted profile but failed to promote a default: {e}'
-    return True, ''
+            return False, f"deleted profile but failed to promote a default: {e}"
+    return True, ""

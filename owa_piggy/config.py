@@ -24,25 +24,52 @@ Pre-migration (legacy) installs keep `CONFIG_PATH` at the flat
 `~/.config/owa-piggy/config`. `migration.migrate_if_needed()` moves that
 into `profiles/default/` the first time a profile-aware code path runs.
 """
+
+from __future__ import annotations
+
+import contextlib
 import os
 import re
 import stat
 import tempfile
 import time
+from collections.abc import Iterable, Iterator
 from pathlib import Path
+from typing import Any, TypedDict
 
-ROOT_DIR = Path.home() / '.config' / 'owa-piggy'
-CONFIG_PATH = ROOT_DIR / 'config'
+ROOT_DIR = Path.home() / ".config" / "owa-piggy"
+CONFIG_PATH = ROOT_DIR / "config"
+
+
+class PermissionFinding(TypedDict):
+    """A config path whose group/other bits are too open (see
+    ``audit_private_permissions``)."""
+
+    path: str
+    label: str
+    actual: str
+    expected: str
+
+
+class PermissionRepair(TypedDict):
+    """A config path that ``repair_private_permissions`` re-chmodded back to
+    its private mode."""
+
+    path: str
+    label: str
+    before: str
+    after: str
+
 
 # Aliases land directly in filesystem paths under profiles/<alias>/ and in
 # the OWA_PROFILES list in profiles.conf. Anything permissive lets a caller
 # escape the config tree (e.g. --profile ../../outside) or create nested
 # directories that list_profiles() cannot round-trip back to the original
 # alias (e.g. --profile work/sub). Keep the character set conservative.
-_ALIAS_RE = re.compile(r'^[A-Za-z0-9._-]+$')
+_ALIAS_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
-def validate_alias(alias):
+def validate_alias(alias: str) -> tuple[bool, str]:
     """Return (ok, err) for a profile alias.
 
     Accepts only `[A-Za-z0-9._-]+` and rejects '.' / '..' outright so no
@@ -50,26 +77,27 @@ def validate_alias(alias):
     run this before using an alias for path selection or registration.
     """
     if not isinstance(alias, str) or not alias:
-        return False, 'profile alias must be a non-empty string'
-    if alias in ('.', '..'):
-        return False, f'profile alias {alias!r} is reserved'
+        return False, "profile alias must be a non-empty string"
+    if alias in (".", ".."):
+        return False, f"profile alias {alias!r} is reserved"
     if not _ALIAS_RE.match(alias):
         return False, (
-            f'invalid profile alias {alias!r}: allowed characters are '
-            f'letters, digits, dot, underscore, hyphen'
+            f"invalid profile alias {alias!r}: allowed characters are "
+            f"letters, digits, dot, underscore, hyphen"
         )
-    return True, ''
+    return True, ""
 
 
-def iso_utc_now():
+def iso_utc_now() -> str:
     """UTC ISO8601 with trailing Z. Used to stamp OWA_RT_ISSUED_AT on fresh
     setup/reseed so `status` can compute the 24h SPA hard-cap."""
-    return time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
 # --- Shared low-level helpers ------------------------------------------
 
-def _iter_kv(text):
+
+def _iter_kv(text: str) -> Iterator[tuple[str, str]]:
     """Yield (key, value) pairs from KEY=value lines.
 
     Strips empty lines, comments (#-prefix), and surrounding double or
@@ -79,13 +107,13 @@ def _iter_kv(text):
     """
     for line in text.splitlines():
         line = line.strip()
-        if not line or line.startswith('#') or '=' not in line:
+        if not line or line.startswith("#") or "=" not in line:
             continue
-        k, _, v = line.partition('=')
+        k, _, v = line.partition("=")
         yield k.strip(), v.strip().strip('"').strip("'")
 
 
-def atomic_write(path, payload, *, mode=0o600):
+def atomic_write(path: str | Path, payload: str, *, mode: int = 0o600) -> None:
     """Atomically replace `path` with `payload` (str), chmod 0o<mode>.
 
     Refresh tokens rotate on every successful exchange, so a partial
@@ -99,21 +127,21 @@ def atomic_write(path, payload, *, mode=0o600):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     fd, tmp_path = tempfile.mkstemp(
-        prefix='.' + path.name + '.', suffix='.tmp', dir=str(path.parent),
+        prefix="." + path.name + ".",
+        suffix=".tmp",
+        dir=str(path.parent),
     )
     tmp = Path(tmp_path)
     try:
         os.chmod(tmp, mode)
-        with os.fdopen(fd, 'w') as f:
+        with os.fdopen(fd, "w") as f:
             f.write(payload)
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp, path)
     except Exception:
-        try:
+        with contextlib.suppress(FileNotFoundError):
             tmp.unlink()
-        except FileNotFoundError:
-            pass
         raise
 
 
@@ -122,37 +150,38 @@ def atomic_write(path, payload, *, mode=0o600):
 # time means tests that monkeypatch ROOT_DIR get the right paths without
 # having to re-patch every downstream constant.
 
-def profiles_dir():
+
+def profiles_dir() -> Path:
     """Root of the per-profile directories."""
-    return ROOT_DIR / 'profiles'
+    return ROOT_DIR / "profiles"
 
 
-def profiles_conf_path():
+def profiles_conf_path() -> Path:
     """Path to the profile-registry file."""
-    return ROOT_DIR / 'profiles.conf'
+    return ROOT_DIR / "profiles.conf"
 
 
-def profile_dir(alias):
+def profile_dir(alias: str) -> Path:
     """Directory for a single profile. May not exist yet."""
     return profiles_dir() / alias
 
 
-def profile_config_path(alias):
+def profile_config_path(alias: str) -> Path:
     """Path to a specific profile's config file."""
-    return profile_dir(alias) / 'config'
+    return profile_dir(alias) / "config"
 
 
-def profile_edge_dir(alias):
+def profile_edge_dir(alias: str) -> Path:
     """Path to a specific profile's Edge sidecar userdata dir."""
-    return profile_dir(alias) / 'edge-profile'
+    return profile_dir(alias) / "edge-profile"
 
 
-def profile_log_path(alias):
+def profile_log_path(alias: str) -> Path:
     """Path to a specific profile's launchd stderr log."""
-    return profile_dir(alias) / 'refresh.log'
+    return profile_dir(alias) / "refresh.log"
 
 
-def private_permission_paths():
+def private_permission_paths() -> list[tuple[Path, int, str]]:
     """Return known secret-bearing paths and their desired modes.
 
     The Edge profile tree can be large and browser-managed; keeping its top
@@ -160,31 +189,31 @@ def private_permission_paths():
     chmodding Chromium internals.
     """
     paths = [
-        (ROOT_DIR, 0o700, 'config root'),
-        (profiles_dir(), 0o700, 'profiles root'),
-        (profiles_conf_path(), 0o600, 'profile registry'),
-        (ROOT_DIR / 'config', 0o600, 'legacy config'),
-        (ROOT_DIR / 'cache.json', 0o600, 'legacy cache'),
+        (ROOT_DIR, 0o700, "config root"),
+        (profiles_dir(), 0o700, "profiles root"),
+        (profiles_conf_path(), 0o600, "profile registry"),
+        (ROOT_DIR / "config", 0o600, "legacy config"),
+        (ROOT_DIR / "cache.json", 0o600, "legacy cache"),
     ]
     for alias in list_profiles():
-        paths.extend([
-            (profile_dir(alias), 0o700, f'profile {alias} directory'),
-            (profile_config_path(alias), 0o600, f'profile {alias} config'),
-            (profile_dir(alias) / 'cache.json', 0o600,
-             f'profile {alias} cache'),
-            (profile_edge_dir(alias), 0o700,
-             f'profile {alias} Edge sidecar directory'),
-            (profile_log_path(alias), 0o600, f'profile {alias} refresh log'),
-        ])
+        paths.extend(
+            [
+                (profile_dir(alias), 0o700, f"profile {alias} directory"),
+                (profile_config_path(alias), 0o600, f"profile {alias} config"),
+                (profile_dir(alias) / "cache.json", 0o600, f"profile {alias} cache"),
+                (profile_edge_dir(alias), 0o700, f"profile {alias} Edge sidecar directory"),
+                (profile_log_path(alias), 0o600, f"profile {alias} refresh log"),
+            ]
+        )
     return paths
 
 
-def audit_private_permissions():
+def audit_private_permissions() -> list[PermissionFinding]:
     """Return paths whose group/other bits are too open.
 
     Missing paths are ignored; this is an audit, not setup.
     """
-    findings = []
+    findings: list[PermissionFinding] = []
     for path, expected, label in private_permission_paths():
         try:
             st = path.lstat()
@@ -192,18 +221,20 @@ def audit_private_permissions():
             continue
         actual = stat.S_IMODE(st.st_mode)
         if actual & 0o077:
-            findings.append({
-                'path': str(path),
-                'label': label,
-                'actual': f'{actual:04o}',
-                'expected': f'{expected:04o}',
-            })
+            findings.append(
+                {
+                    "path": str(path),
+                    "label": label,
+                    "actual": f"{actual:04o}",
+                    "expected": f"{expected:04o}",
+                }
+            )
     return findings
 
 
-def repair_private_permissions():
+def repair_private_permissions() -> list[PermissionRepair]:
     """Chmod known existing config paths to their private modes."""
-    repaired = []
+    repaired: list[PermissionRepair] = []
     for path, expected, label in private_permission_paths():
         try:
             st = path.lstat()
@@ -212,16 +243,18 @@ def repair_private_permissions():
         actual = stat.S_IMODE(st.st_mode)
         if actual != expected:
             os.chmod(path, expected)
-            repaired.append({
-                'path': str(path),
-                'label': label,
-                'before': f'{actual:04o}',
-                'after': f'{expected:04o}',
-            })
+            repaired.append(
+                {
+                    "path": str(path),
+                    "label": label,
+                    "before": f"{actual:04o}",
+                    "after": f"{expected:04o}",
+                }
+            )
     return repaired
 
 
-def set_active_profile(alias):
+def set_active_profile(alias: str) -> Path:
     """Rebind CONFIG_PATH to point at `profiles/<alias>/config`.
 
     No validation - callers who need to guarantee the profile already
@@ -233,7 +266,7 @@ def set_active_profile(alias):
     return CONFIG_PATH
 
 
-def list_profiles():
+def list_profiles() -> list[str]:
     """Sorted list of profile aliases present on disk."""
     d = profiles_dir()
     if not d.is_dir():
@@ -245,7 +278,8 @@ def list_profiles():
 # Same flat KV format as the per-profile config files, but a separate
 # file so the registry never gets confused with a profile's own config.
 
-def load_profiles_conf():
+
+def load_profiles_conf() -> dict[str, Any]:
     """Read profiles.conf into a dict with OWA_DEFAULT_PROFILE (str),
     OWA_PROFILES (list[str]) and OWA_SCHEDULED (list[str]).
 
@@ -258,26 +292,26 @@ def load_profiles_conf():
     reseeded by `reseed --all`, shows in `status`) without being
     scheduled for unattended hourly rotation.
     """
-    out = {'OWA_DEFAULT_PROFILE': '', 'OWA_PROFILES': [], 'OWA_SCHEDULED': []}
+    out: dict[str, Any] = {"OWA_DEFAULT_PROFILE": "", "OWA_PROFILES": [], "OWA_SCHEDULED": []}
     path = profiles_conf_path()
     if not path.exists():
         return out
     for k, v in _iter_kv(path.read_text()):
-        if k == 'OWA_DEFAULT_PROFILE':
-            out['OWA_DEFAULT_PROFILE'] = v
-        elif k == 'OWA_PROFILES':
-            out['OWA_PROFILES'] = [p for p in v.split() if p]
-        elif k == 'OWA_SCHEDULED':
-            out['OWA_SCHEDULED'] = [p for p in v.split() if p]
+        if k == "OWA_DEFAULT_PROFILE":
+            out["OWA_DEFAULT_PROFILE"] = v
+        elif k == "OWA_PROFILES":
+            out["OWA_PROFILES"] = [p for p in v.split() if p]
+        elif k == "OWA_SCHEDULED":
+            out["OWA_SCHEDULED"] = [p for p in v.split() if p]
     return out
 
 
-def _dedup_preserve_order(items):
+def _dedup_preserve_order(items: Iterable[str] | None) -> list[str]:
     """De-duplicate an iterable of aliases, preserving first-seen order."""
     return list(dict.fromkeys(p for p in (items or []) if p))
 
 
-def save_profiles_conf(data):
+def save_profiles_conf(data: dict[str, Any]) -> None:
     """Atomically write profiles.conf.
 
     `data` mirrors `load_profiles_conf()`: OWA_DEFAULT_PROFILE is a str,
@@ -286,12 +320,12 @@ def save_profiles_conf(data):
     is intersected with OWA_PROFILES on write so the subset invariant cannot
     drift (a scheduled alias that is no longer registered is dropped).
     """
-    default = data.get('OWA_DEFAULT_PROFILE', '') or ''
-    profiles = data.get('OWA_PROFILES', []) or []
+    default = data.get("OWA_DEFAULT_PROFILE", "") or ""
+    profiles = data.get("OWA_PROFILES", []) or []
     if isinstance(profiles, str):
         profiles = profiles.split()
     uniq = _dedup_preserve_order(profiles)
-    scheduled = data.get('OWA_SCHEDULED', []) or []
+    scheduled = data.get("OWA_SCHEDULED", []) or []
     if isinstance(scheduled, str):
         scheduled = scheduled.split()
     registered = set(uniq)
@@ -304,7 +338,7 @@ def save_profiles_conf(data):
     atomic_write(profiles_conf_path(), payload)
 
 
-def ensure_profile_registered(alias, make_default_if_first=True):
+def ensure_profile_registered(alias: str, make_default_if_first: bool = True) -> dict[str, Any]:
     """Add `alias` to OWA_PROFILES (no-op if already present). If no
     default is set yet and `make_default_if_first` is True, mark this
     alias as the default. Returns the updated registry dict.
@@ -313,30 +347,30 @@ def ensure_profile_registered(alias, make_default_if_first=True):
     if not ok:
         raise ValueError(verr)
     data = load_profiles_conf()
-    if alias not in data['OWA_PROFILES']:
-        data['OWA_PROFILES'].append(alias)
-    if make_default_if_first and not data['OWA_DEFAULT_PROFILE']:
-        data['OWA_DEFAULT_PROFILE'] = alias
+    if alias not in data["OWA_PROFILES"]:
+        data["OWA_PROFILES"].append(alias)
+    if make_default_if_first and not data["OWA_DEFAULT_PROFILE"]:
+        data["OWA_DEFAULT_PROFILE"] = alias
     save_profiles_conf(data)
     return data
 
 
-def unregister_profile(alias):
+def unregister_profile(alias: str) -> dict[str, Any]:
     """Remove `alias` from OWA_PROFILES. If it was the default, clear
     the default pointer (caller decides what to promote next, if any).
     Also drop it from OWA_SCHEDULED - a disabled/deleted profile must
     not stay scheduled for unattended reseed.
     """
     data = load_profiles_conf()
-    data['OWA_PROFILES'] = [p for p in data['OWA_PROFILES'] if p != alias]
-    data['OWA_SCHEDULED'] = [p for p in data['OWA_SCHEDULED'] if p != alias]
-    if data['OWA_DEFAULT_PROFILE'] == alias:
-        data['OWA_DEFAULT_PROFILE'] = ''
+    data["OWA_PROFILES"] = [p for p in data["OWA_PROFILES"] if p != alias]
+    data["OWA_SCHEDULED"] = [p for p in data["OWA_SCHEDULED"] if p != alias]
+    if data["OWA_DEFAULT_PROFILE"] == alias:
+        data["OWA_DEFAULT_PROFILE"] = ""
     save_profiles_conf(data)
     return data
 
 
-def schedule_profile(alias):
+def schedule_profile(alias: str) -> dict[str, Any]:
     """Add `alias` to OWA_SCHEDULED (the set the shared launchd agent
     reseeds hourly). Ensures `alias` is also registered in OWA_PROFILES
     so the subset invariant holds. No-op if already scheduled. Returns
@@ -346,31 +380,31 @@ def schedule_profile(alias):
     if not ok:
         raise ValueError(verr)
     data = load_profiles_conf()
-    if alias not in data['OWA_PROFILES']:
-        data['OWA_PROFILES'].append(alias)
-    if alias not in data['OWA_SCHEDULED']:
-        data['OWA_SCHEDULED'].append(alias)
+    if alias not in data["OWA_PROFILES"]:
+        data["OWA_PROFILES"].append(alias)
+    if alias not in data["OWA_SCHEDULED"]:
+        data["OWA_SCHEDULED"].append(alias)
     save_profiles_conf(data)
     return data
 
 
-def unschedule_profile(alias):
+def unschedule_profile(alias: str) -> dict[str, Any]:
     """Remove `alias` from OWA_SCHEDULED. Leaves OWA_PROFILES untouched -
     the profile stays enabled, it just no longer auto-reseeds. Returns
     the updated registry dict.
     """
     data = load_profiles_conf()
-    data['OWA_SCHEDULED'] = [p for p in data['OWA_SCHEDULED'] if p != alias]
+    data["OWA_SCHEDULED"] = [p for p in data["OWA_SCHEDULED"] if p != alias]
     save_profiles_conf(data)
     return data
 
 
-def is_scheduled(alias):
+def is_scheduled(alias: str) -> bool:
     """True when `alias` is in OWA_SCHEDULED."""
-    return alias in load_profiles_conf().get('OWA_SCHEDULED', [])
+    return alias in load_profiles_conf().get("OWA_SCHEDULED", [])
 
 
-def resolve_profile(cli_profile=None, allow_missing=False):
+def resolve_profile(cli_profile: str | None = None, allow_missing: bool = False) -> tuple[str, str]:
     """Pick which profile this invocation should target.
 
     Precedence (highest wins):
@@ -396,74 +430,79 @@ def resolve_profile(cli_profile=None, allow_missing=False):
     if cli_profile:
         ok, verr = validate_alias(cli_profile)
         if not ok:
-            return '', verr
+            return "", verr
         if allow_missing or cli_profile in available or not available:
-            return cli_profile, ''
-        return '', (
-            f'profile {cli_profile!r} not found. Available: '
-            f'{", ".join(available) if available else "(none)"}. '
-            f'Create it with: owa-piggy setup --profile {cli_profile}'
+            return cli_profile, ""
+        return "", (
+            f"profile {cli_profile!r} not found. Available: "
+            f"{', '.join(available) if available else '(none)'}. "
+            f"Create it with: owa-piggy setup --profile {cli_profile}"
         )
 
     # 2. Env var.
-    env_profile = os.environ.get('OWA_PROFILE', '').strip()
+    env_profile = os.environ.get("OWA_PROFILE", "").strip()
     if env_profile:
         ok, verr = validate_alias(env_profile)
         if not ok:
-            return '', f'OWA_PROFILE: {verr}'
+            return "", f"OWA_PROFILE: {verr}"
         if allow_missing or env_profile in available or not available:
-            return env_profile, ''
-        return '', (
-            f'OWA_PROFILE={env_profile!r} not found. Available: '
-            f'{", ".join(available) if available else "(none)"}'
+            return env_profile, ""
+        return "", (
+            f"OWA_PROFILE={env_profile!r} not found. Available: "
+            f"{', '.join(available) if available else '(none)'}"
         )
 
     # 3. Registry default pointer.
     reg = load_profiles_conf()
-    default = reg['OWA_DEFAULT_PROFILE']
+    default = reg["OWA_DEFAULT_PROFILE"]
     if default and (default in available or allow_missing):
-        return default, ''
+        return default, ""
 
     # 4. Single profile on disk.
     if len(available) == 1:
-        return available[0], ''
+        return available[0], ""
 
     # 5. Fresh install.
     if not available:
-        return 'default', ''
+        return "default", ""
 
     # 6. Ambiguity.
-    return '', (
-        'multiple profiles configured and no default set. '
-        f'Available: {", ".join(available)}. '
-        'Pass --profile <alias>, export OWA_PROFILE=<alias>, or run '
-        'owa-piggy profiles set-default <alias>.'
+    return "", (
+        "multiple profiles configured and no default set. "
+        f"Available: {', '.join(available)}. "
+        "Pass --profile <alias>, export OWA_PROFILE=<alias>, or run "
+        "owa-piggy profiles set-default <alias>."
     )
 
 
 # --- Main config I/O --------------------------------------------------
 
-def parse_kv_stream(text):
+
+def parse_kv_stream(text: str) -> dict[str, str]:
     """Parse KEY=value lines. Only recognises known OWA_* keys to avoid
     writing arbitrary junk to the config file."""
     allowed = {
-        'OWA_REFRESH_TOKEN', 'OWA_TENANT_ID', 'OWA_CLIENT_ID',
+        "OWA_REFRESH_TOKEN",
+        "OWA_TENANT_ID",
+        "OWA_CLIENT_ID",
         # Set by the network-capture setup path (see capture.py); reseed
         # branches on OWA_AUTH_MODE to pick scrape vs. capture.
-        'OWA_AUTH_MODE', 'OWA_EMAIL',
+        "OWA_AUTH_MODE",
+        "OWA_EMAIL",
         # Per-profile audience preference. Env var still wins; this is
         # picked up by resolve_audience as a tier between env and the
         # built-in graph default.
-        'OWA_DEFAULT_AUDIENCE', 'OWA_RT_ISSUED_AT',
+        "OWA_DEFAULT_AUDIENCE",
+        "OWA_RT_ISSUED_AT",
         # SharePoint tenant name (the `.onmicrosoft.com` prefix, e.g.
         # `norconsult365`) used to fill the {tenant} placeholder for the
         # tenant-templated `sharepoint` / `sharepoint-admin` audiences.
-        'OWA_SHAREPOINT_TENANT',
+        "OWA_SHAREPOINT_TENANT",
     }
     return {k: v for k, v in _iter_kv(text) if k in allowed and v}
 
 
-def load_config(path=None):
+def load_config(path: Path | None = None) -> tuple[dict[str, str], bool]:
     """Returns (config, persist). persist is True only when the *effective*
     OWA_REFRESH_TOKEN came from the on-disk config - i.e. the file has the
     key AND no environment override is shadowing it. When env overrides,
@@ -476,24 +515,21 @@ def load_config(path=None):
     single-profile path, but callers that need to read several profiles
     concurrently pass an explicit path so they don't race the global."""
     cfg_path = path or CONFIG_PATH
-    config = {}
-    file_keys = set()
+    config: dict[str, str] = {}
+    file_keys: set[str] = set()
     if cfg_path.exists():
         for k, v in _iter_kv(cfg_path.read_text()):
             config[k] = v
             file_keys.add(k)
     # Environment overrides file
-    for key in ('OWA_REFRESH_TOKEN', 'OWA_TENANT_ID', 'OWA_CLIENT_ID', 'OWA_ORIGIN'):
+    for key in ("OWA_REFRESH_TOKEN", "OWA_TENANT_ID", "OWA_CLIENT_ID", "OWA_ORIGIN"):
         if key in os.environ:
             config[key] = os.environ[key]
-    persist = (
-        'OWA_REFRESH_TOKEN' in file_keys
-        and 'OWA_REFRESH_TOKEN' not in os.environ
-    )
+    persist = "OWA_REFRESH_TOKEN" in file_keys and "OWA_REFRESH_TOKEN" not in os.environ
     return config, persist
 
 
-def save_config(config, path=None):
+def save_config(config: dict[str, str], path: Path | None = None) -> None:
     """Atomically rewrite the config file.
 
     Refresh tokens rotate on every successful exchange, so a partial write here
@@ -513,8 +549,8 @@ def save_config(config, path=None):
         existing_keys = set()
         for line in cfg_path.read_text().splitlines():
             stripped = line.strip()
-            if stripped and not stripped.startswith('#') and '=' in stripped:
-                k = stripped.split('=', 1)[0].strip()
+            if stripped and not stripped.startswith("#") and "=" in stripped:
+                k = stripped.split("=", 1)[0].strip()
                 if k in config:
                     lines.append(f'{k}="{config[k]}"')
                     existing_keys.add(k)
@@ -526,4 +562,4 @@ def save_config(config, path=None):
     else:
         for k, v in config.items():
             lines.append(f'{k}="{v}"')
-    atomic_write(cfg_path, '\n'.join(lines) + '\n')
+    atomic_write(cfg_path, "\n".join(lines) + "\n")

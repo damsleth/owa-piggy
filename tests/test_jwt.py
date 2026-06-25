@@ -1,33 +1,35 @@
 """Tests for JWT decode and remaining-minutes helpers."""
+
 import pytest
 
 from owa_piggy.jwt import decode_jwt, decode_jwt_segment, token_minutes_remaining
 
 
 def test_decode_segment_round_trip(make_jwt):
-    token = make_jwt({'exp': 9999, 'aud': 'https://graph.microsoft.com'})
-    header_b64, payload_b64, _sig = token.split('.')
+    token = make_jwt({"exp": 9999, "aud": "https://graph.microsoft.com"})
+    header_b64, payload_b64, _sig = token.split(".")
     header = decode_jwt_segment(header_b64)
     payload = decode_jwt_segment(payload_b64)
-    assert header == {'alg': 'RS256', 'typ': 'JWT'}
-    assert payload == {'exp': 9999, 'aud': 'https://graph.microsoft.com'}
+    assert header == {"alg": "RS256", "typ": "JWT"}
+    assert payload == {"exp": 9999, "aud": "https://graph.microsoft.com"}
 
 
 def test_decode_segment_accepts_unpadded():
     import base64
+
     # {"a":1} base64url-encoded has length 8 unpadded.
     raw = b'{"a":1}'
-    encoded = base64.urlsafe_b64encode(raw).rstrip(b'=').decode()
-    assert decode_jwt_segment(encoded) == {'a': 1}
+    encoded = base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+    assert decode_jwt_segment(encoded) == {"a": 1}
 
 
 def test_token_minutes_remaining_future(frozen_time, make_jwt):
-    token = make_jwt({'exp': int(frozen_time) + 3600})
+    token = make_jwt({"exp": int(frozen_time) + 3600})
     assert token_minutes_remaining(token) == 60
 
 
 def test_token_minutes_remaining_past(frozen_time, make_jwt):
-    token = make_jwt({'exp': int(frozen_time) - 60})
+    token = make_jwt({"exp": int(frozen_time) - 60})
     remaining = token_minutes_remaining(token)
     assert remaining is not None
     assert remaining <= 0
@@ -36,35 +38,61 @@ def test_token_minutes_remaining_past(frozen_time, make_jwt):
 def test_token_minutes_remaining_missing_exp(frozen_time, make_jwt):
     """Regression anchor: missing `exp` defaults to 0, which becomes a
     large negative number relative to now - NOT a KeyError."""
-    token = make_jwt({'aud': 'x'})
+    token = make_jwt({"aud": "x"})
     remaining = token_minutes_remaining(token)
     assert remaining is not None
     assert remaining < 0
 
 
-@pytest.mark.parametrize('bad', [
-    '',
-    'not-a-jwt',
-    'a.b',                  # only two segments
-    'not.base64!!!.sig',    # middle segment not base64
-])
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "",
+        "not-a-jwt",
+        "a.b",  # only two segments
+        "not.base64!!!.sig",  # middle segment not base64
+    ],
+)
 def test_token_minutes_remaining_handles_malformed(bad):
     assert token_minutes_remaining(bad) is None
 
 
 def test_decode_jwt_formats_header_and_payload(make_jwt):
-    token = make_jwt({'exp': 123, 'scp': 'Mail.Read'})
+    token = make_jwt({"exp": 123, "scp": "Mail.Read"})
     out = decode_jwt(token)
-    assert '=== Header ===' in out
-    assert '=== Payload ===' in out
-    assert 'Mail.Read' in out
-    assert 'RS256' in out
+    assert "=== Header ===" in out
+    assert "=== Payload ===" in out
+    assert "Mail.Read" in out
+    assert "RS256" in out
 
 
 def test_decode_jwt_handles_malformed_middle(capsys):
-    out = decode_jwt('valid.not_base64!!!.sig')
+    out = decode_jwt("valid.not_base64!!!.sig")
     # Header segment is malformed too, but let's at least not traceback.
-    assert 'Error decoding' in capsys.readouterr().err
+    assert "Error decoding" in capsys.readouterr().err
+    assert isinstance(out, str)
+
+
+def test_decode_jwt_single_segment_stops_at_payload(make_jwt):
+    """A token with only a Header segment: the loop decodes Header, then
+    breaks before Payload because there is no second segment (covers the
+    `i >= len(parts)` branch). Must not raise and returns just the Header."""
+    token = make_jwt({"alg": "none"})
+    header_only = token.split(".")[0]
+    out = decode_jwt(header_only)
+    assert "=== Header ===" in out
+    assert "=== Payload ===" not in out
+
+
+def test_decode_jwt_payload_decode_error_prints(make_jwt, capsys):
+    """Header decodes fine but the Payload segment is not valid base64url
+    JSON: the except branch prints 'Error decoding Payload' to stderr
+    (covers line 41) without raising, returning the partial Header output."""
+    token = make_jwt({"alg": "RS256", "typ": "JWT"})
+    header_b64 = token.split(".")[0]
+    out = decode_jwt(f"{header_b64}.not_base64!!!.sig")
+    assert "=== Header ===" in out
+    assert "Error decoding Payload" in capsys.readouterr().err
     assert isinstance(out, str)
 
 
@@ -77,48 +105,51 @@ def test_decode_jwt_handles_malformed_middle(capsys):
 
 
 def test_shape_three_segments(make_jwt):
-    token = make_jwt({'exp': 1})
-    assert token.count('.') == 2
+    token = make_jwt({"exp": 1})
+    assert token.count(".") == 2
 
 
 def test_shape_middle_is_json_object(make_jwt):
-    token = make_jwt({'exp': 1, 'aud': 'x', 'tid': 'tenant', 'iss': 'issuer'})
-    payload = decode_jwt_segment(token.split('.')[1])
+    token = make_jwt({"exp": 1, "aud": "x", "tid": "tenant", "iss": "issuer"})
+    payload = decode_jwt_segment(token.split(".")[1])
     assert isinstance(payload, dict)
-    for required in ('exp', 'aud', 'tid', 'iss'):
+    for required in ("exp", "aud", "tid", "iss"):
         assert required in payload
 
 
 def test_shape_exp_is_numeric(make_jwt):
-    token = make_jwt({'exp': 1_700_000_000})
-    payload = decode_jwt_segment(token.split('.')[1])
-    assert isinstance(payload['exp'], (int, float))
+    token = make_jwt({"exp": 1_700_000_000})
+    payload = decode_jwt_segment(token.split(".")[1])
+    assert isinstance(payload["exp"], (int, float))
 
 
 def test_shape_accepts_real_world_claims(make_jwt):
     """A plausible MSAL-issued access token has this shape."""
-    token = make_jwt({
-        'aud': 'https://graph.microsoft.com',
-        'iss': 'https://login.microsoftonline.com/tid/v2.0',
-        'iat': 1_700_000_000,
-        'exp': 1_700_003_600,
-        'tid': '00000000-0000-0000-0000-000000000000',
-        'scp': 'Mail.Read Mail.Send Files.Read',
-        'appid': '9199bf20-a13f-4107-85dc-02114787ef48',
-    })
-    payload = decode_jwt_segment(token.split('.')[1])
-    assert payload['appid'] == '9199bf20-a13f-4107-85dc-02114787ef48'
-    assert 'Mail.Read' in payload['scp']
+    token = make_jwt(
+        {
+            "aud": "https://graph.microsoft.com",
+            "iss": "https://login.microsoftonline.com/tid/v2.0",
+            "iat": 1_700_000_000,
+            "exp": 1_700_003_600,
+            "tid": "00000000-0000-0000-0000-000000000000",
+            "scp": "Mail.Read Mail.Send Files.Read",
+            "appid": "9199bf20-a13f-4107-85dc-02114787ef48",
+        }
+    )
+    payload = decode_jwt_segment(token.split(".")[1])
+    assert payload["appid"] == "9199bf20-a13f-4107-85dc-02114787ef48"
+    assert "Mail.Read" in payload["scp"]
 
 
 def test_shape_empty_middle_segment_is_not_a_token(frozen_time):
     """An empty middle segment decodes to '' (bytes), which is not JSON -
     token_minutes_remaining must surface None, not raise."""
-    assert token_minutes_remaining('a..c') is None
+    assert token_minutes_remaining("a..c") is None
 
 
 def test_shape_middle_is_base64_but_not_json(frozen_time):
     """Middle segment decodes cleanly to bytes but is not JSON."""
     import base64
-    garbage = base64.urlsafe_b64encode(b'not json').rstrip(b'=').decode()
-    assert token_minutes_remaining(f'a.{garbage}.c') is None
+
+    garbage = base64.urlsafe_b64encode(b"not json").rstrip(b"=").decode()
+    assert token_minutes_remaining(f"a.{garbage}.c") is None

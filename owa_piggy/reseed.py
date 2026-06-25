@@ -16,6 +16,9 @@ Two backends:
   the only path that works for tenants whose MSAL.js encrypts the
   localStorage cache (modern Okta-federated SPAs).
 """
+
+from __future__ import annotations
+
 import os
 import subprocess
 import sys
@@ -35,7 +38,7 @@ from .config import (
 from .scripts import find_reseed_script
 
 
-def _profile_cdp_port(alias):
+def _profile_cdp_port(alias: str) -> int:
     """Derive a stable CDP debug port for `alias`.
 
     The legacy scrape backend (reseed-from-edge.sh) reads CDP_PORT from
@@ -50,7 +53,7 @@ def _profile_cdp_port(alias):
     return 9222 + (zlib.crc32(alias.encode()) % 10000)
 
 
-def do_reseed(alias):
+def do_reseed(alias: str) -> int:
     """Run the headless reseed flow for profile <alias>.
 
     Two backends, picked by the profile's OWA_AUTH_MODE:
@@ -67,13 +70,13 @@ def do_reseed(alias):
     """
     set_active_profile(alias)
     config, _ = load_config()
-    auth_mode = (config.get('OWA_AUTH_MODE') or '').strip()
-    if auth_mode == 'capture':
+    auth_mode = (config.get("OWA_AUTH_MODE") or "").strip()
+    if auth_mode == "capture":
         return _do_reseed_capture(alias, config)
     return _do_reseed_scrape(alias)
 
 
-def _do_reseed_capture(alias, config):
+def _do_reseed_capture(alias: str, config: dict[str, str]) -> int:
     """Network-capture reseed: headless Edge, intercept /token, persist
     the rotated refresh token. No window appears under any condition;
     if the sidecar session has expired we exit non-zero and ask the
@@ -88,95 +91,98 @@ def _do_reseed_capture(alias, config):
     # for the legacy reseed users that don't need it.
     from . import capture
 
-    print(f'[{alias}] reseed via network capture (OWA_AUTH_MODE=capture)',
-          file=sys.stderr)
+    print(f"[{alias}] reseed via network capture (OWA_AUTH_MODE=capture)", file=sys.stderr)
     is_tty = sys.stdin.isatty()
     # Env override wins so an operator can experiment with a UA without
     # rewriting the profile config; otherwise the persisted per-profile
     # UA (set at `setup --user-agent ...`) is what keeps silent reseed
     # consistent with the original sign-in.
-    user_agent = os.environ.get('OWA_USER_AGENT') or config.get('OWA_USER_AGENT') or None
+    user_agent = os.environ.get("OWA_USER_AGENT") or config.get("OWA_USER_AGENT") or None
     # A non-FOCI profile (e.g. the Azure DevOps broker) persisted the SPA it
     # was captured against as OWA_CAPTURE_URL. Read it back so the headless
     # reseed navigates to the same client's app and refreshes *its* RT, not
     # OWA's. Env override wins for ad-hoc experimentation; None lets capture
     # fall back to the OWA default for ordinary FOCI profiles.
-    capture_url = (os.environ.get('OWA_CAPTURE_URL', '').strip()
-                   or config.get('OWA_CAPTURE_URL', '').strip() or None)
-    status, captured = capture.capture_silent(
-        alias, user_agent=user_agent, capture_url=capture_url)
+    capture_url = (
+        os.environ.get("OWA_CAPTURE_URL", "").strip()
+        or config.get("OWA_CAPTURE_URL", "").strip()
+        or None
+    )
+    status, captured = capture.capture_silent(alias, user_agent=user_agent, capture_url=capture_url)
     # Transient 'error' on the first attempt (CDP hiccup, slow /token
     # round-trip past the timeout, etc.) is the most common cause of
     # hourly cron failures in the refresh.log. One retry recovers nearly
     # all of them. Skip the retry for 'reauth' (user action required) and
     # 'headless_blocked' (handled by the headless->offscreen fallback
     # below) since neither benefits from re-running the same path.
-    if status == 'error':
-        print(f'[{alias}] capture returned transient error; retrying once...',
-              file=sys.stderr)
+    if status == "error":
+        print(f"[{alias}] capture returned transient error; retrying once...", file=sys.stderr)
         status, captured = capture.capture_silent(
-            alias, user_agent=user_agent, capture_url=capture_url)
-    if status == 'headless_blocked' and not is_tty:
+            alias, user_agent=user_agent, capture_url=capture_url
+        )
+    if status == "headless_blocked" and not is_tty:
         # No human present (launchd) - try the offscreen-non-headless
         # silent path before giving up, since we can't fall back to
         # interactive sign-in unattended. The window stays parked at
         # -32000,-32000 so the user's display stays clean.
-        print(f'[{alias}] headless Edge blocked by tenant; retrying '
-              f'non-headless (offscreen)...', file=sys.stderr)
+        print(
+            f"[{alias}] headless Edge blocked by tenant; retrying non-headless (offscreen)...",
+            file=sys.stderr,
+        )
         status, captured = capture.capture_silent(
-            alias, headless=False, user_agent=user_agent,
-            capture_url=capture_url)
-    if status == 'reauth' or (status == 'headless_blocked' and is_tty):
+            alias, headless=False, user_agent=user_agent, capture_url=capture_url
+        )
+    if status == "reauth" or (status == "headless_blocked" and is_tty):
         # 'headless_blocked' on a TTY skips straight here - the
         # offscreen-silent retry leaves stale in-flight auth state in
         # the user-data-dir which then trips AAD error 500121 when
         # capture_signin reuses the same profile dir.
-        email = config.get('OWA_EMAIL', '')
+        email = config.get("OWA_EMAIL", "")
         if email and is_tty:
-            print(f'[{alias}] sidecar cookies expired - opening Edge for '
-                  f'interactive sign-in (complete MFA in the window)...',
-                  file=sys.stderr)
+            print(
+                f"[{alias}] sidecar cookies expired - opening Edge for "
+                f"interactive sign-in (complete MFA in the window)...",
+                file=sys.stderr,
+            )
             try:
-                captured = capture.capture_signin(alias, email, timeout=300,
-                                                   user_agent=user_agent,
-                                                   capture_url=capture_url)
-                status = 'ok'
-            except (RuntimeError, TimeoutError, ConnectionError,
-                    KeyboardInterrupt) as e:
-                kind = 'cancelled' if isinstance(e, KeyboardInterrupt) \
-                    else 'failed'
-                print(f'ERROR: [{alias}] interactive sign-in {kind}: {e}',
-                      file=sys.stderr)
+                captured = capture.capture_signin(
+                    alias, email, timeout=300, user_agent=user_agent, capture_url=capture_url
+                )
+                status = "ok"
+            except (RuntimeError, TimeoutError, ConnectionError, KeyboardInterrupt) as e:
+                kind = "cancelled" if isinstance(e, KeyboardInterrupt) else "failed"
+                print(f"ERROR: [{alias}] interactive sign-in {kind}: {e}", file=sys.stderr)
                 return 1
         else:
-            hint = f' --email {email}' if email else ' --email <addr>'
-            print(f'ERROR: [{alias}] sidecar session expired; interactive '
-                  f'sign-in needed.', file=sys.stderr)
-            print(f'       Run: owa-piggy setup --profile {alias}{hint}',
-                  file=sys.stderr)
+            hint = f" --email {email}" if email else " --email <addr>"
+            print(
+                f"ERROR: [{alias}] sidecar session expired; interactive sign-in needed.",
+                file=sys.stderr,
+            )
+            print(f"       Run: owa-piggy setup --profile {alias}{hint}", file=sys.stderr)
             return 1
-    if status != 'ok' or not captured:
-        if os.environ.get('OWA_CAPTURE_DEBUG'):
-            print(f'ERROR: [{alias}] capture-based reseed failed.',
-                  file=sys.stderr)
+    if status != "ok" or not captured:
+        if os.environ.get("OWA_CAPTURE_DEBUG"):
+            print(f"ERROR: [{alias}] capture-based reseed failed.", file=sys.stderr)
         else:
-            print(f'ERROR: [{alias}] capture-based reseed failed. '
-                  f'Set OWA_CAPTURE_DEBUG=1 and re-run for diagnostics.',
-                  file=sys.stderr)
+            print(
+                f"ERROR: [{alias}] capture-based reseed failed. "
+                f"Set OWA_CAPTURE_DEBUG=1 and re-run for diagnostics.",
+                file=sys.stderr,
+            )
         return 1
 
     # Merge captured fields into the existing config (preserves OWA_EMAIL,
     # OWA_CLIENT_ID overrides, etc.) and stamp issuance time so `status`
     # can compute the 24h SPA hard-cap remaining.
     config.update(captured)
-    config['OWA_RT_ISSUED_AT'] = iso_utc_now()
+    config["OWA_RT_ISSUED_AT"] = iso_utc_now()
     save_config(config)
-    print(f'[{alias}] reseeded; new RT persisted to {_config.CONFIG_PATH}',
-          file=sys.stderr)
+    print(f"[{alias}] reseeded; new RT persisted to {_config.CONFIG_PATH}", file=sys.stderr)
     return 0
 
 
-def _do_reseed_scrape(alias):
+def _do_reseed_scrape(alias: str) -> int:
     """Legacy reseed: shell out to scripts/reseed-from-edge.sh.
 
     The shell script handles its own Edge lifecycle (headless attempt,
@@ -186,35 +192,35 @@ def _do_reseed_scrape(alias):
     script = find_reseed_script()
     if not script:
         print(
-            'ERROR: reseed-from-edge.sh not found. Searched:\n'
-            '    $OWA_RESEED_SCRIPT\n'
-            '    <module_dir>/scripts/ (repo checkout)\n'
-            '    <sys.prefix>/share/owa-piggy/scripts/ (pipx/pip)\n'
-            '    /usr/local/share/owa-piggy/scripts/ (brew intel)\n'
-            '    /opt/homebrew/share/owa-piggy/scripts/ (brew apple silicon)\n'
-            '  Reinstall, or set OWA_RESEED_SCRIPT=/path/to/reseed-from-edge.sh',
+            "ERROR: reseed-from-edge.sh not found. Searched:\n"
+            "    $OWA_RESEED_SCRIPT\n"
+            "    <module_dir>/scripts/ (repo checkout)\n"
+            "    <sys.prefix>/share/owa-piggy/scripts/ (pipx/pip)\n"
+            "    /usr/local/share/owa-piggy/scripts/ (brew intel)\n"
+            "    /opt/homebrew/share/owa-piggy/scripts/ (brew apple silicon)\n"
+            "  Reinstall, or set OWA_RESEED_SCRIPT=/path/to/reseed-from-edge.sh",
             file=sys.stderr,
         )
         return 1
 
     env = os.environ.copy()
-    env['OWA_PIGGY_PROFILE'] = alias
-    env['OWA_PIGGY_EDGE_PROFILE_DIR'] = str(_config.profile_edge_dir(alias))
+    env["OWA_PIGGY_PROFILE"] = alias
+    env["OWA_PIGGY_EDGE_PROFILE_DIR"] = str(_config.profile_edge_dir(alias))
     # The single shared launchd agent no longer injects a per-profile
     # CDP_PORT (the old per-profile plists did). Derive it here so the
     # sidecar's debug port stays stable and collision-free per profile.
     # An explicit CDP_PORT already in the environment wins (manual runs,
     # debugging).
-    env.setdefault('CDP_PORT', str(_profile_cdp_port(alias)))
+    env.setdefault("CDP_PORT", str(_profile_cdp_port(alias)))
 
     try:
         return subprocess.call([str(script)], env=env)
     except OSError as e:
-        print(f'ERROR: failed to run {script}: {e}', file=sys.stderr)
+        print(f"ERROR: failed to run {script}: {e}", file=sys.stderr)
         return 1
 
 
-def do_reseed_all():
+def do_reseed_all() -> int:
     """Run the headless reseed flow for every configured profile, in order.
 
     Sequential rather than parallel: each profile drives its own Edge
@@ -231,8 +237,7 @@ def do_reseed_all():
     """
     on_disk = list_profiles()
     if not on_disk:
-        print('no profiles configured. Run: owa-piggy setup --profile <alias>',
-              file=sys.stderr)
+        print("no profiles configured. Run: owa-piggy setup --profile <alias>", file=sys.stderr)
         return 1
     # Honor the registry: if profiles.conf has an OWA_PROFILES list, that's
     # the set of *active* profiles - anything on disk but absent from the
@@ -242,22 +247,21 @@ def do_reseed_all():
     # everything on disk as active (matches status's behavior). A present
     # but empty registry means every profile is disabled.
     profiles_conf_exists = profiles_conf_path().exists()
-    registered = load_profiles_conf().get('OWA_PROFILES', [])
+    registered = load_profiles_conf().get("OWA_PROFILES", [])
     if profiles_conf_exists:
         active = [a for a in on_disk if a in registered]
         skipped = [a for a in on_disk if a not in registered]
         for alias in skipped:
-            print(f'skipping disabled profile: {alias}', file=sys.stderr)
+            print(f"skipping disabled profile: {alias}", file=sys.stderr)
     else:
         active = on_disk
     if not active:
-        print('no active profiles to reseed (registry has no enabled '
-              'profiles).', file=sys.stderr)
+        print("no active profiles to reseed (registry has no enabled profiles).", file=sys.stderr)
         return 1
     return _reseed_aliases(active)
 
 
-def do_reseed_scheduled():
+def do_reseed_scheduled() -> int:
     """Reseed only the profiles in OWA_SCHEDULED - the set the single
     shared launchd agent rotates hourly (`reseed --scheduled`).
 
@@ -272,22 +276,20 @@ def do_reseed_scheduled():
     returns 0 - the agent fires hourly and a no-op run is not a failure.
     """
     on_disk = set(list_profiles())
-    scheduled = load_profiles_conf().get('OWA_SCHEDULED', [])
+    scheduled = load_profiles_conf().get("OWA_SCHEDULED", [])
     aliases = []
     for alias in scheduled:
         if alias in on_disk:
             aliases.append(alias)
         else:
-            print(f'skipping scheduled profile with no config on disk: '
-                  f'{alias}', file=sys.stderr)
+            print(f"skipping scheduled profile with no config on disk: {alias}", file=sys.stderr)
     if not aliases:
-        print('no scheduled profiles to reseed (OWA_SCHEDULED is empty).',
-              file=sys.stderr)
+        print("no scheduled profiles to reseed (OWA_SCHEDULED is empty).", file=sys.stderr)
         return 0
     return _reseed_aliases(aliases)
 
 
-def _reseed_aliases(aliases):
+def _reseed_aliases(aliases: list[str]) -> int:
     """Reseed each alias in `aliases` sequentially. Returns the max exit
     code so a partial failure is still surfaced. Shared by do_reseed_all
     and do_reseed_scheduled.
@@ -296,8 +298,7 @@ def _reseed_aliases(aliases):
     for i, alias in enumerate(aliases):
         if i:
             print(file=sys.stderr)
-        print(f'=== reseed [profile={alias}] ({i + 1}/{len(aliases)}) ===',
-              file=sys.stderr)
+        print(f"=== reseed [profile={alias}] ({i + 1}/{len(aliases)}) ===", file=sys.stderr)
         # set_active_profile rebinds CONFIG_PATH so the nested setup writes
         # land in the right per-profile config. do_reseed shells out to a
         # script that calls owa-piggy setup --profile <alias>, which sets

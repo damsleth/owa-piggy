@@ -11,25 +11,36 @@ Opt-in plumbing - imported only when the user invokes
 ``owa-piggy setup --from-trough <url>``. No other owa-piggy code path
 imports this module, so a vanilla install pays nothing for it.
 """
+
+from __future__ import annotations
+
 import json
 import urllib.error
 import urllib.parse
 import urllib.request
+from typing import Any
 
 
-def _http_get_json(url, *, timeout):
-    req = urllib.request.Request(url, headers={'Accept': 'application/json'})
+def _http_get_json(url: str, *, timeout: float) -> Any:
+    req = urllib.request.Request(url, headers={"Accept": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read())
     except urllib.error.HTTPError as e:
-        body = e.read().decode('utf-8', 'replace')[:200]
-        raise RuntimeError(f'trough HTTP {e.code} from {url}: {body}')
+        body = e.read().decode("utf-8", "replace")[:200]
+        raise RuntimeError(f"trough HTTP {e.code} from {url}: {body}") from e
     except urllib.error.URLError as e:
-        raise RuntimeError(f'trough unreachable at {url}: {e.reason}')
+        raise RuntimeError(f"trough unreachable at {url}: {e.reason}") from e
 
 
-def fetch_foci(trough_url, *, tenant=None, sub=None, timeout=10, limit=50):
+def fetch_foci(
+    trough_url: str,
+    *,
+    tenant: str | None = None,
+    sub: str | None = None,
+    timeout: float = 10,
+    limit: int = 50,
+) -> tuple[str, str, dict[str, Any]]:
     """Return ``(refresh_token, tid, info)`` for the freshest FOCI RT in the
     trough matching the filter.
 
@@ -40,30 +51,32 @@ def fetch_foci(trough_url, *, tenant=None, sub=None, timeout=10, limit=50):
     Raises ``RuntimeError`` if the trough is unreachable, returns no
     tokens, or has none that match the filter.
     """
-    base = trough_url.rstrip('/')
-    qs = urllib.parse.urlencode({
-        'foci': 'true',
-        'host': 'login.microsoftonline.com',
-        'include_token': 'true',
-        'limit': limit,
-    })
-    body = _http_get_json(f'{base}/tokens?{qs}', timeout=timeout)
-    tokens = body.get('tokens') or []
+    base = trough_url.rstrip("/")
+    qs = urllib.parse.urlencode(
+        {
+            "foci": "true",
+            "host": "login.microsoftonline.com",
+            "include_token": "true",
+            "limit": limit,
+        }
+    )
+    body = _http_get_json(f"{base}/tokens?{qs}", timeout=timeout)
+    tokens: list[Any] = body.get("tokens") or []
     if not tokens:
-        raise RuntimeError(f'no FOCI refresh tokens at {base}')
+        raise RuntimeError(f"no FOCI refresh tokens at {base}")
 
-    matches = []
+    matches: list[tuple[Any, Any, Any, Any]] = []
     for t in tokens:
-        if (t.get('kind') or '') != 'refresh':
+        if (t.get("kind") or "") != "refresh":
             continue
-        if not t.get('token'):
+        if not t.get("token"):
             continue
         try:
-            payload = json.loads(t.get('payload_json') or '{}')
+            payload = json.loads(t.get("payload_json") or "{}")
         except (json.JSONDecodeError, TypeError):
             payload = {}
-        t_tid = payload.get('tid') or ''
-        t_sub = t.get('sub') or payload.get('sub') or ''
+        t_tid = payload.get("tid") or ""
+        t_sub = t.get("sub") or payload.get("sub") or ""
         if tenant and t_tid != tenant:
             continue
         if sub and t_sub != sub:
@@ -71,28 +84,29 @@ def fetch_foci(trough_url, *, tenant=None, sub=None, timeout=10, limit=50):
         matches.append((t, payload, t_tid, t_sub))
 
     if not matches:
-        criteria = []
+        criteria: list[str] = []
         if tenant:
-            criteria.append(f'tenant={tenant}')
+            criteria.append(f"tenant={tenant}")
         if sub:
-            criteria.append(f'sub={sub}')
-        filt = ' '.join(criteria) if criteria else '(no filter)'
+            criteria.append(f"sub={sub}")
+        filt = " ".join(criteria) if criteria else "(no filter)"
         raise RuntimeError(
-            f'no FOCI refresh token in trough matched {filt}; '
-            f'inspected {len(tokens)} candidate(s)'
+            f"no FOCI refresh token in trough matched {filt}; inspected {len(tokens)} candidate(s)"
         )
 
     # Trough already returns last_seen DESC, but be defensive.
-    matches.sort(key=lambda m: m[0].get('last_seen') or 0, reverse=True)
+    matches.sort(key=lambda m: m[0].get("last_seen") or 0, reverse=True)
     top, payload, tid, sub_oid = matches[0]
-    info = {
-        'tid': tid,
-        'sub': sub_oid,
-        'src_host': top.get('src_host'),
-        'last_seen': top.get('last_seen'),
-        'expires_in_at_capture': payload.get('expires_in'),
-        'total_candidates': len(tokens),
-        'matched': len(matches),
-        'token_len': len(top['token']),
+    info: dict[str, Any] = {
+        "tid": tid,
+        "sub": sub_oid,
+        "src_host": top.get("src_host"),
+        "last_seen": top.get("last_seen"),
+        "expires_in_at_capture": payload.get("expires_in"),
+        "total_candidates": len(tokens),
+        "matched": len(matches),
+        "token_len": len(top["token"]),
     }
-    return top['token'], tid, info
+    token: str = top["token"]
+    tid_str: str = tid
+    return token, tid_str, info
