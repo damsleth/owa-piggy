@@ -338,6 +338,12 @@ def test_setup_clears_cache(monkeypatch, tmp_config, clean_env, make_jwt):
     assert seen_cache_during_setup['snapshot'] == {}
 
 
+def test_setup_google_and_email_are_mutually_exclusive(monkeypatch, tmp_config, clean_env, capsys):
+    rc = _run(monkeypatch, ['setup', '--email', 'a@b.com', '--google'])
+    assert rc == 1
+    assert 'mutually exclusive' in capsys.readouterr().err
+
+
 def test_reseed_clears_cache(monkeypatch, tmp_config, clean_env):
     """`reseed` wipes the cache before shelling out so any AT minted for
     the pre-reseed RT can't be served afterwards."""
