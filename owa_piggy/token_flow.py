@@ -18,6 +18,7 @@ reseed, and does not print rotation NOTEs - those are caller policy.
 """
 from .config import save_config
 from .oauth import CLIENT_ID, capture_errors, exchange_token
+from .oauth_google import refresh_access_token as google_exchange_token
 
 # AAD error codes the caller can recover from by triggering an automatic
 # reseed (sliding-window expiry, hard-cap expiry). Detected from
@@ -57,6 +58,8 @@ def exchange_fresh(config, scope, *, persist, capture_stderr=False,
     per-profile writes never collide. The config dict is mutated in place
     either way so the caller's subsequent reads see the new token.
     """
+    provider = (config.get('OWA_PROVIDER', '') or 'msal').strip() or 'msal'
+    is_google = provider == 'google'
     rt = config.get('OWA_REFRESH_TOKEN', '').strip()
     tid = config.get('OWA_TENANT_ID', '').strip()
     cid = config.get('OWA_CLIENT_ID', CLIENT_ID).strip()
@@ -70,17 +73,23 @@ def exchange_fresh(config, scope, *, persist, capture_stderr=False,
         'tid': tid,
         'cid': cid,
         'rt_present': bool(rt),
-        'tid_present': bool(tid),
-        # The `1.`/`0.` prefix is a property of FOCI family tokens (the
-        # default client). A profile pointed at a non-FOCI client — e.g.
-        # the Azure DevOps app (OWA_CLIENT_ID set to its app id), whose
-        # bound RT is captured off the wire — carries an opaque RT with
-        # no such prefix, so the shape check does not apply there. We only
-        # know how to validate the FOCI shape; for other clients, defer to
-        # AAD to reject a malformed RT.
-        'rt_shape_ok': bool(rt) and (
-            (rt.startswith('1.') or rt.startswith('0.'))
-            if cid == CLIENT_ID else True
+        # Google profiles have no AAD tenant and no FOCI refresh-token
+        # shape to validate - those checks only mean something for the
+        # piggybacked MSAL client.
+        'tid_present': True if is_google else bool(tid),
+        'rt_shape_ok': True if is_google else (
+            bool(rt) and (
+                # The `1.`/`0.` prefix is a property of FOCI family tokens
+                # (the default client). A profile pointed at a non-FOCI
+                # client — e.g. the Azure DevOps app (OWA_CLIENT_ID set to
+                # its app id), whose bound RT is captured off the wire —
+                # carries an opaque RT with no such prefix, so the shape
+                # check does not apply there. We only know how to validate
+                # the FOCI shape; for other clients, defer to AAD to reject
+                # a malformed RT.
+                (rt.startswith('1.') or rt.startswith('0.'))
+                if cid == CLIENT_ID else True
+            )
         ),
         'stderr_text': '',
         'aad_error': None,
@@ -89,7 +98,10 @@ def exchange_fresh(config, scope, *, persist, capture_stderr=False,
     if not info['rt_present'] or not info['tid_present'] or not info['rt_shape_ok']:
         return None, info
 
-    if capture_stderr:
+    if is_google:
+        secret = config.get('OWA_CLIENT_SECRET', '').strip()
+        result = google_exchange_token(cid, secret, rt)
+    elif capture_stderr:
         # Capture via oauth's thread-local sink rather than swapping the
         # global sys.stderr, so concurrent probes (status fans out across
         # profiles) don't clobber each other's buffer.
@@ -105,10 +117,13 @@ def exchange_fresh(config, scope, *, persist, capture_stderr=False,
         result = exchange_token(rt, tid, cid, scope, **origin_kw)
 
     if not result:
-        for code in _RECOVERABLE_AAD_CODES:
-            if code in info['stderr_text']:
-                info['aad_error'] = code
-                break
+        # AADSTS recovery codes don't exist on the Google side - nothing
+        # else to classify there.
+        if not is_google:
+            for code in _RECOVERABLE_AAD_CODES:
+                if code in info['stderr_text']:
+                    info['aad_error'] = code
+                    break
         return None, info
 
     new_rt = result.get('refresh_token')

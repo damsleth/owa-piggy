@@ -85,7 +85,8 @@ def enable_profile(alias):
 
 def create_profile(alias, *, email=None, audience=None, full_banner=False,
                     trough_url=None, trough_tenant=None, trough_sub=None,
-                    user_agent=None, sharepoint_tenant=None):
+                    user_agent=None, sharepoint_tenant=None, google=False,
+                    google_client_id=None, google_client_secret=None):
     """Run interactive_setup for a profile, persist its preferred audience,
     and register the profile in profiles.conf.
 
@@ -116,11 +117,16 @@ def create_profile(alias, *, email=None, audience=None, full_banner=False,
                               trough_url=trough_url,
                               trough_tenant=trough_tenant,
                               trough_sub=trough_sub,
-                              user_agent=user_agent):
+                              user_agent=user_agent,
+                              google=google,
+                              google_client_id=google_client_id,
+                              google_client_secret=google_client_secret):
         return 1
     ensure_profile_registered(alias, make_default_if_first=True)
     print(f'\n\tOWA-PIGGY 🐽  CONFIGURED [{alias}]', file=sys.stderr)
-    if full_banner:
+    # The app-reg-free banner is about the MSAL piggyback trick specifically -
+    # a Google profile uses a real app registration, so it doesn't apply.
+    if full_banner and not google:
         print('\n\tENJOY YOUR APP-REG-FREE SCOPES\n', file=sys.stderr)
     return 0
 

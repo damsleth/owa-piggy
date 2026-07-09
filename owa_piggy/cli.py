@@ -238,6 +238,19 @@ def _build_parser():
                          help='SharePoint tenant name (e.g. norconsult365) to '
                               'persist as OWA_SHAREPOINT_TENANT, enabling '
                               '`--audience sharepoint` on this profile')
+    p_setup.add_argument('--google', action='store_true',
+                         help='seed this profile via Google OAuth consent '
+                              '(a real app registration you own, not a '
+                              'piggybacked client - opens a browser once). '
+                              'Mutually exclusive with --email/--from-trough.')
+    p_setup.add_argument('--google-client-id', metavar='<id>', default=None,
+                         dest='google_client_id',
+                         help='Google OAuth client id (Desktop app type). '
+                              'Honors GOOGLE_OAUTH_CLIENT_ID as a default.')
+    p_setup.add_argument('--google-client-secret', metavar='<secret>', default=None,
+                         dest='google_client_secret',
+                         help='Google OAuth client secret. Honors '
+                              'GOOGLE_OAUTH_CLIENT_SECRET as a default.')
     p_setup.add_argument('--json', action='store_true',
                          help='(rejected) setup is interactive; use status --json instead')
 
@@ -595,9 +608,10 @@ def _cmd_setup(args):
         return 1
     email = getattr(args, 'email', None)
     trough_url = getattr(args, 'from_trough', None) or os.environ.get('OWA_TROUGH_URL') or None
-    if email and trough_url:
-        print('ERROR: --email and --from-trough are mutually exclusive '
-              '(pick one capture source).', file=sys.stderr)
+    google = getattr(args, 'google', False)
+    if sum(bool(x) for x in (email, trough_url, google)) > 1:
+        print('ERROR: --email, --from-trough, and --google are mutually '
+              'exclusive (pick one capture source).', file=sys.stderr)
         return 1
     alias, rc = _resolve_and_activate(args, allow_missing=True)
     if rc:
@@ -613,6 +627,11 @@ def _cmd_setup(args):
         user_agent=(getattr(args, 'user_agent', None)
                     or os.environ.get('OWA_USER_AGENT') or None),
         sharepoint_tenant=getattr(args, 'sharepoint_tenant', None),
+        google=google,
+        google_client_id=(getattr(args, 'google_client_id', None)
+                           or os.environ.get('GOOGLE_OAUTH_CLIENT_ID') or None),
+        google_client_secret=(getattr(args, 'google_client_secret', None)
+                               or os.environ.get('GOOGLE_OAUTH_CLIENT_SECRET') or None),
     )
 
 
