@@ -76,7 +76,11 @@ def test_agent_adds_json_default_for_machine_command():
 
 
 def test_err_json_emits_structured_error_on_stderr():
-    result = _run("--err-json", "token", "--audience", "NOPE")
+    # An unrecognized flag - not an unknown --audience, which is now
+    # validated by resolve_audience() at resolve time rather than
+    # argparse `choices=` (see cli.py's _add_common_options docstring),
+    # so it no longer raises an argparse-level usage error.
+    result = _run("--err-json", "token", "--bogus-flag")
     assert result.returncode == 2
     payload = json.loads(result.stderr)
     assert payload["error"]["tool"] == "owa-piggy"
