@@ -138,15 +138,18 @@ def _add_common_options(p, *, audience_scope=True):
 
     Every command that touches a profile gets --profile. Commands that
     mint or probe a token additionally get --audience and --scope.
-    --audience uses argparse `choices=` so typos error at parse time
-    with the full list, rather than silently falling back to the default.
+    --audience is validated by resolve_audience() at resolve time (not
+    argparse `choices=`) so typos still error loudly for MSAL profiles,
+    while a google-provider profile - which has no audience concept,
+    scope is fixed at consent time - can pass any string here and have
+    it ignored rather than rejected before we even know the provider.
     """
     p.add_argument('--profile', metavar='<alias>', default=None,
                    help='target a specific profile (also honored via OWA_PROFILE)')
     if audience_scope:
         p.add_argument('--audience', metavar='<name>', default=None,
-                       choices=sorted(set(KNOWN_AUDIENCES) | set(KNOWN_AUDIENCE_TEMPLATES)),
-                       help='named FOCI audience (see `owa-piggy audiences`)')
+                       help='named FOCI audience (see `owa-piggy audiences`); '
+                            'ignored for google-provider profiles')
         p.add_argument('--scope', metavar='<scope>', default=None,
                        help='override scope explicitly (takes precedence)')
         p.add_argument('--sharepoint-tenant', metavar='<name>', default=None,
@@ -431,36 +434,43 @@ def _mint_and_emit(args, *, mode):
         return rc
 
     config, persist = load_config()
+    provider = (config.get('OWA_PROVIDER', '') or 'msal').strip() or 'msal'
     tenant_id = config.get('OWA_TENANT_ID', '').strip()
     client_id = config.get('OWA_CLIENT_ID', CLIENT_ID).strip()
 
-    profile_default = config.get('OWA_DEFAULT_AUDIENCE', '').strip()
-    sp_flag = getattr(args, 'sharepoint_tenant', None)
-    sp_cfg = config.get('OWA_SHAREPOINT_TENANT', '').strip()
+    if provider == 'google':
+        # Google has no audience/tenant concept - the exchange in
+        # token_flow.exchange_fresh ignores scope entirely for this
+        # provider, so there's nothing to resolve or validate here.
+        scope, err = '', ''
+    else:
+        profile_default = config.get('OWA_DEFAULT_AUDIENCE', '').strip()
+        sp_flag = getattr(args, 'sharepoint_tenant', None)
+        sp_cfg = config.get('OWA_SHAREPOINT_TENANT', '').strip()
 
-    # Auto-derive the SharePoint tenant on first use so --sharepoint-tenant
-    # is never required: if a templated audience is selected and no tenant
-    # is available from flag/env/config, mint a Graph token and read it from
-    # /sites/root, persisting it to the profile for next time.
-    if (templated_audience_name(args.audience, args.scope, profile_default)
-            and not _resolve_sharepoint_tenant(sp_flag, sp_cfg)):
-        derived, derive_err = derive_sharepoint_tenant(config, persist=persist)
-        if derived:
-            sp_flag = derived
-            if persist:
-                print(f'NOTE: derived SharePoint tenant {derived!r} via Graph; '
-                      f'saved as OWA_SHAREPOINT_TENANT.', file=sys.stderr)
-        else:
-            print(f'WARNING: {derive_err}', file=sys.stderr)
-            # Fall through: resolve_audience emits the actionable
-            # needs-a-tenant error below.
+        # Auto-derive the SharePoint tenant on first use so --sharepoint-tenant
+        # is never required: if a templated audience is selected and no tenant
+        # is available from flag/env/config, mint a Graph token and read it from
+        # /sites/root, persisting it to the profile for next time.
+        if (templated_audience_name(args.audience, args.scope, profile_default)
+                and not _resolve_sharepoint_tenant(sp_flag, sp_cfg)):
+            derived, derive_err = derive_sharepoint_tenant(config, persist=persist)
+            if derived:
+                sp_flag = derived
+                if persist:
+                    print(f'NOTE: derived SharePoint tenant {derived!r} via Graph; '
+                          f'saved as OWA_SHAREPOINT_TENANT.', file=sys.stderr)
+            else:
+                print(f'WARNING: {derive_err}', file=sys.stderr)
+                # Fall through: resolve_audience emits the actionable
+                # needs-a-tenant error below.
 
-    scope, err = resolve_audience(
-        args.audience, args.scope,
-        profile_default=profile_default,
-        sharepoint_tenant=sp_flag,
-        profile_sharepoint_tenant=sp_cfg,
-    )
+        scope, err = resolve_audience(
+            args.audience, args.scope,
+            profile_default=profile_default,
+            sharepoint_tenant=sp_flag,
+            profile_sharepoint_tenant=sp_cfg,
+        )
     if err:
         print(f'ERROR: {err}', file=sys.stderr)
         return 1

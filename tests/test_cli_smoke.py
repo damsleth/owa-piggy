@@ -147,13 +147,39 @@ def test_scope_without_value_errors(monkeypatch, capsys, tmp_config,
 
 def test_debug_unknown_audience_errors(monkeypatch, capsys, tmp_config,
                                         clean_env):
-    """debug with an unknown --audience must exit non-zero (argparse's
-    `choices=` check rejects it before we probe AAD)."""
-    with pytest.raises(SystemExit) as excinfo:
-        _run(monkeypatch, ['debug', '--audience', 'nonesuch'])
-    assert excinfo.value.code != 0
+    """debug with an unknown --audience must exit non-zero. Validation
+    lives in resolve_audience() (not argparse `choices=`) so a
+    google-provider profile can pass any audience string and have it
+    ignored - see cli.py's _add_common_options docstring."""
+    rc = _run(monkeypatch, ['debug', '--audience', 'nonesuch'])
+    assert rc != 0
     err = capsys.readouterr().err
     assert 'nonesuch' in err
+
+
+def test_google_profile_accepts_any_audience_string(monkeypatch, tmp_config, clean_env):
+    """A google-provider profile has no audience concept - any --audience
+    string (however nonsensical for MSAL) must be accepted and ignored,
+    not rejected the way an MSAL profile would reject a typo. Regression
+    test for the argparse `choices=` restriction that made this
+    impossible before --audience validation moved to resolve_audience()."""
+    from owa_piggy.config import save_config, set_active_profile
+
+    set_active_profile('work')
+    save_config({
+        'OWA_PROVIDER': 'google',
+        'OWA_REFRESH_TOKEN': 'opaque-google-rt',
+        'OWA_CLIENT_ID': 'gcid',
+        'OWA_CLIENT_SECRET': 'gsecret',
+    })
+    monkeypatch.setattr(
+        'owa_piggy.token_flow.google_exchange_token',
+        lambda cid, secret, rt: {'access_token': 'ya29.a0-opaque', 'expires_in': 3600},
+    )
+
+    rc = _run(monkeypatch, ['token', '--audience', 'gmail'])
+
+    assert rc == 0
 
 
 def test_raw_token_to_stdout(monkeypatch, capsys, tmp_config, clean_env,
