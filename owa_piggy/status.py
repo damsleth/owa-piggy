@@ -108,6 +108,7 @@ def _probe_profile(alias, audience=None, scope=None, sharepoint_tenant=None):
     rt = config.get('OWA_REFRESH_TOKEN', '').strip()
     probe = {
         'alias': alias,
+        'provider': (config.get('OWA_PROVIDER', '') or 'msal').strip() or 'msal',
         'rt_present_cfg': bool(rt),
         'rt_expires_at': _rt_expires_at(config),
         'rt_issued_at': config.get('OWA_RT_ISSUED_AT', '').strip(),
@@ -149,6 +150,14 @@ def _probe_profile(alias, audience=None, scope=None, sharepoint_tenant=None):
         probe['exchange_error'] = next(
             (l for l in info['stderr_text'].splitlines()
              if l.startswith('ERROR: ')), '')
+        return probe
+
+    if probe['provider'] == 'google':
+        # Google's OAuth access tokens are opaque bearer strings, not JWTs -
+        # there's no payload to decode. Synthesize the minimal shape
+        # downstream rendering needs (just `exp`) from expires_in so
+        # status/debug don't need a separate google-aware code path.
+        probe['payload'] = {'exp': int(time.time() + result.get('expires_in', 0))}
         return probe
 
     at = result['access_token']
@@ -327,12 +336,17 @@ def _status_human(probe, multi=False, verbose=False):
 
     # Rotated RT persistence is handled by the core probe via exchange_fresh.
 
-    # Refresh token hard-cap: issued_at + 24h. Parse OWA_RT_ISSUED_AT if set.
-    rt_expires = 'unknown (run `owa-piggy reseed` to establish)'
-    dt = _parse_iso(probe['rt_issued_at'])
-    if dt is not None:
-        exp_dt = dt + timedelta(hours=24)
-        rt_expires = f'{exp_dt.strftime("%Y-%m-%dT%H:%M:%SZ")} ({_humanize_minutes(_minutes_until(exp_dt))})'
+    # Refresh token hard-cap: issued_at + 24h. Only meaningful for AAD's SPA
+    # hard-cap - Google refresh tokens don't expire on a schedule, so
+    # `reseed` (which doesn't apply there either) would be the wrong hint.
+    if probe['provider'] == 'google':
+        rt_expires = 'does not expire (Google refresh tokens are long-lived)'
+    else:
+        rt_expires = 'unknown (run `owa-piggy reseed` to establish)'
+        dt = _parse_iso(probe['rt_issued_at'])
+        if dt is not None:
+            exp_dt = dt + timedelta(hours=24)
+            rt_expires = f'{exp_dt.strftime("%Y-%m-%dT%H:%M:%SZ")} ({_humanize_minutes(_minutes_until(exp_dt))})'
 
     # OWA-issued access tokens always carry the same dense scope set, so
     # spelling out three names and a count was pure noise. Collapse to
@@ -458,10 +472,14 @@ def do_debug(alias, audience=None, scope=None, sharepoint_tenant=None):
     rt = config.get('OWA_REFRESH_TOKEN', '').strip()
     tid = config.get('OWA_TENANT_ID', '').strip()
     cid = config.get('OWA_CLIENT_ID', CLIENT_ID).strip()
+    provider = (config.get('OWA_PROVIDER', '') or 'msal').strip() or 'msal'
     source = 'config file' if persist else ('env only' if rt else '')
     row('ok' if rt else 'no', 'OWA_REFRESH_TOKEN',
         f'{len(rt)} bytes, {source}' if rt else 'unset')
-    row('ok' if tid else 'no', 'OWA_TENANT_ID', tid or 'unset')
+    if provider == 'google':
+        row('..', 'OWA_TENANT_ID', 'n/a (google provider)')
+    else:
+        row('ok' if tid else 'no', 'OWA_TENANT_ID', tid or 'unset')
     row('..', 'OWA_CLIENT_ID',
         f'{cid}{" (default OWA first-party)" if cid == CLIENT_ID else " (override)"}')
 
@@ -470,6 +488,29 @@ def do_debug(alias, audience=None, scope=None, sharepoint_tenant=None):
     if not rt:
         row('no', f'absent; run `owa-piggy setup --profile {alias}` or '
                   f'`owa-piggy reseed --profile {alias}`')
+    elif provider == 'google':
+        # Google refresh tokens are opaque (typically `1//0...`) - the FOCI
+        # `1.`/`0.` shape check is an AAD-specific concept and doesn't apply.
+        row('ok', f'google opaque RT ({rt[:4]}...)')
+        print('  probing live exchange against Google...')
+        result, _info = exchange_fresh(config, debug_scope, persist=persist,
+                                       capture_stderr=False)
+        if result and result.get('access_token'):
+            row('ok', 'exchange succeeded')
+            # Google's access tokens are opaque bearer strings, not JWTs -
+            # expires_in from the token response is all there is to show.
+            exp = time.time() + result.get('expires_in', 0)
+            row('..', 'access token exp',
+                f'in {int((exp-time.time())/60)} min '
+                f'({time.strftime("%H:%M:%S", time.localtime(exp))})')
+
+            if _info['rotated']:
+                if persist:
+                    row('ok', 'refresh token rotated and persisted')
+                else:
+                    row('..', 'refresh token rotated (env-only, not persisted)')
+        else:
+            row('no', 'exchange failed - see error above')
     else:
         shape_ok = rt.startswith('1.') or rt.startswith('0.')
         row('ok' if shape_ok else 'no',
@@ -583,14 +624,19 @@ def do_debug(alias, audience=None, scope=None, sharepoint_tenant=None):
         row('no', 'owa-piggy not on PATH',
             'run ./scripts/add-to-path.sh or pipx install .')
 
-    sidecar = profile_edge_dir(alias)
-    row('ok' if sidecar.is_dir() else 'no',
-        'Edge sidecar profile', str(sidecar) if sidecar.is_dir() else
-        f'{sidecar} (missing; `reseed` needs this)')
+    if provider == 'google':
+        # Google profiles never launch Edge - reseed is a no-op for them
+        # (see reseed.do_reseed), so an absent sidecar dir isn't a problem.
+        row('..', 'Edge sidecar profile', 'n/a (google provider)')
+    else:
+        sidecar = profile_edge_dir(alias)
+        row('ok' if sidecar.is_dir() else 'no',
+            'Edge sidecar profile', str(sidecar) if sidecar.is_dir() else
+            f'{sidecar} (missing; `reseed` needs this)')
 
-    reseed = find_reseed_script()
-    row('ok' if reseed else 'no', 'reseed script',
-        str(reseed) if reseed else
-        'not found in any standard location (OWA_RESEED_SCRIPT overrides)')
+        reseed = find_reseed_script()
+        row('ok' if reseed else 'no', 'reseed script',
+            str(reseed) if reseed else
+            'not found in any standard location (OWA_RESEED_SCRIPT overrides)')
 
     return 0

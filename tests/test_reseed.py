@@ -4,6 +4,25 @@ from owa_piggy import capture as capture_mod
 from owa_piggy import reseed as reseed_mod
 
 
+def test_reseed_skips_google_profiles(tmp_config, clean_env, capsys):
+    """Google refresh tokens don't need Edge-driven silent refresh - reseed
+    should no-op successfully rather than trying to launch Edge for them."""
+    from owa_piggy.config import save_config, set_active_profile
+
+    set_active_profile('gmail-personal')
+    save_config({
+        'OWA_PROVIDER': 'google',
+        'OWA_REFRESH_TOKEN': 'grt',
+        'OWA_CLIENT_ID': 'gcid',
+        'OWA_CLIENT_SECRET': 'gsecret',
+    })
+
+    rc = reseed_mod.do_reseed('gmail-personal')
+
+    assert rc == 0
+    assert 'reseed not applicable' in capsys.readouterr().err
+
+
 def test_reseed_all_skips_when_registry_present_but_empty(
     monkeypatch, tmp_config, clean_env, capsys
 ):

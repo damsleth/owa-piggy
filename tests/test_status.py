@@ -96,6 +96,44 @@ def test_status_honors_profile_default_audience(
     assert 'audience:     teams' in capsys.readouterr().out
 
 
+def test_status_google_profile_shows_no_hard_cap(
+    monkeypatch, tmp_config, clean_env, capsys
+):
+    """A google-provider profile has no OWA_TENANT_ID and no 24h SPA
+    hard-cap - status should render that as normal, not as a broken
+    profile, and never suggest `reseed` (which doesn't apply there).
+
+    Uses a realistic OPAQUE access token (Google's real shape, e.g.
+    'ya29.a0...') rather than a JWT - a JWT-shaped mock here would hide
+    the actual bug (status used to assume every access token is a JWT
+    and call decode_jwt_segment on it, which throws on an opaque string
+    and used to report the profile as broken even though the live
+    exchange succeeded)."""
+    from owa_piggy.config import save_config, set_active_profile
+
+    set_active_profile('work')
+    save_config({
+        'OWA_PROVIDER': 'google',
+        'OWA_REFRESH_TOKEN': 'opaque-google-rt',
+        'OWA_CLIENT_ID': 'gcid',
+        'OWA_CLIENT_SECRET': 'gsecret',
+    })
+    monkeypatch.setattr(
+        'owa_piggy.token_flow.google_exchange_token',
+        lambda cid, secret, rt: {'access_token': 'ya29.a0-opaque-not-a-jwt',
+                                  'expires_in': 3600},
+    )
+    monkeypatch.setattr(status_mod, 'launchd_is_scheduled', lambda _alias: False)
+
+    rc = status_mod.do_status('work', verbose=True)
+
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert 'does not expire (Google refresh tokens are long-lived)' in out
+    assert 'run `owa-piggy reseed`' not in out
+    assert 'no valid token' not in out
+
+
 def test_debug_honors_profile_default_audience(
     monkeypatch, tmp_config, clean_env, make_jwt, capsys
 ):
@@ -133,3 +171,37 @@ def test_debug_honors_profile_default_audience(
     assert rc == 0
     assert seen['scope'].startswith('https://outlook.office.com/.default ')
     assert 'access token aud: https://outlook.office.com' in capsys.readouterr().out
+
+
+def test_debug_google_profile_with_opaque_token(
+    monkeypatch, tmp_config, clean_env, capsys
+):
+    """`debug`'s refresh-token-shape display is a second, independent copy
+    of the FOCI check in token_flow - it must also skip AAD-only checks for
+    a google profile, and must not assume the access token is a JWT."""
+    from owa_piggy.config import save_config, set_active_profile
+
+    set_active_profile('work')
+    save_config({
+        'OWA_PROVIDER': 'google',
+        'OWA_REFRESH_TOKEN': '1//0opaque-google-rt',
+        'OWA_CLIENT_ID': 'gcid',
+        'OWA_CLIENT_SECRET': 'gsecret',
+    })
+    monkeypatch.setattr(
+        'owa_piggy.token_flow.google_exchange_token',
+        lambda cid, secret, rt: {'access_token': 'ya29.a0-opaque-not-a-jwt',
+                                  'expires_in': 3600},
+    )
+    monkeypatch.setattr(status_mod.subprocess, 'run',
+                        lambda *a, **k: SimpleNamespace(returncode=1, stdout='', stderr=''))
+    monkeypatch.setattr(status_mod, 'find_reseed_script', lambda: None)
+
+    rc = status_mod.do_debug('work')
+
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert 'NOT FOCI' not in out
+    assert 'exchange succeeded' in out
+    assert 'access token exp' in out
+    assert 'n/a (google provider)' in out

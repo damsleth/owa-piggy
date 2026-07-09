@@ -105,7 +105,9 @@ def read_input(prompt, secret=False):
 
 
 def interactive_setup(config, alias='default', *, email=None, trough_url=None,
-                       trough_tenant=None, trough_sub=None, user_agent=None):
+                       trough_tenant=None, trough_sub=None, user_agent=None,
+                       google=False, google_client_id=None,
+                       google_client_secret=None):
     """Run the setup flow for profile <alias>. `CONFIG_PATH` must already
     be pointing at that profile's config file (caller's job, typically
     via `config.set_active_profile(alias)`).
@@ -138,6 +140,8 @@ def interactive_setup(config, alias='default', *, email=None, trough_url=None,
                              tenant=trough_tenant, sub=trough_sub)
     if email is not None:
         return _capture_setup(config, alias, email, user_agent=user_agent)
+    if google:
+        return _google_setup(config, alias, google_client_id, google_client_secret)
 
     # Non-interactive path: if stdin is piped, parse KEY=value lines from it.
     # This avoids the bracketed-paste corruption that raw-tty input is prone
@@ -245,6 +249,57 @@ def _capture_setup(config, alias, email, *, user_agent=None):
 
     config.update(captured)
     config['OWA_RT_ISSUED_AT'] = iso_utc_now()
+    save_config(config)
+    print(f'Config saved to {_config.CONFIG_PATH} [profile={alias}]',
+          file=sys.stderr)
+    return True
+
+
+def _google_setup(config, alias, client_id, client_secret):
+    """Run Google's installed-app consent flow and persist the resulting
+    refresh token to the profile config.
+
+    Unlike the MSAL paths above, owa-piggy owns a real OAuth client here,
+    so this is a normal browser consent screen - no Edge, no CDP.
+
+    Imported lazily so a `setup` invocation that never touches Google does
+    not pay the import cost.
+    """
+    from . import oauth_google
+
+    if not client_id or not client_secret:
+        print('ERROR: --google requires --google-client-id and '
+              '--google-client-secret (from a Google Cloud OAuth client).',
+              file=sys.stderr)
+        return False
+
+    print(f'owa-piggy setup [profile={alias}, provider=google]\n',
+          file=sys.stderr)
+    print('Opening your browser to sign in to Google.', file=sys.stderr)
+
+    try:
+        tokens = oauth_google.run_local_consent_flow(client_id, client_secret)
+    except oauth_google.ConsentError as e:
+        print(f'ERROR: {e}', file=sys.stderr)
+        return False
+    except KeyboardInterrupt:
+        print('\nABORTED.', file=sys.stderr)
+        return False
+
+    if not tokens.get('refresh_token'):
+        print('ERROR: Google returned no refresh_token. Revoke prior access '
+              'at https://myaccount.google.com/permissions and re-run setup.',
+              file=sys.stderr)
+        return False
+
+    config['OWA_PROVIDER'] = 'google'
+    config['OWA_CLIENT_ID'] = client_id
+    config['OWA_CLIENT_SECRET'] = client_secret
+    config['OWA_REFRESH_TOKEN'] = tokens['refresh_token']
+    # No OWA_RT_ISSUED_AT: that field only means something as the start of
+    # AAD's 24h SPA hard-cap window (see status._rt_expires_at). Google
+    # refresh tokens don't expire on a schedule, so leave it unset rather
+    # than have status.py render a bogus countdown.
     save_config(config)
     print(f'Config saved to {_config.CONFIG_PATH} [profile={alias}]',
           file=sys.stderr)
