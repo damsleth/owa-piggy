@@ -252,7 +252,8 @@ def email_matches_claims(email, claims):
 
 # --- Capture flow ----------------------------------------------------------
 
-def _capture_token_response(session, *, deadline, log=None, tick=None):
+def _capture_token_response(session, *, deadline, log=None, tick=None,
+                            expected_client_id=None):
     """Block until a /token response with refresh_token lands, then return
     its parsed body dict.
 
@@ -261,6 +262,12 @@ def _capture_token_response(session, *, deadline, log=None, tick=None):
     refreshes also work. We accept the first response that has a
     refresh_token in it. Errors-from-AAD responses (e.g. interaction
     required) are ignored; we keep listening until the deadline.
+
+    A multi-app shell page (e.g. an Azure Portal-hosted admin center)
+    fires a /token exchange for the shell's own client on load, before
+    the extension the caller actually wants triggers its own exchange.
+    When `expected_client_id` is set, responses bound to a different
+    client (per the id_token's `aud`) are skipped instead of accepted.
 
     `tick(elapsed_s)` is called every ~5s while waiting so callers can
     print a heartbeat to stderr; without this, capture_silent looks
@@ -341,6 +348,13 @@ def _capture_token_response(session, *, deadline, log=None, tick=None):
             continue
 
         if isinstance(parsed, dict) and parsed.get('refresh_token'):
+            if expected_client_id:
+                claims = decode_id_token_payload(parsed.get('id_token', ''))
+                got_client_id = (claims or {}).get('aud')
+                if got_client_id != expected_client_id:
+                    log(f'token response bound to client_id={got_client_id}, '
+                        f'want {expected_client_id}; skipping')
+                    continue
             return parsed
         # Probably an AAD error envelope (interaction_required, etc.).
         # Keep listening - the SPA will retry.
@@ -430,9 +444,21 @@ def capture_signin(alias, email, *, timeout=300, user_agent=None,
         session.call('Network.enable', {})
         session.call('Runtime.enable', {})
         deadline = time.monotonic() + timeout
-        log(f'awaiting /token response (timeout {timeout}s)...')
+        expected_client_id = os.environ.get('OWA_CLIENT_ID', '').strip() or None
+        log(f'awaiting /token response (timeout {timeout}s)...'
+            + (f' filtering for client_id={expected_client_id}'
+               if expected_client_id else ''))
         token_response = _capture_token_response(
-            session, deadline=deadline, log=log, tick=tick)
+            session, deadline=deadline, log=log, tick=tick,
+            expected_client_id=expected_client_id)
+        # `aud` on the id_token is the client_id the RT is actually bound
+        # to - the first /token response on a multi-app page (e.g. Azure
+        # Portal-hosted admin centers) is not always the one the caller
+        # intended, so surface it for anyone diagnosing a wrong-client
+        # capture via OWA_CAPTURE_URL.
+        captured_claims = decode_id_token_payload(token_response.get('id_token', ''))
+        if captured_claims:
+            log(f'captured token bound to client_id={captured_claims.get("aud")}')
 
         # Let MSAL.js finish persisting its post-auth state to localStorage
         # before we kill Edge. The /token response arrives the moment AAD
