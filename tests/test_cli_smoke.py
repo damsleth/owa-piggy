@@ -716,6 +716,37 @@ def test_profiles_json_lists_registered(monkeypatch, capsys, tmp_config, clean_e
     assert rows['work']['default'] is True
     assert rows['work']['has_config'] is True
     assert rows['personal']['has_config'] is False
+    assert rows['work']['type'] == 'm365'
+    assert rows['personal']['type'] == 'm365'
+
+
+def test_profiles_json_classifies_type(monkeypatch, capsys, tmp_config, clean_env):
+    """`type` distinguishes google/ado/m365 profiles and defaults a
+    registered-but-unconfigured profile to 'm365' without crashing."""
+    from owa_piggy.config import (
+        DEVOPS_CLIENT_ID,
+        ensure_profile_registered,
+        profile_config_path,
+        profile_dir,
+    )
+    for alias in ('brkh-g', 'nc-ado', 'nc', 'bare'):
+        profile_dir(alias).mkdir(parents=True, exist_ok=True)
+        ensure_profile_registered(alias)
+
+    profile_config_path('brkh-g').write_text('OWA_PROVIDER=google\n')
+    profile_config_path('nc-ado').write_text(f'OWA_CLIENT_ID={DEVOPS_CLIENT_ID}\n')
+    profile_config_path('nc').write_text('OWA_REFRESH_TOKEN=1.AQ_fake\n')
+    # 'bare' stays registered with no config file at all.
+
+    rc = _run(monkeypatch, ['profiles', '--json'])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    rows = {row['alias']: row for row in payload['profiles']}
+    assert rows['brkh-g']['type'] == 'google'
+    assert rows['nc-ado']['type'] == 'ado'
+    assert rows['nc']['type'] == 'm365'
+    assert rows['bare']['type'] == 'm365'
+    assert rows['bare']['has_config'] is False
 
 
 def test_audiences_with_multiple_profiles_no_default(monkeypatch, capsys,
