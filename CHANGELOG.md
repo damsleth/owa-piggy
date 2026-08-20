@@ -8,6 +8,30 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 Releases before v0.12.0 are recorded only in the annotated git tags
 (`git tag -n99`).
 
+## [1.1.0] - 2026-08-20
+
+Google as a second identity provider, and two reliability fixes for the
+unattended reseed path.
+
+### Added
+- `OWA_PROVIDER=google` selects a Google OAuth profile alongside the default
+  MSAL/Entra one. Google refresh tokens are long-lived, so `reseed` skips
+  these profiles instead of driving Edge at them.
+- `profiles --json` now reports a `type` per profile: `google`
+  (`OWA_PROVIDER=google`), `ado` (the Azure DevOps public client id) or
+  `m365`. Consumers previously could not tell a Google profile from a
+  Microsoft one, so they fed Google tokens to Graph-only tools and collected a
+  401 that reads as "auth expired" and cannot be fixed by reseeding.
+
+### Fixed
+- Capture-based reseed falls back to non-headless (offscreen) Edge when two
+  headless attempts time out, not only on an explicit `headless_blocked`.
+  Conditional-Access-heavy tenants stall the `/token` round-trip without ever
+  redirecting to `login.*`, which surfaced as a plain timeout and killed the
+  reseed. On fallback success the profile persists `OWA_CAPTURE_HEADLESS=0`,
+  so later runs skip two doomed headless attempts.
+- `--audience` validation no longer rejects google-provider profiles.
+
 ## [1.0.0] - 2026-06-19
 
 First stable release. No breaking API changes from 0.17.0 — this marks the
