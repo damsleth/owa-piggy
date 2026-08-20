@@ -8,7 +8,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 Releases before v0.12.0 are recorded only in the annotated git tags
 (`git tag -n99`).
 
-## [Unreleased]
+## [1.1.1] - 2026-08-20
+
+Metadata-only patch. v1.1.0's release workflow failed on its Python 3.8
+gate, so that tag never produced a GitHub Release and PyPI still advertised
+`requires-python >=3.8`; retagging a public version would break the Homebrew
+tap's pinned sha, so this corrects both forward.
 
 ### Removed
 - Python 3.8 support; the floor is now 3.9. 3.8 reached end of life in October
