@@ -8,6 +8,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 Releases before v0.12.0 are recorded only in the annotated git tags
 (`git tag -n99`).
 
+## [Unreleased]
+
+### Removed
+- Python 3.8 support; the floor is now 3.9. 3.8 reached end of life in October
+  2024, the `ubuntu-latest` CI runners no longer provide it (which is what
+  broke the v1.1.0 release workflow), and macOS has shipped 3.9.6 as
+  `/usr/bin/python3` since Sonoma - so no supported macOS could reach 3.8
+  without installing it deliberately. No code changed: nothing here used a
+  3.8-only compatibility path, and nothing uses a 3.9+ feature either.
+
 ## [1.1.0] - 2026-08-20
 
 Google as a second identity provider, and two reliability fixes for the
