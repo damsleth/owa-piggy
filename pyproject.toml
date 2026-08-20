@@ -7,7 +7,7 @@ name = "owa-piggy"
 version = "1.1.0"
 description = "Get an Outlook/Graph access token without registering an app in Azure AD"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "damsleth" }]
