@@ -185,6 +185,96 @@ def test_capture_reseed_clears_cache(monkeypatch, tmp_config, clean_env):
     assert saved['OWA_RT_ISSUED_AT'] == '2026-04-30T12:00:00Z'
 
 
+def _mock_capture_reseed(monkeypatch, results):
+    """Monkeypatch the capture-reseed collaborators. `results` is a list of
+    (status, config) tuples popped per capture_silent call; each call's
+    headless kwarg is recorded. Returns (calls, saved)."""
+    calls = []
+    saved = {}
+
+    def fake_silent(alias, **kwargs):
+        calls.append(kwargs.get('headless'))
+        return results.pop(0)
+
+    monkeypatch.setattr(reseed_mod, 'clear_cache', lambda: None)
+    monkeypatch.setattr(capture_mod, 'capture_silent', fake_silent)
+    monkeypatch.setattr(reseed_mod, 'iso_utc_now', lambda: '2026-08-19T00:00:00Z')
+    monkeypatch.setattr(reseed_mod, 'save_config', lambda config: saved.update(config))
+    return calls, saved
+
+
+def test_capture_reseed_falls_back_to_non_headless_on_error(
+    monkeypatch, tmp_config, clean_env, capsys
+):
+    """Two headless timeouts ('error') must trigger the offscreen
+    non-headless fallback, and success there persists
+    OWA_CAPTURE_HEADLESS=0 so future reseeds skip the doomed headless
+    attempts."""
+    calls, saved = _mock_capture_reseed(monkeypatch, [
+        ('error', None),
+        ('error', None),
+        ('ok', {'OWA_REFRESH_TOKEN': 'rt', 'OWA_TENANT_ID': 'tid'}),
+    ])
+
+    rc = reseed_mod._do_reseed_capture('brkh', {'OWA_AUTH_MODE': 'capture'})
+
+    assert rc == 0
+    assert calls == [True, True, False]
+    assert saved['OWA_CAPTURE_HEADLESS'] == '0'
+    assert 'falling back to non-headless' in capsys.readouterr().err
+
+
+def test_capture_reseed_honors_persisted_headless_zero(
+    monkeypatch, tmp_config, clean_env
+):
+    """A profile that persisted OWA_CAPTURE_HEADLESS=0 goes straight to
+    non-headless - no wasted headless attempts."""
+    calls, saved = _mock_capture_reseed(monkeypatch, [
+        ('ok', {'OWA_REFRESH_TOKEN': 'rt', 'OWA_TENANT_ID': 'tid'}),
+    ])
+
+    rc = reseed_mod._do_reseed_capture(
+        'brkh', {'OWA_AUTH_MODE': 'capture', 'OWA_CAPTURE_HEADLESS': '0'})
+
+    assert rc == 0
+    assert calls == [False]
+
+
+def test_capture_reseed_env_overrides_persisted_headless(
+    monkeypatch, tmp_config, clean_env
+):
+    """OWA_CAPTURE_HEADLESS=1 in the environment beats a persisted '0'
+    (ad-hoc experimentation after a tenant policy change)."""
+    monkeypatch.setenv('OWA_CAPTURE_HEADLESS', '1')
+    calls, saved = _mock_capture_reseed(monkeypatch, [
+        ('ok', {'OWA_REFRESH_TOKEN': 'rt', 'OWA_TENANT_ID': 'tid'}),
+    ])
+
+    rc = reseed_mod._do_reseed_capture(
+        'brkh', {'OWA_AUTH_MODE': 'capture', 'OWA_CAPTURE_HEADLESS': '0'})
+
+    assert rc == 0
+    assert calls == [True]
+
+
+def test_capture_reseed_no_fallback_when_already_non_headless(
+    monkeypatch, tmp_config, clean_env
+):
+    """Persistent 'error' in non-headless mode fails without a redundant
+    third attempt (there is no more-capable mode to fall back to)."""
+    calls, saved = _mock_capture_reseed(monkeypatch, [
+        ('error', None),
+        ('error', None),
+    ])
+
+    rc = reseed_mod._do_reseed_capture(
+        'brkh', {'OWA_AUTH_MODE': 'capture', 'OWA_CAPTURE_HEADLESS': '0'})
+
+    assert rc == 1
+    assert calls == [False, False]
+    assert 'OWA_CAPTURE_HEADLESS' not in saved
+
+
 def test_legacy_reseed_script_binds_debugging_to_loopback():
     from pathlib import Path
 

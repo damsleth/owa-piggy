@@ -112,8 +112,18 @@ def _do_reseed_capture(alias, config):
     # fall back to the OWA default for ordinary FOCI profiles.
     capture_url = (os.environ.get('OWA_CAPTURE_URL', '').strip()
                    or config.get('OWA_CAPTURE_URL', '').strip() or None)
+    # Headless preference: env override wins (ad-hoc experimentation),
+    # then the per-profile persisted value (set automatically the first
+    # time the non-headless fallback below is what succeeded), then the
+    # headless default. Persisting '0' saves every future scheduled run
+    # from burning 2x the capture timeout on a doomed headless attempt.
+    headless = (os.environ.get('OWA_CAPTURE_HEADLESS', '').strip()
+                or (config.get('OWA_CAPTURE_HEADLESS') or '').strip()
+                or '1') != '0'
+    fell_back = False
     status, captured = capture.capture_silent(
-        alias, user_agent=user_agent, capture_url=capture_url)
+        alias, headless=headless, user_agent=user_agent,
+        capture_url=capture_url)
     # Transient 'error' on the first attempt (CDP hiccup, slow /token
     # round-trip past the timeout, etc.) is the most common cause of
     # hourly cron failures in the refresh.log. One retry recovers nearly
@@ -124,7 +134,23 @@ def _do_reseed_capture(alias, config):
         print(f'[{alias}] capture returned transient error; retrying once...',
               file=sys.stderr)
         status, captured = capture.capture_silent(
-            alias, user_agent=user_agent, capture_url=capture_url)
+            alias, headless=headless, user_agent=user_agent,
+            capture_url=capture_url)
+    if status == 'error' and headless:
+        # Two headless attempts timed out - some tenants' Conditional
+        # Access never completes the /token round-trip truly headless yet
+        # doesn't redirect to login.* either, so we see a timeout instead
+        # of 'headless_blocked'. Same cure: offscreen non-headless. Known
+        # trade: on a TTY this can leave stale in-flight auth state that
+        # trips AAD 500121 if the run then goes interactive (see the
+        # headless_blocked-on-TTY comment below); worst case is one
+        # failed interactive attempt with a clear error.
+        print(f'[{alias}] headless capture failed twice; falling back to '
+              f'non-headless (offscreen)...', file=sys.stderr)
+        status, captured = capture.capture_silent(
+            alias, headless=False, user_agent=user_agent,
+            capture_url=capture_url)
+        fell_back = True
     if status == 'headless_blocked' and not is_tty:
         # No human present (launchd) - try the offscreen-non-headless
         # silent path before giving up, since we can't fall back to
@@ -135,6 +161,7 @@ def _do_reseed_capture(alias, config):
         status, captured = capture.capture_silent(
             alias, headless=False, user_agent=user_agent,
             capture_url=capture_url)
+        fell_back = True
     if status == 'reauth' or (status == 'headless_blocked' and is_tty):
         # 'headless_blocked' on a TTY skips straight here - the
         # offscreen-silent retry leaves stale in-flight auth state in
@@ -178,6 +205,10 @@ def _do_reseed_capture(alias, config):
     # OWA_CLIENT_ID overrides, etc.) and stamp issuance time so `status`
     # can compute the 24h SPA hard-cap remaining.
     config.update(captured)
+    if fell_back:
+        # The non-headless fallback is what worked - remember that per
+        # profile so future reseeds go straight to offscreen mode.
+        config['OWA_CAPTURE_HEADLESS'] = '0'
     config['OWA_RT_ISSUED_AT'] = iso_utc_now()
     save_config(config)
     print(f'[{alias}] reseeded; new RT persisted to {_config.CONFIG_PATH}',
