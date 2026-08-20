@@ -68,7 +68,11 @@ jobs:
       matrix:
         include:
           - { os: ubuntu-latest, target: linux-x86_64 }
-          - { os: macos-13,      target: macos-x86_64 }
+          # No macos-13/Intel leg: GitHub retired those hosted runners, so the
+          # job sat `queued` with no runner forever and `github-release` (which
+          # needs every binaries leg) never ran. That silently blocked every
+          # GitHub Release from 0.16.0 through 1.1.1. macOS 26 is arm64-only
+          # and Homebrew builds from source, so an Intel binary served nobody.
           - { os: macos-14,      target: macos-arm64 }
     runs-on: ${{ matrix.os }}
     steps:
