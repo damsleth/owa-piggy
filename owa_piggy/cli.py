@@ -27,6 +27,7 @@ from .cache import (
     store_token,
 )
 from .config import (
+    classify_profile_type,
     profile_config_path,
     list_profiles,
     load_config,
@@ -897,19 +898,23 @@ def _profiles_report():
     enabled = set(reg['OWA_PROFILES'])
     scheduled = set(reg.get('OWA_SCHEDULED', []))
     default = reg['OWA_DEFAULT_PROFILE']
-    return {
-        'default': default or None,
-        'profiles': [
-            {
-                'alias': alias,
-                'default': alias == default,
-                'registered': alias in enabled,
-                'scheduled': alias in scheduled,
-                'has_config': profile_config_path(alias).is_file(),
-            }
-            for alias in list_profiles()
-        ],
-    }
+    out = []
+    for alias in list_profiles():
+        cfg_path = profile_config_path(alias)
+        has_config = cfg_path.is_file()
+        ptype = 'm365'
+        if has_config:
+            config, _ = load_config(cfg_path)
+            ptype = classify_profile_type(config)
+        out.append({
+            'alias': alias,
+            'type': ptype,
+            'default': alias == default,
+            'registered': alias in enabled,
+            'scheduled': alias in scheduled,
+            'has_config': has_config,
+        })
+    return {'default': default or None, 'profiles': out}
 
 
 def _do_profiles_list():

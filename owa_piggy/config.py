@@ -34,6 +34,10 @@ from pathlib import Path
 ROOT_DIR = Path.home() / '.config' / 'owa-piggy'
 CONFIG_PATH = ROOT_DIR / 'config'
 
+# Azure DevOps FOCI/public client id. Profiles minted against ADO carry this
+# as OWA_CLIENT_ID (see nc-ado). More stable than sniffing OWA_ORIGIN.
+DEVOPS_CLIENT_ID = "499b84ac-1321-427f-aa17-267ca6975798"
+
 # Aliases land directly in filesystem paths under profiles/<alias>/ and in
 # the OWA_PROFILES list in profiles.conf. Anything permissive lets a caller
 # escape the config tree (e.g. --profile ../../outside) or create nested
@@ -491,6 +495,19 @@ def load_config(path=None):
         and 'OWA_REFRESH_TOKEN' not in os.environ
     )
     return config, persist
+
+
+def classify_profile_type(config):
+    """What kind of profile this is: 'google', 'ado', or 'm365'.
+
+    Broker-level classification only - no source/capability names, those are
+    a consumer concern (yaams owns type -> {sources})."""
+    provider = (config.get('OWA_PROVIDER', '') or 'msal').strip() or 'msal'
+    if provider == 'google':
+        return 'google'
+    if config.get('OWA_CLIENT_ID', '').strip() == DEVOPS_CLIENT_ID:
+        return 'ado'
+    return 'm365'
 
 
 def save_config(config, path=None):
