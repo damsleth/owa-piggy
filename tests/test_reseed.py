@@ -227,14 +227,15 @@ def test_capture_reseed_falls_back_to_non_headless_on_error(
 def test_capture_reseed_honors_persisted_headless_zero(
     monkeypatch, tmp_config, clean_env
 ):
-    """A profile that persisted OWA_CAPTURE_HEADLESS=0 goes straight to
-    non-headless - no wasted headless attempts."""
+    """A profile that persisted a recent OWA_CAPTURE_HEADLESS=0 goes
+    straight to non-headless - no wasted headless attempts."""
     calls, saved = _mock_capture_reseed(monkeypatch, [
         ('ok', {'OWA_REFRESH_TOKEN': 'rt', 'OWA_TENANT_ID': 'tid'}),
     ])
 
     rc = reseed_mod._do_reseed_capture(
-        'brkh', {'OWA_AUTH_MODE': 'capture', 'OWA_CAPTURE_HEADLESS': '0'})
+        'brkh', {'OWA_AUTH_MODE': 'capture', 'OWA_CAPTURE_HEADLESS': '0',
+                 'OWA_CAPTURE_HEADLESS_AT': _stamp_hours_ago(1)})
 
     assert rc == 0
     assert calls == [False]
@@ -268,7 +269,8 @@ def test_capture_reseed_no_fallback_when_already_non_headless(
     ])
 
     rc = reseed_mod._do_reseed_capture(
-        'brkh', {'OWA_AUTH_MODE': 'capture', 'OWA_CAPTURE_HEADLESS': '0'})
+        'brkh', {'OWA_AUTH_MODE': 'capture', 'OWA_CAPTURE_HEADLESS': '0',
+                 'OWA_CAPTURE_HEADLESS_AT': _stamp_hours_ago(1)})
 
     assert rc == 1
     assert calls == [False, False]
@@ -280,3 +282,74 @@ def test_legacy_reseed_script_binds_debugging_to_loopback():
 
     script = Path('scripts/reseed-from-edge.sh').read_text()
     assert '--remote-debugging-address=127.0.0.1' in script
+
+
+def _pref(cfg, env=None, monkeypatch=None):
+    if monkeypatch is not None:
+        monkeypatch.delenv('OWA_CAPTURE_HEADLESS', raising=False)
+        if env is not None:
+            monkeypatch.setenv('OWA_CAPTURE_HEADLESS', env)
+    return reseed_mod._headless_pref(cfg)
+
+
+def test_headless_pref_default_and_env(monkeypatch):
+    assert _pref({}, monkeypatch=monkeypatch) is True
+    assert _pref({}, env='0', monkeypatch=monkeypatch) is False
+    assert _pref({'OWA_CAPTURE_HEADLESS': '0'}, env='1',
+                 monkeypatch=monkeypatch) is True
+
+
+def test_headless_pref_expires_after_a_day(monkeypatch):
+    """A fallback that succeeded once must not put a browser window onscreen
+    forever: the auto-written preference is retried after 24h."""
+    fresh = {'OWA_CAPTURE_HEADLESS': '0',
+             'OWA_CAPTURE_HEADLESS_AT': _stamp_hours_ago(1)}
+    stale = {'OWA_CAPTURE_HEADLESS': '0',
+             'OWA_CAPTURE_HEADLESS_AT': _stamp_hours_ago(25)}
+    unstamped = {'OWA_CAPTURE_HEADLESS': '0'}
+    assert _pref(fresh, monkeypatch=monkeypatch) is False
+    assert _pref(stale, monkeypatch=monkeypatch) is True
+    # Written before the stamp existed - treat it as expired, not eternal.
+    assert _pref(unstamped, monkeypatch=monkeypatch) is True
+
+
+def _stamp_hours_ago(hours):
+    from datetime import datetime, timedelta, timezone
+    return (datetime.now(timezone.utc)
+            - timedelta(hours=hours)).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+
+def test_expired_headless_zero_is_retried_and_cleared(
+    monkeypatch, tmp_config, clean_env
+):
+    """The bug this exists for: one fallback used to pin a profile to a
+    visible browser window forever. A day later headless gets another go,
+    and a success clears the preference."""
+    calls, saved = _mock_capture_reseed(monkeypatch, [
+        ('ok', {'OWA_REFRESH_TOKEN': 'rt', 'OWA_TENANT_ID': 'tid'}),
+    ])
+
+    rc = reseed_mod._do_reseed_capture(
+        'brkh', {'OWA_AUTH_MODE': 'capture', 'OWA_CAPTURE_HEADLESS': '0',
+                 'OWA_CAPTURE_HEADLESS_AT': _stamp_hours_ago(30)})
+
+    assert rc == 0
+    assert calls == [True]
+    assert saved['OWA_CAPTURE_HEADLESS'] == '1'
+
+
+def test_fallback_stamps_the_headless_preference(
+    monkeypatch, tmp_config, clean_env
+):
+    calls, saved = _mock_capture_reseed(monkeypatch, [
+        ('headless_blocked', None),
+        ('ok', {'OWA_REFRESH_TOKEN': 'rt', 'OWA_TENANT_ID': 'tid'}),
+    ])
+    monkeypatch.setattr(reseed_mod.sys.stdin, 'isatty', lambda: False,
+                        raising=False)
+
+    rc = reseed_mod._do_reseed_capture('brkh', {'OWA_AUTH_MODE': 'capture'})
+
+    assert rc == 0
+    assert saved['OWA_CAPTURE_HEADLESS'] == '0'
+    assert saved['OWA_CAPTURE_HEADLESS_AT']

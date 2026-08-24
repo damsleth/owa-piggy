@@ -29,6 +29,7 @@ import re
 import stat
 import tempfile
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT_DIR = Path.home() / '.config' / 'owa-piggy'
@@ -69,6 +70,16 @@ def iso_utc_now():
     """UTC ISO8601 with trailing Z. Used to stamp OWA_RT_ISSUED_AT on fresh
     setup/reseed so `status` can compute the 24h SPA hard-cap."""
     return time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+
+
+def parse_iso_utc(s):
+    """Inverse of iso_utc_now(): parse `%Y-%m-%dT%H:%M:%SZ`, or None if the
+    string is missing or malformed."""
+    try:
+        return datetime.strptime(s, '%Y-%m-%dT%H:%M:%SZ').replace(
+            tzinfo=timezone.utc)
+    except (ValueError, TypeError):
+        return None
 
 
 # --- Shared low-level helpers ------------------------------------------

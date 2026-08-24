@@ -274,10 +274,10 @@ window when nothing cheaper works.
 | 1 | Pure HTTP `POST /oauth2/v2.0/token` (curl-equivalent) | Every `owa-piggy token` call. Trades RT for AT; AAD also rotates the RT in the response. | `owa_piggy/oauth.py` |
 | 2 | Headless Edge - legacy MSAL scrape | `reseed` for profiles **without** `OWA_AUTH_MODE=capture`. Defaults to `--headless=new`, reads MSAL `localStorage`. | `scripts/reseed-from-edge.sh` (`HEADLESS=1`) |
 | 3 | Headless Edge - network capture via CDP | `reseed` for profiles with `OWA_AUTH_MODE=capture` (encrypted MSAL cache, e.g. Okta-federated). Intercepts the `/oauth2/v2.0/token` response off the wire. | `owa_piggy/capture.py` (default headless) |
-| 4 | Offscreen non-headless Edge | Fallback when headless is blocked by Conditional Access / device-compliance. Window parked at `-32000,-32000`. | `OWA_RESEED_HEADLESS=0` or `OWA_CAPTURE_HEADLESS=0`; automatic on `headless_blocked` |
+| 4 | Offscreen non-headless Edge | Fallback when headless never reaches the SPA. Edge starts windowless (`--no-startup-window`); the capture tab is created over CDP and pushed off the screen edge and minimized in the same breath, so the window exists onscreen for a CDP round-trip rather than for the reseed. macOS clamps every offscreen coordinate back onto the display, so minimized is the only real hiding place. | `OWA_RESEED_HEADLESS=0` or `OWA_CAPTURE_HEADLESS=0`; automatic on `headless_blocked`, and the automatic choice expires after 24h |
 | 5 | Visible Edge | TTY only. Triggered when sidecar cookies expired or AAD rejected the scraped RT (AADSTS700084 after scrape). | `visible_signin()` / `capture.capture_signin()` |
 
-Only step 1 runs continuously. Steps 2-5 fire on `owa-piggy reseed`, which is needed when the RT itself is dead (24h SPA hard-cap). Under `launchd` (no TTY) step 5 is never reached - the reseed bails with an error logged to the per-profile `refresh.log` and the user must re-run interactively. See [.docs/headless-blocked-by-ca.md](.docs/headless-blocked-by-ca.md) for tenant-specific causes that drop the flow to step 4 or 5.
+Only step 1 runs continuously. Steps 2-5 fire on `owa-piggy reseed`, which is needed when the RT itself is dead (24h SPA hard-cap). Under `launchd` (no TTY) step 5 is never reached - the reseed bails with an error logged to the per-profile `refresh.log` and the user must re-run interactively. The `headless_blocked` status that drops the flow to step 4 is a misnomer kept for compatibility: it fires when Edge is still on a blank document 15s after launch, which in practice means a cold start over a large sidecar profile dir far more often than it means tenant policy.
 
 ---
 
@@ -342,7 +342,8 @@ Writes are atomic (temp file + fsync + rename) so a crash mid-rotation cannot co
 - `OWA_AUTH_MODE` - stamped on the profile config by `setup` (`scrape` for legacy MSAL paste flow, `capture` for the network-capture flow used by encrypted-MSAL / Okta-federated tenants). `reseed` branches on this to pick the right mechanism.
 - `OWA_EMAIL` - account hint stamped on the profile when `setup --email` is used; reseed validates captured tokens against it.
 - `OWA_RT_ISSUED_AT` - ISO-8601 timestamp written on every `setup` / `reseed`. Drives the refresh-token hard-cap calculation in `status`.
-- `OWA_RESEED_HEADLESS=0`, `OWA_CAPTURE_HEADLESS=0` - escape hatches for tenants whose Conditional Access blocks headless Edge. Drop the reseed/capture flow to an offscreen non-headless window (mechanism step 4 in the hierarchy table above).
+- `OWA_RESEED_HEADLESS=0`, `OWA_CAPTURE_HEADLESS=0` - escape hatches for tenants whose Conditional Access blocks headless Edge. Drop the reseed/capture flow to an offscreen non-headless window (mechanism step 4 in the hierarchy table above). Set in the environment these are permanent; the same key written into a profile config by an automatic fallback carries `OWA_CAPTURE_HEADLESS_AT` and is retried headless once it is a day old.
+- `OWA_CAPTURE_HEADLESS_AT` - timestamp on an automatically-persisted `OWA_CAPTURE_HEADLESS=0`. A fallback that succeeded once must not pin the profile to a visible browser window forever, so the preference expires 24h after this stamp and is cleared when headless works again.
 
 ---
 

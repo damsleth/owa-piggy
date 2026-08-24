@@ -36,7 +36,7 @@ import sys
 import time
 
 from . import config as _config
-from .cdp import CdpError, CdpSession, find_tab
+from .cdp import CdpError, CdpSession, browser_ws, find_tab
 from .jwt import decode_jwt_segment
 
 # Match either OWA host the user might have in their bookmarks. The SPA
@@ -86,11 +86,18 @@ def launch_edge(edge_dir, port, *, headless, url, edge_path=None,
     --headless=true) so the runtime is closer to a real browser - some
     SPAs detect the legacy headless and refuse to load.
 
-    `offscreen=True` parks the (real) window at -32000,-32000 in non-
-    headless mode so silent reseed fallbacks don't pop a visible window
-    onscreen. Headless is implicitly offscreen. Visible (sign-in) mode
-    is the only one that puts the window where the user can see and
-    interact with it."""
+    `offscreen=True` asks for a 1x1 window at -32000,-32000 in non-
+    headless mode. X11 honors that; macOS does not - the window server
+    clamps windows to the visible screen, so Edge lands at 0,39 at its
+    enforced 500x375 minimum, and CDP `setWindowBounds` is clamped the
+    same way (a 40px sliver always stays onscreen). The only reliable
+    hiding place is minimized, so offscreen mode also passes
+    --no-startup-window: Edge boots windowless and `_open_parked_session`
+    creates the tab and minimizes its window in the same CDP round-trip,
+    instead of leaving a real window onscreen for Edge's ~1.3s cold start.
+    Headless is implicitly offscreen. Visible (sign-in) mode is the only
+    one that puts the window where the user can see and interact with
+    it."""
     binary = edge_path or find_edge()
     if not binary:
         raise RuntimeError(
@@ -114,16 +121,28 @@ def launch_edge(edge_dir, port, *, headless, url, edge_path=None,
             '--window-size=1,1',
         ]
     elif offscreen:
-        args += ['--window-position=-32000,-32000', '--window-size=1,1']
+        # The backgrounding flags matter because the window we do end up
+        # with is minimized: Chromium deprioritizes renderers in occluded
+        # windows, which would stretch (or stall) the /token round-trip.
+        args += ['--window-position=-32000,-32000', '--window-size=1,1',
+                 '--no-startup-window',
+                 '--disable-backgrounding-occluded-windows',
+                 '--disable-renderer-backgrounding']
     else:
         args += ['--window-position=100,100', '--window-size=900,750']
+    if offscreen and not headless:
+        # --no-startup-window and a URL argument contradict each other:
+        # Chromium would open a window for the URL, which is the flash we
+        # are trying to avoid. The caller navigates over CDP instead.
+        url = None
     if user_agent:
         # Spoof the UA before any navigation so AAD's first request hits
         # the override. Tenant CA policies that gate on platform (e.g.
         # "compliant device required except iOS Teams") can be satisfied
         # by claiming to be TeamsMobile-iOS from a desktop Edge.
         args.append(f'--user-agent={user_agent}')
-    args.append(url)
+    if url:
+        args.append(url)
     # Detach stdout/stderr so a slow CDP consumer can't backpressure
     # Edge into a hang; Edge's own crash logs land in the userdata dir.
     return subprocess.Popen(
@@ -370,6 +389,73 @@ def _open_session(port):
     return CdpSession(port, tab['webSocketDebuggerUrl'])
 
 
+def _open_parked_session(port, url, log):
+    """Open the capture tab for offscreen non-headless mode without
+    letting its window sit onscreen.
+
+    Edge was launched with --no-startup-window, so nothing is visible
+    during its ~1.3s cold start. We attach to the browser-level CDP
+    endpoint, create the tab, and minimize its window in the next call -
+    the window exists onscreen for one round-trip (tens of ms) instead of
+    the whole reseed. Best-effort: a capture we could not hide beats no
+    capture.
+    """
+    browser = CdpSession(port, browser_ws(port, timeout=20.0))
+    try:
+        target_id = browser.call('Target.createTarget', {'url': url})['targetId']
+        wid = browser.call('Browser.getWindowForTarget',
+                           {'targetId': target_id})['windowId']
+        # Shove it off the edge first: that's a 1ms window-server move, and
+        # macOS's clamp leaves only a ~40px sliver onscreen. Minimizing is
+        # what actually hides it but it animates for ~400ms, so doing it
+        # second means the genie flies from the screen edge, not from a
+        # browser window sitting in the middle of the user's desktop.
+        browser.call('Browser.setWindowBounds',
+                     {'windowId': wid,
+                      'bounds': {'left': -32000, 'top': -32000,
+                                 'width': 500, 'height': 375}})
+        browser.call('Browser.setWindowBounds',
+                     {'windowId': wid,
+                      'bounds': {'windowState': 'minimized'}})
+    except (CdpError, ConnectionError, OSError, KeyError, TypeError) as e:
+        # Whatever tab exists (or doesn't) is picked up below; an unhidden
+        # capture beats no capture, and a missing tab surfaces as the
+        # 'error' status the reseed ladder already knows how to handle.
+        log(f'could not create a parked window: {e}')
+    finally:
+        browser.close()
+    session = _open_session(port)
+    # Minimized windows are "occluded" to Chromium; focus emulation keeps
+    # the page reporting visible so timers and the /token round-trip are
+    # not throttled.
+    _park_window(session, log)
+    return session
+
+
+def _park_window(session, log):
+    """Take a non-headless capture window off the screen.
+
+    --window-position is honored on X11 but macOS clamps windows back onto
+    the visible screen, so minimizing over CDP is the only thing that
+    actually removes one. Focus emulation then keeps the page reporting
+    visible/focused, so Chromium doesn't throttle the /token round-trip the
+    way it would in a real background window.
+
+    Idempotent and best-effort: `_open_parked_session` minimizes the window
+    as it creates it, this re-asserts it after the session opens and again
+    after the reload (Edge can lose a minimize on a window that is still
+    coming up), and a capture we couldn't hide is still a capture worth
+    finishing."""
+    try:
+        wid = session.call('Browser.getWindowForTarget', {})['windowId']
+        session.call('Browser.setWindowBounds',
+                     {'windowId': wid,
+                      'bounds': {'windowState': 'minimized'}})
+        session.call('Emulation.setFocusEmulationEnabled', {'enabled': True})
+    except (CdpError, ConnectionError, OSError, KeyError, TypeError) as e:
+        log(f'could not park window offscreen: {e}')
+
+
 def _verbose():
     return bool(os.environ.get('OWA_CAPTURE_DEBUG'))
 
@@ -521,9 +607,11 @@ def capture_silent(alias, *, timeout=None, headless=None, user_agent=None,
                                 line written to stderr
 
     `headless=None` reads OWA_CAPTURE_HEADLESS (default headless). Pass
-    headless=False to force the offscreen-but-not-headless mode. Even in
-    the offscreen mode no onscreen window appears - the window is parked
-    at -32000,-32000 - so launchd users still don't get a flashing browser.
+    headless=False to force the offscreen-but-not-headless mode. That
+    mode launches Edge windowless (--no-startup-window) and creates its
+    tab already minimized (`_open_parked_session`), so there is no window
+    onscreen during Edge's cold start and only a round-trip's worth of one
+    afterwards.
 
     `timeout=None` reads OWA_CAPTURE_TIMEOUT (default 60s). The default was
     20s historically but Conditional-Access-heavy tenants routinely take
@@ -557,8 +645,9 @@ def capture_silent(alias, *, timeout=None, headless=None, user_agent=None,
     log(f'launching Edge {"headless" if headless else "offscreen"} on port {port}'
         + (f' at {capture_url}' if capture_url != OWA_URL else ''))
     try:
-        # offscreen=True keeps the non-headless fallback parked at
-        # -32000,-32000 so the user doesn't see a window pop onscreen
+        # offscreen=True means "no window the user can see": headless
+        # has none, non-headless boots windowless and gets a minimized one
+        # from _open_parked_session. The user must never see a window here
         # and assume it's interactive - capture_silent never is.
         proc = launch_edge(edge_dir, port, headless=headless, url=capture_url,
                            offscreen=True, user_agent=user_agent)
@@ -568,7 +657,12 @@ def capture_silent(alias, *, timeout=None, headless=None, user_agent=None,
 
     session = None
     try:
-        session = _open_session(port)
+        if headless:
+            session = _open_session(port)
+        else:
+            # Edge booted windowless; this creates the tab already
+            # minimized so nothing lingers onscreen.
+            session = _open_parked_session(port, capture_url, log)
         session.call('Page.enable', {})
         session.call('Network.enable', {})
 
@@ -578,7 +672,12 @@ def capture_silent(alias, *, timeout=None, headless=None, user_agent=None,
         # that resolve a hair after the sample, leaving us to time out on
         # the /token wait instead of returning a clean 'reauth'.
         host = ''
-        host_deadline = time.monotonic() + 7.0
+        # 15s, not the historical 7s: Edge sidecar profile dirs grow to
+        # ~1GB and the scheduled run launches them back to back, so a cold
+        # start regularly needs >7s to resolve the first navigation. Every
+        # second short here is a bogus 'headless_blocked' and a fallback
+        # that puts a window onscreen for no reason.
+        host_deadline = time.monotonic() + 15.0
         while time.monotonic() < host_deadline:
             loc = session.call('Runtime.evaluate', {
                 'expression': 'location.hostname',
@@ -608,7 +707,7 @@ def capture_silent(alias, *, timeout=None, headless=None, user_agent=None,
             # silently returning '' for every poll, so this branch fired
             # on every run). Keep the status name for backwards-compat
             # with reseed.py's fallback ladder.
-            log(f'post-load host stayed empty after 7s')
+            log('post-load host stayed empty after 15s')
             if headless:
                 return 'headless_blocked', None
             # Non-headless and still no navigation: cookies are almost
@@ -640,6 +739,11 @@ def capture_silent(alias, *, timeout=None, headless=None, user_agent=None,
         log(f'wiped {wiped} accesstoken cache entries')
 
         session.call('Page.reload', {'ignoreCache': True})
+        if not headless:
+            # Park again: minimizing a window that Edge is still bringing
+            # up occasionally loses the race, and a reload is another
+            # chance for it to surface. Both calls are cheap.
+            _park_window(session, log)
 
         # Fast-fail reauth check. If MSAL's silent refresh attempt fails
         # (no usable RT in localStorage, sidecar cookies past their
