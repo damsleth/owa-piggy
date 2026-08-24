@@ -14,32 +14,29 @@ scraping the adjacent `pyproject.toml` so the launchd dev-path
 
 
 def _read_version():
-    # Repo-checkout path first: when running from a local clone (our
-    # primary dev and launchd-fallback mode), the source pyproject.toml
-    # is the canonical version. Checking importlib.metadata first would
-    # pick up any stale `pip install` from a user site-packages and
-    # report a version older than the code actually running.
+    """Version string for `--version`.
+
+    The source pyproject.toml wins when we're running from a checkout (our
+    dev and launchd-fallback mode): checking installed metadata first would
+    report a stale `pip install` from site-packages instead of the code
+    actually running. Installed builds have no sibling pyproject.toml and
+    fall through to the distribution metadata.
+    """
+    import re
+    from importlib.metadata import PackageNotFoundError, version
+    from pathlib import Path
+
+    pp = Path(__file__).resolve().parent.parent / 'pyproject.toml'
     try:
-        import re
-        from pathlib import Path
-        pp = Path(__file__).resolve().parent.parent / 'pyproject.toml'
-        if pp.is_file():
-            for line in pp.read_text().splitlines():
-                m = re.match(r'\s*version\s*=\s*"([^"]+)"', line)
-                if m:
-                    return m.group(1)
-    except Exception:
-        pass
-    # Installed path: brew/pipx/pip. No sibling pyproject.toml exists.
+        m = re.search(r'^\s*version\s*=\s*"([^"]+)"', pp.read_text(), re.M)
+    except OSError:
+        m = None
+    if m:
+        return m.group(1)
     try:
-        from importlib.metadata import PackageNotFoundError, version
-        try:
-            return version('owa-piggy')
-        except PackageNotFoundError:
-            pass
-    except ImportError:
-        pass
-    return 'unknown'
+        return version('owa-piggy')
+    except PackageNotFoundError:
+        return 'unknown'
 
 
 __version__ = _read_version()
