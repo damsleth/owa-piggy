@@ -86,3 +86,17 @@ def test_doctor_exit_codes():
 def test_exit_constants():
   assert EXIT_OK == 0
   assert EXIT_PARTIAL == 5
+
+
+def test_data_error_redacts_tokens_in_the_message():
+    """The broker's error text carries AAD bodies; a token must not ride out
+    in a JSON error envelope."""
+    jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27u'
+    env = data_error(
+        command='token', code='auth_failed',
+        message=f'AAD rejected {jwt}',
+        hint=f'"refresh_token":"1.AQABsomethinglong"')
+
+    assert jwt not in env['error']['message']
+    assert '<redacted-jwt>' in env['error']['message']
+    assert '1.AQABsomethinglong' not in env['error']['hint']
