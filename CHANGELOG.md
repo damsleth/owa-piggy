@@ -8,6 +8,34 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 Releases before v0.12.0 are recorded only in the annotated git tags
 (`git tag -n99`).
 
+## [Unreleased]
+
+### Fixed
+- Non-headless (offscreen) reseed no longer puts an Edge window on screen.
+  macOS clamps every offscreen coordinate back onto the visible display -
+  `--window-position=-32000,-32000` became `0,39` at Edge's 500x375 minimum,
+  and CDP `setWindowBounds` is clamped the same way - so the fallback popped
+  a real window for the duration of the capture. Edge now starts windowless
+  (`--no-startup-window`); the capture tab is created over the browser-level
+  CDP endpoint and pushed off the screen edge and minimized before it is
+  handed back, so the window exists onscreen for one round-trip instead of
+  Edge's ~1.3s cold start plus the reseed. `Emulation.setFocusEmulationEnabled`
+  plus `--disable-backgrounding-occluded-windows`/`--disable-renderer-backgrounding`
+  keep the minimized page off Chromium's throttling path mid-`/token`.
+- An automatic fall back to non-headless no longer pins a profile to a
+  visible browser window forever. The persisted `OWA_CAPTURE_HEADLESS=0` is
+  written on any successful fallback, including ones caused by a slow Edge
+  start or a transient timeout that has nothing to do with the tenant; it is
+  now stamped with `OWA_CAPTURE_HEADLESS_AT`, expires after 24h (as do the
+  unstamped values written by earlier versions), and is cleared when headless
+  succeeds again. `OWA_CAPTURE_HEADLESS` in the environment is unchanged and
+  still permanent.
+- The blank-document budget that decides `headless_blocked` went from 7s to
+  15s. Sidecar Edge profile dirs reach ~1GB and the scheduled run launches
+  them back to back, so a cold start regularly needed more than 7s to resolve
+  its first navigation - each overrun was a fallback, and a window onscreen,
+  for no reason.
+
 ## [1.1.1] - 2026-08-20
 
 Metadata-only patch. v1.1.0's release workflow failed on its Python 3.8

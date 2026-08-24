@@ -203,3 +203,74 @@ def test_find_free_port_returns_unused_local_port():
     # Leaving as a >= check rather than equality so we don't tie the
     # test to allocator behavior.
     assert isinstance(p1, int) and isinstance(p2, int)
+
+
+# --- _park_window ---------------------------------------------------------
+
+class _FakeSession:
+    """Records CDP calls; raises on any method in `fail`."""
+
+    def __init__(self, fail=()):
+        self.calls = []
+        self.fail = fail
+
+    def call(self, method, params=None):
+        self.calls.append((method, params))
+        if method in self.fail:
+            raise capture.CdpError(method, {'message': 'nope'})
+        if method == 'Browser.getWindowForTarget':
+            return {'windowId': 42}
+        return {}
+
+
+def test_park_window_minimizes_and_disables_throttling():
+    """macOS clamps --window-position, so minimizing over CDP is what
+    actually hides the non-headless reseed window - and focus emulation is
+    what keeps the minimized page from being throttled mid-/token."""
+    s = _FakeSession()
+    capture._park_window(s, lambda _msg: None)
+    assert ('Browser.setWindowBounds',
+            {'windowId': 42,
+             'bounds': {'windowState': 'minimized'}}) in s.calls
+    assert ('Emulation.setFocusEmulationEnabled', {'enabled': True}) in s.calls
+
+
+def test_park_window_survives_cdp_failure():
+    """A window we can't hide must not abort an otherwise-fine capture."""
+    logged = []
+    s = _FakeSession(fail={'Browser.setWindowBounds'})
+    capture._park_window(s, logged.append)
+    assert logged and 'could not park window' in logged[0]
+
+
+def test_offscreen_launch_keeps_renderer_hot(monkeypatch, tmp_path):
+    """The offscreen window gets minimized, so the renderer must be kept at
+    full priority or the /token round-trip stalls in an occluded window."""
+    seen = {}
+    monkeypatch.setattr(capture, 'find_edge', lambda: '/usr/bin/edge')
+    monkeypatch.setattr(capture.subprocess, 'Popen',
+                        lambda args, **kw: seen.update(args=args))
+    capture.launch_edge(tmp_path, 9999, headless=False, url='https://x',
+                        offscreen=True)
+    assert '--disable-backgrounding-occluded-windows' in seen['args']
+    assert '--disable-renderer-backgrounding' in seen['args']
+
+
+def test_offscreen_launch_starts_windowless(monkeypatch, tmp_path):
+    """macOS clamps every offscreen coordinate back onto the display, so the
+    only way to not show a window during Edge's cold start is to not open one:
+    --no-startup-window, and no URL argument that would undo it."""
+    seen = {}
+    monkeypatch.setattr(capture, 'find_edge', lambda: '/usr/bin/edge')
+    monkeypatch.setattr(capture.subprocess, 'Popen',
+                        lambda args, **kw: seen.update(args=args))
+    capture.launch_edge(tmp_path, 9999, headless=False,
+                        url='https://outlook.cloud.microsoft', offscreen=True)
+    assert '--no-startup-window' in seen['args']
+    assert 'https://outlook.cloud.microsoft' not in seen['args']
+    # Headless and visible modes still navigate via the command line.
+    capture.launch_edge(tmp_path, 9999, headless=True, url='https://x',
+                        offscreen=True)
+    assert 'https://x' in seen['args']
+    capture.launch_edge(tmp_path, 9999, headless=False, url='https://y')
+    assert 'https://y' in seen['args']

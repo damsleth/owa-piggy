@@ -22,6 +22,7 @@ from .config import (
     list_profiles,
     load_config,
     load_profiles_conf,
+    parse_iso_utc,
     profile_edge_dir,
     profiles_conf_path,
 )
@@ -54,10 +55,7 @@ def _humanize_minutes(m):
 
 def _parse_iso(s):
     """Parse an `%Y-%m-%dT%H:%M:%SZ` UTC string, or None if malformed."""
-    try:
-        return datetime.strptime(s, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc)
-    except (ValueError, TypeError):
-        return None
+    return parse_iso_utc(s)
 
 
 def _minutes_until(dt):
