@@ -27,12 +27,40 @@ import urllib.request
 CDP_HELPER_PARITY_VERSION = 1
 
 
+def browser_ws(port, timeout=20.0):
+    """Poll http://localhost:<port>/json/version for the browser-level
+    WebSocket URL and return it.
+
+    The browser endpoint exists before any tab does, which is the point:
+    the non-headless capture path launches Edge with --no-startup-window
+    and creates its tab over this session so the window can be minimized
+    in the same breath it is created.
+    """
+    deadline = time.monotonic() + timeout
+    last_err = None
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(f'http://localhost:{port}/json/version',
+                                        timeout=2) as r:
+                ws = json.loads(r.read()).get('webSocketDebuggerUrl')
+            if ws:
+                return ws
+            last_err = 'no webSocketDebuggerUrl in /json/version'
+        except Exception as e:
+            last_err = str(e)
+        time.sleep(0.05)
+    raise TimeoutError(f'CDP browser endpoint not ready on port {port}: '
+                       f'{last_err}')
+
+
 def find_tab(port, timeout=15.0):
     """Poll http://localhost:<port>/json until at least one page-type
     target appears, then return that target's metadata dict.
 
     Edge needs a moment after launch before its CDP HTTP endpoint is
-    ready; we retry every 200ms. Any non-page targets (service workers,
+    ready; we retry every 50ms - the non-headless capture path minimizes
+    its window as soon as this returns, so polling slop is time a real
+    Edge window spends onscreen. Any non-page targets (service workers,
     extension backgrounds) are ignored - we want the user-facing tab.
     """
     deadline = time.monotonic() + timeout
@@ -48,7 +76,7 @@ def find_tab(port, timeout=15.0):
             last_err = f'no page targets yet (saw {len(tabs)} total)'
         except Exception as e:
             last_err = str(e)
-        time.sleep(0.2)
+        time.sleep(0.05)
     raise TimeoutError(f'CDP tab not ready on port {port}: {last_err}')
 
 

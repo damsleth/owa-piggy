@@ -20,6 +20,7 @@ import os
 import subprocess
 import sys
 import zlib
+from datetime import datetime, timezone
 
 from . import config as _config
 from .cache import clear_cache
@@ -28,6 +29,7 @@ from .config import (
     list_profiles,
     load_config,
     load_profiles_conf,
+    parse_iso_utc,
     profiles_conf_path,
     save_config,
     set_active_profile,
@@ -48,6 +50,40 @@ def _profile_cdp_port(alias):
     hand-rolled POSIX-cksum table.
     """
     return 9222 + (zlib.crc32(alias.encode()) % 10000)
+
+
+# How long an auto-persisted "this profile needs a visible browser"
+# preference is trusted before headless gets another chance.
+_HEADLESS_PREF_TTL_HOURS = 24
+
+
+def _headless_pref(config):
+    """Should this profile's capture run headless?
+
+    Precedence: OWA_CAPTURE_HEADLESS in the environment (ad-hoc override),
+    then the per-profile persisted value, then headless.
+
+    Nothing but this module writes the config key: it is set whenever the
+    non-headless fallback is what succeeded, including when headless
+    failed for reasons that have nothing to do with the tenant (a cold
+    Edge start that blew the navigation budget, a slow /token round-trip).
+    Left permanent, one bad hour taxes every future reseed with a browser
+    window on the user's screen - which is exactly what happened. So it
+    expires: OWA_CAPTURE_HEADLESS_AT stamps when it was written, and once
+    that is a day old (or missing, as in configs written before the stamp
+    existed) headless gets another try and the key is cleared if it works.
+    OWA_CAPTURE_HEADLESS in the environment is the permanent override.
+    """
+    env = os.environ.get('OWA_CAPTURE_HEADLESS', '').strip()
+    if env:
+        return env != '0'
+    if (config.get('OWA_CAPTURE_HEADLESS') or '').strip() != '0':
+        return True
+    stamp = parse_iso_utc((config.get('OWA_CAPTURE_HEADLESS_AT') or '').strip())
+    if stamp is None:
+        return True
+    age_hours = (datetime.now(timezone.utc) - stamp).total_seconds() / 3600
+    return age_hours > _HEADLESS_PREF_TTL_HOURS
 
 
 def do_reseed(alias):
@@ -112,14 +148,7 @@ def _do_reseed_capture(alias, config):
     # fall back to the OWA default for ordinary FOCI profiles.
     capture_url = (os.environ.get('OWA_CAPTURE_URL', '').strip()
                    or config.get('OWA_CAPTURE_URL', '').strip() or None)
-    # Headless preference: env override wins (ad-hoc experimentation),
-    # then the per-profile persisted value (set automatically the first
-    # time the non-headless fallback below is what succeeded), then the
-    # headless default. Persisting '0' saves every future scheduled run
-    # from burning 2x the capture timeout on a doomed headless attempt.
-    headless = (os.environ.get('OWA_CAPTURE_HEADLESS', '').strip()
-                or (config.get('OWA_CAPTURE_HEADLESS') or '').strip()
-                or '1') != '0'
+    headless = _headless_pref(config)
     fell_back = False
     status, captured = capture.capture_silent(
         alias, headless=headless, user_agent=user_agent,
@@ -154,9 +183,9 @@ def _do_reseed_capture(alias, config):
     if status == 'headless_blocked' and not is_tty:
         # No human present (launchd) - try the offscreen-non-headless
         # silent path before giving up, since we can't fall back to
-        # interactive sign-in unattended. The window stays parked at
-        # -32000,-32000 so the user's display stays clean.
-        print(f'[{alias}] headless Edge blocked by tenant; retrying '
+        # interactive sign-in unattended. capture_silent minimizes that
+        # window as soon as CDP is up, so the display stays clean.
+        print(f'[{alias}] headless Edge never reached the app; retrying '
               f'non-headless (offscreen)...', file=sys.stderr)
         status, captured = capture.capture_silent(
             alias, headless=False, user_agent=user_agent,
@@ -207,8 +236,15 @@ def _do_reseed_capture(alias, config):
     config.update(captured)
     if fell_back:
         # The non-headless fallback is what worked - remember that per
-        # profile so future reseeds go straight to offscreen mode.
+        # profile so the next reseeds go straight to offscreen mode, but
+        # stamp it so the preference expires (see _headless_pref).
         config['OWA_CAPTURE_HEADLESS'] = '0'
+        config['OWA_CAPTURE_HEADLESS_AT'] = iso_utc_now()
+    elif headless and (config.get('OWA_CAPTURE_HEADLESS') or '').strip() == '0':
+        # An expired preference just proved itself wrong: headless works
+        # again. Clear it rather than waiting out another 24h window.
+        config['OWA_CAPTURE_HEADLESS'] = '1'
+        config['OWA_CAPTURE_HEADLESS_AT'] = ''
     config['OWA_RT_ISSUED_AT'] = iso_utc_now()
     save_config(config)
     print(f'[{alias}] reseeded; new RT persisted to {_config.CONFIG_PATH}',
