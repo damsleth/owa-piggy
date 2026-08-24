@@ -35,6 +35,30 @@ Releases before v0.12.0 are recorded only in the annotated git tags
   them back to back, so a cold start regularly needed more than 7s to resolve
   its first navigation - each overrun was a fallback, and a window onscreen,
   for no reason.
+- The expiring headless preference is only cleared when a *headless* capture
+  is what produced the token. It previously compared the mode attempted first
+  against the final status, so a TTY run whose headless attempt failed and
+  whose interactive sign-in succeeded recorded "headless works again" - and
+  the profile flapped between the two modes every 24h. An
+  `OWA_CAPTURE_HEADLESS=1` experiment in the environment no longer rewrites a
+  profile's persisted preference either.
+- A reseed that fails because Edge never came up on its CDP port says so,
+  instead of reporting "timed out after 60s waiting for /oauth2/v2.0/token"
+  and suggesting `OWA_CAPTURE_HEADLESS=0` on a run that was already
+  non-headless. Creating the capture tab is no longer swallowed as
+  best-effort - only hiding its window is - so that failure fails fast rather
+  than waiting out a 20s timeout for a tab that can never appear.
+- `--err-json` / `--agent` error envelopes now run their `message` and `hint`
+  through `redact()`. Those strings carry AAD error bodies verbatim, and
+  `redact()` - which exists for exactly this - had never been wired to a
+  caller.
+
+### Changed
+- The token exchange connects to AAD by trying the resolved addresses
+  IPv6/IPv4-interleaved with a 3s per-address budget, replacing the threaded
+  RFC 8305 race (and its queue and reaper thread). A blackholed IPv6 route now
+  costs up to 3s instead of ~0s, against the ~75s-per-address hang the racing
+  code was written to prevent.
 
 ## [1.1.1] - 2026-08-20
 
