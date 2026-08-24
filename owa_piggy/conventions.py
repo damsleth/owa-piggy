@@ -124,9 +124,12 @@ def data_error(
   message: str,
   hint: str | None = None,
 ) -> dict[str, Any]:
-  err: dict[str, Any] = {"code": code, "message": message}
+  # Redacted on the way out: these messages routinely carry an AAD error
+  # body, and this tool's whole payload is refresh tokens. redact() existed
+  # for exactly this and nothing was calling it.
+  err: dict[str, Any] = {"code": code, "message": redact(message)}
   if hint:
-    err["hint"] = hint
+    err["hint"] = redact(hint)
   return {
     "tool": TOOL_NAME,
     "version": _version(),
