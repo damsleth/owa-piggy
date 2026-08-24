@@ -165,6 +165,11 @@ def _do_reseed_capture(alias, config):
         status, captured = capture.capture_silent(
             alias, headless=headless, user_agent=user_agent,
             capture_url=capture_url)
+    # Whether *headless* is what produced the token, decided here and not at
+    # the bottom: everything below can reach 'ok' by another route (offscreen
+    # fallback, interactive sign-in), and crediting headless for those is how
+    # a profile ends up flapping between the two modes every 24h.
+    headless_ok = headless and status == 'ok'
     if status == 'error' and headless:
         # Two headless attempts timed out - some tenants' Conditional
         # Access never completes the /token round-trip truly headless yet
@@ -240,9 +245,13 @@ def _do_reseed_capture(alias, config):
         # stamp it so the preference expires (see _headless_pref).
         config['OWA_CAPTURE_HEADLESS'] = '0'
         config['OWA_CAPTURE_HEADLESS_AT'] = iso_utc_now()
-    elif headless and (config.get('OWA_CAPTURE_HEADLESS') or '').strip() == '0':
+    elif (headless_ok and not os.environ.get('OWA_CAPTURE_HEADLESS', '').strip()
+            and (config.get('OWA_CAPTURE_HEADLESS') or '').strip() == '0'):
         # An expired preference just proved itself wrong: headless works
-        # again. Clear it rather than waiting out another 24h window.
+        # again. Clear it rather than waiting out another 24h window. Only
+        # when the profile's own preference is what we were second-guessing -
+        # an OWA_CAPTURE_HEADLESS=1 experiment in the environment must not
+        # rewrite the state the next launchd run depends on.
         config['OWA_CAPTURE_HEADLESS'] = '1'
         config['OWA_CAPTURE_HEADLESS_AT'] = ''
     config['OWA_RT_ISSUED_AT'] = iso_utc_now()

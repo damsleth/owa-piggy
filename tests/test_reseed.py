@@ -353,3 +353,45 @@ def test_fallback_stamps_the_headless_preference(
     assert rc == 0
     assert saved['OWA_CAPTURE_HEADLESS'] == '0'
     assert saved['OWA_CAPTURE_HEADLESS_AT']
+
+
+def test_interactive_rescue_does_not_credit_headless(
+    monkeypatch, tmp_config, clean_env
+):
+    """A TTY run where headless failed and the *user* signed in must not
+    record 'headless works again' - that mis-attribution made the profile
+    flap between headless and a visible window every 24h."""
+    calls, saved = _mock_capture_reseed(monkeypatch, [('headless_blocked', None)])
+    monkeypatch.setattr(reseed_mod.sys.stdin, 'isatty', lambda: True,
+                        raising=False)
+    monkeypatch.setattr(
+        capture_mod, 'capture_signin',
+        lambda *a, **kw: {'OWA_REFRESH_TOKEN': 'rt', 'OWA_TENANT_ID': 'tid'})
+
+    rc = reseed_mod._do_reseed_capture(
+        'brkh', {'OWA_AUTH_MODE': 'capture', 'OWA_EMAIL': 'a@b.no',
+                 'OWA_CAPTURE_HEADLESS': '0',
+                 'OWA_CAPTURE_HEADLESS_AT': _stamp_hours_ago(30)})
+
+    assert rc == 0
+    assert calls == [True]
+    assert saved['OWA_CAPTURE_HEADLESS'] == '0'
+
+
+def test_env_headless_override_leaves_persisted_preference_alone(
+    monkeypatch, tmp_config, clean_env
+):
+    """An ad-hoc OWA_CAPTURE_HEADLESS=1 experiment must not rewrite the state
+    the next launchd run reads."""
+    calls, saved = _mock_capture_reseed(monkeypatch, [
+        ('ok', {'OWA_REFRESH_TOKEN': 'rt', 'OWA_TENANT_ID': 'tid'}),
+    ])
+    monkeypatch.setenv('OWA_CAPTURE_HEADLESS', '1')
+
+    rc = reseed_mod._do_reseed_capture(
+        'brkh', {'OWA_AUTH_MODE': 'capture', 'OWA_CAPTURE_HEADLESS': '0',
+                 'OWA_CAPTURE_HEADLESS_AT': _stamp_hours_ago(1)})
+
+    assert rc == 0
+    assert calls == [True]
+    assert saved['OWA_CAPTURE_HEADLESS'] == '0'
