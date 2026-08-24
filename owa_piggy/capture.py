@@ -397,31 +397,31 @@ def _open_parked_session(port, url, log):
     during its ~1.3s cold start. We attach to the browser-level CDP
     endpoint, create the tab, and minimize its window in the next call -
     the window exists onscreen for one round-trip (tens of ms) instead of
-    the whole reseed. Best-effort: a capture we could not hide beats no
-    capture.
+    the whole reseed. Creating the tab has to succeed - nothing else does it
+    under --no-startup-window - but hiding it afterwards is best-effort: a
+    capture we could not hide beats no capture.
     """
     browser = CdpSession(port, browser_ws(port, timeout=20.0))
     try:
         target_id = browser.call('Target.createTarget', {'url': url})['targetId']
-        wid = browser.call('Browser.getWindowForTarget',
-                           {'targetId': target_id})['windowId']
-        # Shove it off the edge first: that's a 1ms window-server move, and
-        # macOS's clamp leaves only a ~40px sliver onscreen. Minimizing is
-        # what actually hides it but it animates for ~400ms, so doing it
-        # second means the genie flies from the screen edge, not from a
-        # browser window sitting in the middle of the user's desktop.
-        browser.call('Browser.setWindowBounds',
-                     {'windowId': wid,
-                      'bounds': {'left': -32000, 'top': -32000,
-                                 'width': 500, 'height': 375}})
-        browser.call('Browser.setWindowBounds',
-                     {'windowId': wid,
-                      'bounds': {'windowState': 'minimized'}})
-    except (CdpError, ConnectionError, OSError, KeyError, TypeError) as e:
-        # Whatever tab exists (or doesn't) is picked up below; an unhidden
-        # capture beats no capture, and a missing tab surfaces as the
-        # 'error' status the reseed ladder already knows how to handle.
-        log(f'could not create a parked window: {e}')
+        try:
+            wid = browser.call('Browser.getWindowForTarget',
+                               {'targetId': target_id})['windowId']
+            # Shove it off the edge first: that's a 1ms window-server move,
+            # and macOS's clamp leaves only a ~40px sliver onscreen.
+            # Minimizing is what actually hides it but it animates for
+            # ~400ms, so doing it second means the genie flies from the
+            # screen edge, not from a browser window sitting in the middle
+            # of the user's desktop.
+            browser.call('Browser.setWindowBounds',
+                         {'windowId': wid,
+                          'bounds': {'left': -32000, 'top': -32000,
+                                     'width': 500, 'height': 375}})
+            browser.call('Browser.setWindowBounds',
+                         {'windowId': wid,
+                          'bounds': {'windowState': 'minimized'}})
+        except (CdpError, KeyError, TypeError) as e:
+            log(f'could not park the capture window: {e}')
     finally:
         browser.close()
     session = _open_session(port)
@@ -771,9 +771,17 @@ def capture_silent(alias, *, timeout=None, headless=None, user_agent=None,
         token_response = _capture_token_response(
             session, deadline=deadline, log=log, tick=tick)
     except TimeoutError as e:
-        print(f'[{alias}] timed out after {timeout}s waiting for '
-              f'/oauth2/v2.0/token. Tenant may require non-headless '
-              f'Edge - try OWA_CAPTURE_HEADLESS=0.', file=sys.stderr)
+        if session is None:
+            # Edge never exposed a debuggable tab. Nothing to do with the
+            # tenant, and the /token advice below would be nonsense here.
+            print(f'[{alias}] Edge never came up on CDP port {port}: {e}',
+                  file=sys.stderr)
+        else:
+            print(f'[{alias}] timed out after {timeout}s waiting for '
+                  f'/oauth2/v2.0/token.'
+                  + (' Tenant may require non-headless Edge - try '
+                     'OWA_CAPTURE_HEADLESS=0.' if headless else ''),
+                  file=sys.stderr)
         log(f'timeout: {e}')
         return 'error', None
     except (ConnectionError, CdpError, OSError) as e:

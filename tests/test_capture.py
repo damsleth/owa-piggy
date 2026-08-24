@@ -274,3 +274,28 @@ def test_offscreen_launch_starts_windowless(monkeypatch, tmp_path):
     assert 'https://x' in seen['args']
     capture.launch_edge(tmp_path, 9999, headless=False, url='https://y')
     assert 'https://y' in seen['args']
+
+
+def test_silent_timeout_before_session_does_not_blame_the_tenant(
+    monkeypatch, tmp_path, capsys
+):
+    """A CDP-never-came-up timeout used to be reported as '60s waiting for
+    /token, try OWA_CAPTURE_HEADLESS=0' - on a run that was already
+    non-headless."""
+    edge_dir = tmp_path / 'edge-profile'
+    edge_dir.mkdir()
+    monkeypatch.setattr(capture._config, 'profile_edge_dir', lambda a: edge_dir)
+    monkeypatch.setattr(capture, 'launch_edge', lambda *a, **kw: None)
+    monkeypatch.setattr(capture, '_terminate', lambda proc: None)
+
+    def boom(*a, **kw):
+        raise TimeoutError('CDP browser endpoint not ready')
+
+    monkeypatch.setattr(capture, '_open_parked_session', boom)
+
+    status, captured = capture.capture_silent('brkh', headless=False)
+
+    assert (status, captured) == ('error', None)
+    err = capsys.readouterr().err
+    assert 'never came up on CDP port' in err
+    assert 'OWA_CAPTURE_HEADLESS=0' not in err
