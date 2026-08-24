@@ -9,7 +9,6 @@ import http.client
 import io
 import itertools
 import json
-import queue
 import socket
 import sys
 import threading
@@ -26,6 +25,10 @@ ORIGIN = 'https://outlook.cloud.microsoft'
 # `status` runs one exchange per profile serially, so a single bad network
 # window turns into minutes. Surfaced as TimeoutError/URLError below.
 EXCHANGE_TIMEOUT = 15
+
+# Per-address TCP connect budget. Short on purpose: a blackholed address
+# should cost this much before the next family is tried, not the OS default.
+CONNECT_TIMEOUT = 3.0
 
 # AAD's cross-origin check (AADSTS9002327) ties an SPA refresh-token grant
 # to an Origin registered on that client's app registration. The default
@@ -54,8 +57,7 @@ def origin_for_client(client_id, override=None):
 # so on a host with a broken/blackholed IPv6 default route every IPv6 attempt
 # blocks until the OS TCP-connect timeout (~75s) before falling through to a
 # working IPv4 address. With one exchange per profile that turns `status` into
-# a multi-minute hang. curl and browsers avoid this by racing the families in
-# parallel (RFC 8305 "Happy Eyeballs"); we do the same here.
+# a multi-minute hang. We interleave the families and cap each attempt instead.
 
 def _interleave_by_family(infos):
     """Reorder getaddrinfo results to alternate IPv6/IPv4 so a dead family
@@ -78,60 +80,37 @@ def _coerce_timeout(timeout):
 
 
 def happy_eyeballs_connect(host, port, timeout):
-    """Connect to host:port by racing every resolved address concurrently and
-    returning the first socket that connects. Remaining attempts are reaped in
-    the background. Raises the last connection error if all attempts fail."""
+    """Connect to host:port, trying the resolved addresses IPv6/IPv4-
+    interleaved with a short per-address connect timeout. Returns the first
+    socket that connects; raises the last error if none do.
+
+    ponytail: sequential, not RFC 8305's parallel race. Interleaving already
+    puts a working family second, so a blackholed one costs CONNECT_TIMEOUT
+    rather than the OS's ~75s - which is the hang this exists to prevent.
+    Bring the threads back only if a real host needs sub-second failover.
+    """
     infos = _interleave_by_family(
         socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM))
     if not infos:
         raise OSError(f'getaddrinfo returned no addresses for {host}:{port}')
 
     read_timeout = _coerce_timeout(timeout)
-    per_attempt = EXCHANGE_TIMEOUT if read_timeout is None else max(1.0, read_timeout)
-    results = queue.Queue()
-
-    def attempt(family, sockaddr):
+    per_attempt = (CONNECT_TIMEOUT if read_timeout is None
+                   else min(CONNECT_TIMEOUT, max(1.0, read_timeout)))
+    last_err = None
+    for family, _, _, _, sockaddr in infos:
         sock = socket.socket(family, socket.SOCK_STREAM)
         try:
             sock.settimeout(per_attempt)
             sock.connect(sockaddr)
         except OSError as exc:
             sock.close()
-            results.put(exc)
-            return
-        results.put(sock)
+            last_err = exc
+            continue
+        sock.settimeout(read_timeout)
+        return sock
 
-    for family, _, _, _, sockaddr in infos:
-        threading.Thread(target=attempt, args=(family, sockaddr),
-                         daemon=True).start()
-
-    winner = None
-    last_err = None
-    consumed = 0
-    while consumed < len(infos):
-        item = results.get()
-        consumed += 1
-        if isinstance(item, socket.socket):
-            winner = item
-            break
-        last_err = item
-
-    if winner is None:
-        raise last_err or OSError(f'could not connect to {host}:{port}')
-
-    # Drain and close any sockets from attempts that connect after the winner,
-    # so a late-but-successful IPv6 race doesn't leak a descriptor.
-    remaining = len(infos) - consumed
-    if remaining:
-        def reap(n):
-            for _ in range(n):
-                item = results.get()
-                if isinstance(item, socket.socket):
-                    item.close()
-        threading.Thread(target=reap, args=(remaining,), daemon=True).start()
-
-    winner.settimeout(read_timeout)
-    return winner
+    raise last_err or OSError(f'could not connect to {host}:{port}')
 
 
 class _HappyEyeballsHTTPSConnection(http.client.HTTPSConnection):

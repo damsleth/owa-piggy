@@ -108,3 +108,51 @@ def test_no_persist_leaves_the_config_file_untouched(
 
     assert info['rotated'] is True
     assert '1.OLD' in path.read_text()
+
+
+def test_connect_falls_through_to_the_next_address(monkeypatch):
+    """A dead address must not end the attempt - that fallthrough is the whole
+    point of interleaving the families."""
+    import socket
+    from owa_piggy import oauth
+
+    listener = socket.socket()
+    listener.bind(('127.0.0.1', 0))
+    listener.listen(1)
+    good_port = listener.getsockname()[1]
+
+    dead = socket.socket()
+    dead.bind(('127.0.0.1', 0))
+    dead_port = dead.getsockname()[1]
+    dead.close()  # nothing listening -> connection refused
+
+    monkeypatch.setattr(oauth.socket, 'getaddrinfo', lambda *a, **kw: [
+        (socket.AF_INET, socket.SOCK_STREAM, 0, '', ('127.0.0.1', dead_port)),
+        (socket.AF_INET, socket.SOCK_STREAM, 0, '', ('127.0.0.1', good_port)),
+    ])
+    try:
+        sock = oauth.happy_eyeballs_connect('example.invalid', 443, 5)
+        assert sock.getpeername()[1] == good_port
+        sock.close()
+    finally:
+        listener.close()
+
+
+def test_connect_raises_the_last_error_when_every_address_fails(monkeypatch):
+    import socket
+    from owa_piggy import oauth
+
+    dead = socket.socket()
+    dead.bind(('127.0.0.1', 0))
+    port = dead.getsockname()[1]
+    dead.close()
+
+    monkeypatch.setattr(oauth.socket, 'getaddrinfo', lambda *a, **kw: [
+        (socket.AF_INET, socket.SOCK_STREAM, 0, '', ('127.0.0.1', port)),
+    ])
+    try:
+        oauth.happy_eyeballs_connect('example.invalid', 443, 5)
+    except OSError:
+        pass
+    else:
+        raise AssertionError('expected OSError when no address connects')
