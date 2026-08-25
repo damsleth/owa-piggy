@@ -80,7 +80,7 @@ def empty_state_setup_flow() -> int:
     alias, email, audience = prompt_new_profile_fields()
     if alias is None:
         return 1
-    if create_profile(alias, email=email, audience=audience) != 0:
+    if create_profile(alias, email=email, audience=audience, ask_email=False) != 0:
         return 1
     return run_dashboard()
 
@@ -230,7 +230,7 @@ def _action_add(state: PickerState) -> str:
         alias, email, audience = prompt_new_profile_fields()
         if alias is None:
             return None
-        rc = create_profile(alias, email=email, audience=audience)
+        rc = create_profile(alias, email=email, audience=audience, ask_email=False)
         return alias if rc == 0 else None
 
     new_alias = state.cooked_action(do)
