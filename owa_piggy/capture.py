@@ -592,7 +592,7 @@ def capture_signin(alias, email, *, timeout=300, user_agent=None,
 
 
 def capture_silent(alias, *, timeout=None, headless=None, user_agent=None,
-                   capture_url=None):
+                   capture_url=None, expected_client_id=None):
     """Headless Edge for scheduled reseed. Returns (status, config_dict):
 
       ('ok', dict)              success - dict has OWA_REFRESH_TOKEN/OWA_TENANT_ID
@@ -617,6 +617,12 @@ def capture_silent(alias, *, timeout=None, headless=None, user_agent=None,
     20s historically but Conditional-Access-heavy tenants routinely take
     25-40s on the post-reload /token round-trip; the 20s budget tripped
     spurious 'error' returns on otherwise healthy sessions.
+
+    `expected_client_id` filters the observed /token responses down to one
+    client, the way `capture_signin` does from OWA_CLIENT_ID. Rotating the
+    bound clients in a profile's `clients.json` needs it: the Teams SPA
+    fires exchanges for more than one client on load, and taking the first
+    one would store a token under the wrong client id.
 
     `capture_url=None` falls back to `_capture_url()` (OWA_CAPTURE_URL env
     or OWA). A profile that captured a non-FOCI client's RT persists its
@@ -767,9 +773,12 @@ def capture_silent(alias, *, timeout=None, headless=None, user_agent=None,
                 return 'reauth', None
 
         deadline = time.monotonic() + timeout
-        log(f'awaiting /token response (timeout {timeout}s)...')
+        log(f'awaiting /token response (timeout {timeout}s)...'
+            + (f' filtering for client_id={expected_client_id}'
+               if expected_client_id else ''))
         token_response = _capture_token_response(
-            session, deadline=deadline, log=log, tick=tick)
+            session, deadline=deadline, log=log, tick=tick,
+            expected_client_id=expected_client_id)
     except TimeoutError as e:
         if session is None:
             # Edge never exposed a debuggable tab. Nothing to do with the
@@ -793,6 +802,74 @@ def capture_silent(alias, *, timeout=None, headless=None, user_agent=None,
         _terminate(proc)
 
     return 'ok', _build_config(token_response, email=None, mode='capture')
+
+
+def capture_bound_clients(alias, *, user_agent=None, headless=None,
+                          only=None):
+    """Refresh every extra client this profile declares, one site at a time.
+
+    A profile is one identity that signs in to several SPAs - OWA, Teams,
+    an Azure DevOps org - each of which mints its own client-bound refresh
+    token. `clients.json` is that site list, so this walks it, navigates
+    the sidecar to each entry's `capture_url`, and stores the token under
+    the client that minted it.
+
+    Best-effort by design: the profile's FOCI token in `config` is what
+    almost everything uses, so one unreachable SPA must warn and move on
+    rather than fail the reseed. Returns `(ok_count, failed_names)`.
+
+    Each client costs its own Edge launch. Driving all of them from a
+    single browser session would be faster, but capture_silent owns the
+    whole launch/park/reload/wipe lifecycle per call, and sequential
+    launches cost a couple of seconds per extra site on a path that runs
+    hourly in the background.
+    """
+    from . import clients as clients_mod
+
+    targets = clients_mod.capture_targets(alias)
+    if only:
+        targets = [(cid, entry) for cid, entry in targets if cid in set(only)]
+    ok, failed = 0, []
+    for client_id, entry in targets:
+        name = clients_mod.client_name(client_id)
+        capture_url = (entry or {}).get('capture_url')
+        if not capture_url:
+            failed.append(name)
+            print(f'[{alias}] client {name}: no capture URL declared; skipped',
+                  file=sys.stderr)
+            continue
+        status, captured = capture_silent(
+            alias, headless=headless, user_agent=user_agent,
+            capture_url=capture_url, expected_client_id=client_id)
+        if status == 'error':
+            # Same transient-error retry the FOCI path does: a CDP hiccup
+            # or a /token round-trip past the timeout recovers on a second
+            # attempt more often than not.
+            status, captured = capture_silent(
+                alias, headless=headless, user_agent=user_agent,
+                capture_url=capture_url, expected_client_id=client_id)
+        rt = (captured or {}).get('OWA_REFRESH_TOKEN', '')
+        if status != 'ok' or not rt:
+            failed.append(name)
+            print(f'[{alias}] client {name}: capture returned {status!r}; '
+                  f'keeping the previous token', file=sys.stderr)
+            if status == 'reauth':
+                # The sidecar holds this identity's OWA session but has
+                # never signed in to *this* SPA - the usual case right
+                # after a client-bound profile was folded in, since the
+                # cookies for its site live in the old profile's Edge dir.
+                # One interactive visit fixes every later rotation.
+                print(f'[{alias}]   sign in once so reseed can rotate it: '
+                      f'owa-piggy edge --profile {alias}  ->  {capture_url}',
+                      file=sys.stderr)
+            continue
+        clients_mod.save_client(alias, client_id, refresh_token=rt,
+                                origin=entry.get('origin'),
+                                capture_url=capture_url)
+        ok += 1
+        print(f'[{alias}] client {name}: refresh token rotated',
+              file=sys.stderr)
+    return ok, failed
 
 
 def _build_config(token_response, *, email, mode):

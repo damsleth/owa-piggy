@@ -10,7 +10,54 @@ Releases before v0.12.0 are recorded only in the annotated git tags
 
 ## [Unreleased]
 
+### Added
+- **One profile is one identity, not one client.** A profile can now hold
+  several client-bound refresh tokens beside its FOCI one, in a sibling
+  `profiles/<alias>/clients.json`, and each audience is minted by the client
+  that can actually serve it. This exists because some endpoints authorize on
+  the token's `appid` rather than its scopes: `teams.microsoft.com/api/authsvc`
+  answers `410 ApiRestricted` for every client except the Teams web app, so an
+  OWA-minted `api.spaces.skype.com` token is perfectly valid and still cannot
+  obtain a Skype token - and without that, chatsvc, the middle tier and trouter
+  are unreachable. Azure DevOps is the same problem behind a different wall
+  (AADSTS65002). Previously each of those needed a profile of its own for the
+  same user; now `--profile dno --audience teams` mints under the Teams client
+  while `--profile dno --audience graph` still mints under OWA.
+  - `setup --with-client teams` / `--with-client devops=<org url>` (repeatable)
+    records the other SPAs an identity signs in to. The Teams client is
+    attempted by default since its sign-in URL is tenant-independent, and
+    un-declared again if the tenant cannot mint it, so a Teams-less tenant does
+    not pay a capture timeout every hour.
+  - `reseed` rotates every declared client after the FOCI token, navigating the
+    sidecar to each one's recorded URL. A client that fails warns and is
+    skipped; it never fails the reseed.
+  - `status` / `debug` list a profile's clients, their sign-in URLs and token
+    ages.
+  - A client whose site the sidecar has never signed in to reports `reauth` and
+    keeps its previous token, with the one-line fix (`owa-piggy edge --profile
+    <alias>`, visit the site once). Folding hits this: the cookies for a bound
+    profile's site live in *its* Edge dir, not the parent's.
+  - Existing client-bound profiles (`nc-ado`, a Teams profile) are folded into
+    their identity's profile on the next run: the token moves into
+    `clients.json` and the old alias becomes a pointer (`OWA_FOLDED_INTO`), so
+    `--profile nc-ado` keeps working and routes to the ADO client from `nc`.
+- A profile bound to a non-default `OWA_CLIENT_ID` now implies its own
+  default audience, so `--profile nc-ado` no longer needs `--audience devops`
+  and a Teams-web-client profile no longer needs `--audience teams`. Such a
+  client can only reach the audiences it is preauthorized for, which makes
+  graph a useless default for it. The new tier sits between the profile's own
+  `OWA_DEFAULT_AUDIENCE` and the graph fallback: `--scope`, `--audience`, env
+  `OWA_DEFAULT_AUDIENCE` and the profile setting all still win, since asking
+  the Teams client for `ic3` or `csa` is legitimate.
+
 ### Fixed
+- Test runs no longer read or write the real `~/.config/owa-piggy`. The
+  conftest promise of "no writes outside tmp_path" only held for tests that
+  requested the `tmp_config` fixture; anything calling `main()` without it ran
+  against the developer's own profile tree. That was harmless while every
+  startup step was read-only or idempotent, and stopped being harmless as soon
+  as `main()` grew a migration that writes. An autouse fixture now redirects
+  the config tree for every test.
 - Non-headless (offscreen) reseed no longer puts an Edge window on screen.
   macOS clamps every offscreen coordinate back onto the visible display -
   `--window-position=-32000,-32000` became `0,39` at Edge's 500x375 minimum,
