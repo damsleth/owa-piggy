@@ -24,6 +24,28 @@ def make_jwt():
     return _make
 
 
+@pytest.fixture(autouse=True)
+def _never_touch_real_config(tmp_path, monkeypatch):
+    """Hard guard: no test may read or write ~/.config/owa-piggy.
+
+    This module's "no writes outside tmp_path" promise only held for tests
+    that requested `tmp_config`; anything calling `main()` without it ran
+    against the developer's real profile tree. Harmless while every
+    startup step was read-only or idempotent-on-existing-layout - but the
+    moment main() grew a migration that *writes* (folding client-bound
+    profiles into their identity's profile), a plain `pytest` run started
+    mutating live credentials. Redirect the tree for every test; tests that
+    ask for `tmp_config` still get their own path, applied after this one.
+    """
+    sandbox = tmp_path / 'owa-piggy-guard'
+    from owa_piggy import config as config_mod
+    from owa_piggy import setup as setup_mod
+    monkeypatch.setattr(config_mod, 'ROOT_DIR', sandbox)
+    monkeypatch.setattr(config_mod, 'CONFIG_PATH', sandbox / 'config')
+    monkeypatch.setattr(setup_mod, 'CONFIG_PATH', sandbox / 'config',
+                        raising=False)
+
+
 @pytest.fixture
 def tmp_config(tmp_path, monkeypatch):
     """Redirect the owa-piggy config tree to a path under tmp_path.
