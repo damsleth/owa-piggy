@@ -1271,3 +1271,115 @@ def test_profiles_unschedule_removes_from_registry(monkeypatch, capsys,
     out = load_profiles_conf()
     assert out['OWA_SCHEDULED'] == []
     assert out['OWA_PROFILES'] == ['work']
+
+
+# --- bound-client routing through the real mint path -------------------
+
+
+def _bound_profile(make_jwt):
+    """Profile with a FOCI token plus a bound Teams client token.
+
+    Written straight into profiles/default/ rather than the legacy path the
+    other tests use: creating clients.json makes profiles/ exist, which is
+    exactly the signal migrate_if_needed() reads as "already migrated", so
+    a legacy-path config would never be relocated and main() would find an
+    empty profile.
+    """
+    from owa_piggy import clients
+    from owa_piggy.config import profile_config_path, save_config
+    path = profile_config_path('default')
+    path.parent.mkdir(parents=True, exist_ok=True)
+    save_config({'OWA_REFRESH_TOKEN': '1.AQ_foci', 'OWA_TENANT_ID': 'tid'}, path)
+    clients.save_client('default', clients.TEAMS_WEB_CLIENT_ID,
+                        refresh_token='1.AQ_teams')
+    return clients.TEAMS_WEB_CLIENT_ID
+
+
+def test_teams_audience_mints_under_the_bound_client(monkeypatch, capsys,
+                                                     tmp_config, clean_env,
+                                                     make_jwt):
+    """The whole point: an OWA-minted spaces token is valid and still 410s
+    at authsvc, so the Teams audience has to go out under the Teams client
+    and its own refresh token."""
+    import time as _time
+    teams_id = _bound_profile(make_jwt)
+    token = make_jwt({'exp': int(_time.time()) + 3600})
+    seen = {}
+
+    def _exchange(rt, tid, cid, scope, **kw):
+        seen.update(rt=rt, cid=cid, scope=scope, origin=kw.get('origin'))
+        return {'access_token': token, 'expires_in': 3600}
+
+    monkeypatch.setattr('owa_piggy.token_flow.exchange_token', _exchange)
+    rc = _run(monkeypatch, ['token', '--audience', 'teams'])
+    assert rc == 0
+    assert capsys.readouterr().out.strip() == token
+    assert seen['cid'] == teams_id
+    assert seen['rt'] == '1.AQ_teams'
+    assert seen['origin'] == 'https://teams.microsoft.com'
+
+
+def test_other_audiences_still_mint_under_the_foci_client(monkeypatch, capsys,
+                                                          tmp_config,
+                                                          clean_env, make_jwt):
+    import time as _time
+    from owa_piggy.oauth import CLIENT_ID
+    _bound_profile(make_jwt)
+    token = make_jwt({'exp': int(_time.time()) + 3600})
+    seen = {}
+
+    def _exchange(rt, tid, cid, scope, **kw):
+        seen.update(rt=rt, cid=cid)
+        return {'access_token': token, 'expires_in': 3600}
+
+    monkeypatch.setattr('owa_piggy.token_flow.exchange_token', _exchange)
+    rc = _run(monkeypatch, ['token', '--audience', 'graph'])
+    assert rc == 0
+    capsys.readouterr()
+    assert seen['cid'] == CLIENT_ID
+    assert seen['rt'] == '1.AQ_foci'
+
+
+def test_bound_client_rotation_lands_in_clients_json(monkeypatch, capsys,
+                                                     tmp_config, clean_env,
+                                                     make_jwt):
+    """A rotated bound token belongs to that client, not to the profile:
+    writing it to OWA_REFRESH_TOKEN would overwrite the FOCI token with one
+    AAD only accepts from the Teams client."""
+    import time as _time
+    from owa_piggy import clients
+    from owa_piggy.config import load_config
+    teams_id = _bound_profile(make_jwt)
+    token = make_jwt({'exp': int(_time.time()) + 3600})
+    monkeypatch.setattr('owa_piggy.token_flow.exchange_token',
+                        lambda *a, **k: {'access_token': token,
+                                         'refresh_token': '1.AQ_teams_v2',
+                                         'expires_in': 3600})
+    rc = _run(monkeypatch, ['token', '--audience', 'teams'])
+    assert rc == 0
+    capsys.readouterr()
+    assert clients.load_clients('default')[teams_id]['refresh_token'] \
+        == '1.AQ_teams_v2'
+    config, _ = load_config()
+    assert config['OWA_REFRESH_TOKEN'] == '1.AQ_foci'
+
+
+def test_bound_and_foci_tokens_do_not_share_a_cache_entry(monkeypatch, capsys,
+                                                          tmp_config,
+                                                          clean_env, make_jwt):
+    """Cache key carries the client id, so the Teams-minted token for an
+    audience can never be served to a FOCI-minted request or vice versa."""
+    import time as _time
+    from owa_piggy.cache import get_cached_token
+    from owa_piggy.oauth import CLIENT_ID
+    from owa_piggy.scopes import resolve_audience
+    teams_id = _bound_profile(make_jwt)
+    token = make_jwt({'exp': int(_time.time()) + 3600})
+    monkeypatch.setattr('owa_piggy.token_flow.exchange_token',
+                        lambda *a, **k: {'access_token': token,
+                                         'expires_in': 3600})
+    assert _run(monkeypatch, ['token', '--audience', 'teams']) == 0
+    capsys.readouterr()
+    scope, _ = resolve_audience(audience='teams')
+    assert get_cached_token('tid', teams_id, scope) == token
+    assert get_cached_token('tid', CLIENT_ID, scope) is None

@@ -333,10 +333,10 @@ A small registry at `~/.config/owa-piggy/profiles.conf` tracks which profiles ex
 Writes are atomic (temp file + fsync + rename) so a crash mid-rotation cannot corrupt the only live token. Environment variables take precedence over the config file:
 
 - `OWA_REFRESH_TOKEN`, `OWA_TENANT_ID` - override the corresponding config values (when `OWA_REFRESH_TOKEN` is env-supplied, rotated tokens are kept env-only and not written back to disk)
-- `OWA_CLIENT_ID` - override the default OWA client ID (set automatically when capturing a non-FOCI client's token, e.g. Azure DevOps)
+- `OWA_CLIENT_ID` - override the default OWA client ID (set automatically when capturing a non-FOCI client's token, e.g. Azure DevOps). Prefer `setup --with-client` for the normal case: it keeps the extra client's token *inside* the identity's profile (see [One identity, several clients](#one-identity-several-clients)) instead of splitting the user across two profiles.
 - `OWA_CAPTURE_URL` - point the capture/reseed sidecar at a non-OWA SPA so its bound refresh token is grabbed off the wire instead of OWA's. Use for non-FOCI clients (e.g. the Azure DevOps app) whose RT the FOCI client cannot mint itself (AADSTS65002 preauth wall). Persisted on the profile so scheduled reseeds rotate the *same* client's token; env wins for ad-hoc runs.
 - `OWA_ORIGIN` - override the `Origin` header used in the token exchange. Auto-derived per client; set automatically alongside `OWA_CLIENT_ID` / `OWA_CAPTURE_URL` when capturing a non-FOCI client so the exchange replays under the minting origin.
-- `OWA_DEFAULT_AUDIENCE` - change the default audience (a short name from `owa-piggy audiences` like `outlook`, or a full https URL). Command-line `--audience` / `--scope` still wins.
+- `OWA_DEFAULT_AUDIENCE` - change the default audience (a short name from `owa-piggy audiences` like `outlook`, or a full https URL). Command-line `--audience` / `--scope` still wins. A profile bound to a non-default `OWA_CLIENT_ID` implies its own default: the Azure DevOps client defaults to `devops`, the Teams web client to `teams`, so `owa-piggy token --profile nc-ado` and `--profile dno-teams` need no `--audience` at all. Only the graph fallback is replaced - every explicit tier above still wins.
 - `OWA_SHAREPOINT_TENANT` - SharePoint tenant name (the `.onmicrosoft.com` prefix, e.g. `contoso365`) used to fill the `{tenant}` placeholder for the `sharepoint` / `sharepoint-admin` audiences. Auto-derived and persisted on first use; `--sharepoint-tenant` overrides it. See [SharePoint](#sharepoint-tenant-admin).
 - `OWA_PROFILE` - select the active profile, overriding `OWA_DEFAULT_PROFILE`. Equivalent to `--profile <alias>`.
 - `OWA_AUTH_MODE` - stamped on the profile config by `setup` (`scrape` for legacy MSAL paste flow, `capture` for the network-capture flow used by encrypted-MSAL / Okta-federated tenants). `reseed` branches on this to pick the right mechanism.
@@ -373,6 +373,54 @@ owa-piggy profiles unschedule work            # stop auto-reseeding 'work'
 Selection precedence when `--profile` is omitted: `OWA_PROFILE` env var > `OWA_DEFAULT_PROFILE` in `profiles.conf` > lone profile on disk > `default` on fresh installs. If multiple profiles exist but none is marked default, the command errors out rather than guessing.
 
 Legacy single-config installs auto-migrate on first run: `~/.config/owa-piggy/{config,cache.json,edge-profile}` move into `profiles/default/` atomically and a `profiles.conf` is written that marks `default` as the active profile.
+
+### One identity, several clients
+
+A profile is a **user**, not a (user, client) pair. Most audiences are reachable
+with the FOCI refresh token captured from OWA, but some endpoints authorize on
+the token's `appid` rather than its scopes:
+
+| Endpoint | Refuses | Wants |
+| --- | --- | --- |
+| `teams.microsoft.com/api/authsvc/v1.0/authz` (mints the Skype token, and with it chatsvc / middle tier / trouter) | `410 ApiRestricted` for every other client | Teams web app |
+| Azure DevOps APIs | `AADSTS65002` preauth wall | Azure DevOps app |
+
+An OWA-minted `api.spaces.skype.com` token is therefore perfectly valid *and*
+useless at authsvc. The audience is reachable; the client is not. So a profile
+keeps its FOCI token in `config` and any extra client-bound refresh tokens in a
+sibling `clients.json`, all captured through the one Edge sidecar session that
+profile already owns — one sign-in, one identity, several minting clients.
+
+```sh
+# declare the other SPAs this identity signs in to (repeatable)
+owa-piggy setup --profile dno --email kim@example.com \
+    --with-client teams \
+    --with-client devops=https://dev.azure.com/MyOrg/MyProject/_workitems
+
+owa-piggy token --profile dno --audience teams    # minted by the Teams client
+owa-piggy token --profile dno --audience graph    # minted by the OWA client
+owa-piggy debug --profile dno | grep client:      # what this profile can mint
+```
+
+The Teams client is attempted by default (its sign-in URL is the same for every
+tenant); a tenant that cannot mint it drops the declaration again rather than
+paying a capture timeout on every reseed. Azure DevOps must be named explicitly
+because its sign-in URL is org-specific.
+
+`reseed` rotates every declared client after the FOCI token, opening each
+recorded URL in turn — so a profile with OWA + Teams + an ADO org refreshes all
+three. A client that fails is skipped with a warning and keeps its previous
+token; it never fails the reseed.
+
+The parent's sidecar may not have signed in to a folded client's site (those
+cookies lived in the old profile's Edge dir). That client reports `reauth` on
+the next reseed and keeps its existing token; `owa-piggy edge --profile <alias>`
+plus one visit to the site fixes every later rotation.
+
+Profiles that predate this — a separate `nc-ado` or Teams profile for the same
+person — are folded in on the next run: the token moves into the parent's
+`clients.json` and the old alias becomes a pointer (`OWA_FOLDED_INTO`), so
+`--profile nc-ado` still works and routes to the ADO client from `nc`.
 
 There is a single shared launchd agent (`com.damsleth.owa-piggy.scheduled`) that reseeds the `OWA_SCHEDULED` set, so macOS's Login Items & Extensions shows one row regardless of profile count. Add profiles to the schedule with `owa-piggy profiles schedule <alias>` (or the `profiles` TUI). Installing the agent boots out any older per-profile plists (`com.damsleth.owa-piggy.<alias>`) and the pre-profile single plist.
 

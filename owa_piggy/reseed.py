@@ -258,6 +258,11 @@ def _do_reseed_capture(alias, config):
     save_config(config)
     print(f'[{alias}] reseeded; new RT persisted to {_config.CONFIG_PATH}',
           file=sys.stderr)
+    # Same identity, other sign-ins: rotate each extra client the profile
+    # declares (Teams, an ADO org, ...). Failures there don't fail the
+    # reseed - the FOCI token above is what most audiences use.
+    capture.capture_bound_clients(alias, user_agent=user_agent,
+                                  headless=_headless_pref(config))
     return 0
 
 

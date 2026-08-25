@@ -17,6 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from . import clients
 from . import config as _config
 from .config import (
     list_profiles,
@@ -130,6 +131,7 @@ def _probe_profile(alias, audience=None, scope=None, sharepoint_tenant=None):
         profile_default=config.get('OWA_DEFAULT_AUDIENCE', '').strip(),
         sharepoint_tenant=sharepoint_tenant,
         profile_sharepoint_tenant=config.get('OWA_SHAREPOINT_TENANT', '').strip(),
+        client_id=config.get('OWA_CLIENT_ID', '').strip(),
     )
     if err:
         probe['resolve_error'] = err
@@ -434,6 +436,7 @@ def do_debug(alias, audience=None, scope=None, sharepoint_tenant=None):
         profile_default=config.get('OWA_DEFAULT_AUDIENCE', '').strip(),
         sharepoint_tenant=sharepoint_tenant,
         profile_sharepoint_tenant=config.get('OWA_SHAREPOINT_TENANT', '').strip(),
+        client_id=config.get('OWA_CLIENT_ID', '').strip(),
     )
     if scope_err:
         print(f'ERROR: {scope_err}', file=sys.stderr)
@@ -480,6 +483,22 @@ def do_debug(alias, audience=None, scope=None, sharepoint_tenant=None):
         row('ok' if tid else 'no', 'OWA_TENANT_ID', tid or 'unset')
     row('..', 'OWA_CLIENT_ID',
         f'{cid}{" (default OWA first-party)" if cid == CLIENT_ID else " (override)"}')
+    folded_into = (config.get('OWA_FOLDED_INTO', '') or '').strip()
+    if folded_into:
+        row('..', 'OWA_FOLDED_INTO',
+            f'{folded_into} (this alias is a pointer; its token lives there)')
+    # The profile's other sign-ins: one identity, several SPAs, each with
+    # its own client-bound refresh token.
+    bound = clients.load_clients(alias)
+    if bound:
+        for client_id, entry in bound.items():
+            name = clients.client_name(client_id)
+            has_rt = bool((entry or {}).get('refresh_token'))
+            issued = (entry or {}).get('rt_issued_at', '') or 'unknown'
+            row('ok' if has_rt else 'no', f'client:{name}',
+                f'{entry.get("capture_url", "?")} - '
+                + (f'RT from {issued}' if has_rt
+                   else 'declared, not captured yet'))
 
     # --- Refresh token shape + live probe ---
     print('\nRefresh token:')
