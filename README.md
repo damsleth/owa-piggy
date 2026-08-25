@@ -391,15 +391,43 @@ keeps its FOCI token in `config` and any extra client-bound refresh tokens in a
 sibling `clients.json`, all captured through the one Edge sidecar session that
 profile already owns — one sign-in, one identity, several minting clients.
 
+Setting one up is a conversation, not a flag list. `setup` asks on a TTY:
+
+```
+$ owa-piggy setup --profile nc
+[nc] email address for Edge sign-in capture (blank = paste flow): cj@example.com
+
+Services for profile 'nc' - one browser sign-in each, same account:
+  Outlook / Microsoft 365 is always included.
+  Teams as well? (chats, presence, channels) [Y/n]
+  Azure DevOps as well? [y/N] y
+    org name or full URL: MyOrg
+    -> https://dev.azure.com/MyOrg
+```
+
+Then it signs in to each in turn. An org name is enough for Azure DevOps - the
+full `https://dev.azure.com/<org>/<project>/_workitems` shape is accepted too,
+but nobody has to remember it.
+
+Add or drop a service later without re-running setup:
+
 ```sh
-# declare the other SPAs this identity signs in to (repeatable)
+owa-piggy clients --profile nc              # what this profile can mint
+owa-piggy clients add teams --profile nc    # sign in to one more, now
+owa-piggy clients add devops=MyOrg --profile nc
+owa-piggy clients remove devops --profile nc
+owa-piggy clients --profile nc --json       # for scripts
+```
+
+Every prompt has a flag, so scripts and CI stay non-interactive - and a piped
+or non-TTY `setup` never asks anything:
+
+```sh
 owa-piggy setup --profile dno --email kim@example.com \
-    --with-client teams \
-    --with-client devops=https://dev.azure.com/MyOrg/MyProject/_workitems
+    --with-client teams --with-client devops=MyOrg
 
 owa-piggy token --profile dno --audience teams    # minted by the Teams client
 owa-piggy token --profile dno --audience graph    # minted by the OWA client
-owa-piggy debug --profile dno | grep client:      # what this profile can mint
 ```
 
 The Teams client is attempted by default (its sign-in URL is the same for every

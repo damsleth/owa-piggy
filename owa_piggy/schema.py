@@ -31,7 +31,7 @@ SUITE = "owa-piggy"
 # Commands whose output is non-interactive and stdout-clean, so --agent /
 # --err-json can safely capture and wrap them. Interactive or UI-launching
 # commands (setup, edge, reseed, debug, install-owa-tools) run unwrapped.
-MACHINE_COMMANDS = frozenset({"token", "status", "version", "profiles"})
+MACHINE_COMMANDS = frozenset({"token", "status", "version", "profiles", "clients"})
 
 _TRUTHY = {"1", "true", "yes", "on"}
 
@@ -257,6 +257,12 @@ COMMAND_SCHEMA = [
         "List / manage profiles (subcommands: list, new, set-default, delete)",
         mutates=True,
         flags=[_JSON],
+    ),
+    command(
+        "clients",
+        "List / add / remove the other services a profile signs in to (subcommands: add, remove)",
+        mutates=True,
+        flags=[_PROFILE, _JSON],
     ),
     command(
         "install-owa-tools", "Install the companion owa-tools suite via Homebrew", mutates=True

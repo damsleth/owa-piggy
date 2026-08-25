@@ -3,7 +3,7 @@ _owa_piggy() {
   local cur prev cmd
   cur="${COMP_WORDS[COMP_CWORD]}"
   cmd="${COMP_WORDS[1]}"
-  local commands="token status debug decode remaining setup reseed edge tui audiences install-owa-tools version profiles"
+  local commands="token status debug decode remaining setup reseed edge tui audiences install-owa-tools version clients profiles"
   local globals="-h --help --version -v"
   if [ "$COMP_CWORD" -eq 1 ]; then
     COMPREPLY=( $(compgen -W "$commands $globals" -- "$cur") )
@@ -22,6 +22,7 @@ _owa_piggy() {
     audiences) COMPREPLY=( $(compgen -W "-h --help" -- "$cur") ) ;;
     install-owa-tools) COMPREPLY=( $(compgen -W "-h --help" -- "$cur") ) ;;
     version) COMPREPLY=( $(compgen -W "-h --help --json" -- "$cur") ) ;;
+    clients) COMPREPLY=( $(compgen -W "-h --help --profile --json add remove" -- "$cur") ) ;;
     profiles) COMPREPLY=( $(compgen -W "-h --help --json list set-default new delete schedule unschedule" -- "$cur") ) ;;
   esac
 }

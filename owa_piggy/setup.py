@@ -377,3 +377,81 @@ def _trough_setup(
     _ensure_edge_profile_dir(alias)
     print(f"Config saved to {_config.CONFIG_PATH} [profile={alias}]", file=sys.stderr)
     return True
+
+
+# --- interactive service selection -------------------------------------
+#
+# A profile is one identity that may sign in to several SPAs (see
+# clients.py). Asking about them here - before any browser opens - keeps
+# the whole flow to "answer three questions, then sign in N times", rather
+# than making the user remember `--with-client devops=<long url>`.
+
+
+def _ask(question: str, *, default: bool) -> bool:
+    """Yes/no prompt. Enter takes the default; EOF/Ctrl-C takes it too, so a
+    closed stdin mid-setup cannot hang or crash the flow."""
+    suffix = "[Y/n]" if default else "[y/N]"
+    try:
+        answer = input(f"  {question} {suffix} ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return default
+    if not answer:
+        return default
+    return answer in ("y", "yes")
+
+
+def prompt_for_clients(alias: str) -> list[str]:
+    """Ask which services this identity signs in to.
+
+    Returns `--with-client`-style specs, so the prompt and the flag feed the
+    same code path and cannot drift. Teams defaults to yes: it is the client
+    that makes chatsvc, presence and the middle tier reachable at all, and
+    its sign-in URL is the same for every tenant. Azure DevOps defaults to
+    no and asks for an org, since its URL is org-specific.
+    """
+    from . import clients as clients_mod
+
+    print(
+        f"\nServices for profile {alias!r} - one browser sign-in each, "
+        f"same account:\n  Outlook / Microsoft 365 is always included.",
+        file=sys.stderr,
+    )
+    specs: list[str] = []
+    if _ask("Teams as well? (chats, presence, channels)", default=True):
+        specs.append("teams")
+    if _ask("Azure DevOps as well?", default=False):
+        while True:
+            try:
+                org = input("    org name or full URL: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                break
+            if not org:
+                print("    skipped Azure DevOps (no org given).", file=sys.stderr)
+                break
+            url = clients_mod.normalize_capture_url(clients_mod.DEVOPS_CLIENT_ID, org)
+            print(f"    -> {url}", file=sys.stderr)
+            specs.append(f"devops={org}")
+            break
+    return specs
+
+
+def prompt_for_email(alias: str) -> str | None:
+    """Ask for the sign-in address, mirroring the TUI's add-profile prompt.
+
+    Blank means the legacy paste flow, which is still the fast path on plain
+    MSAL tenants - so the question has to allow an empty answer rather than
+    insisting.
+    """
+    while True:
+        try:
+            email = input(
+                f"[{alias}] email address for Edge sign-in capture (blank = paste flow): "
+            ).strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return None
+        if not email or "@" in email:
+            return email or None
+        print("  enter an email address, or leave blank for the paste flow.", file=sys.stderr)
