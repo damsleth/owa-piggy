@@ -11,6 +11,19 @@ Releases before v0.12.0 are recorded only in the annotated git tags
 ## [Unreleased]
 
 ### Added
+- **Quality gates in CI: ruff, mypy, and a branch-coverage floor.** `pyproject`
+  carries the ruff/mypy/coverage config and a `dev` extra; CI runs
+  `ruff check` + `ruff format --check`, `mypy owa_piggy` (every module typed,
+  `disallow_untyped_defs`), and `pytest --cov-branch --cov-fail-under=67`
+  (currently 74%). New tests cover the security-critical core: the connector's
+  address fallback, refresh-token redaction, `exchange_fresh`'s shape checks
+  and AAD-error classification, and a property suite. The release workflow is
+  hardened (OIDC publish, SHA-pinned actions, build attestations) and
+  dependabot watches the actions.
+- **Shell completions for zsh, bash and fish**, generated from the argument
+  parser by `scripts/gen-completions.py` and committed under
+  `scripts/completions/`. A test fails if the committed files drift from what
+  the generator produces, so a new flag cannot ship without them.
 - **One profile is one identity, not one client.** A profile can now hold
   several client-bound refresh tokens beside its FOCI one, in a sibling
   `profiles/<alias>/clients.json`, and each audience is minted by the client
