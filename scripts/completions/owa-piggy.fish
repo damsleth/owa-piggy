@@ -1,19 +1,20 @@
 # fish completion for owa-piggy
 # Disable file completion unless a command opts back in.
 complete -c owa-piggy -f
-complete -c owa-piggy -n 'not __fish_seen_subcommand_from token status debug decode remaining setup reseed edge tui audiences install-owa-tools version profiles' -a token -d 'print access token (default when no command given)'
-complete -c owa-piggy -n 'not __fish_seen_subcommand_from token status debug decode remaining setup reseed edge tui audiences install-owa-tools version profiles' -a status -d 'compact ISO8601 health summary (all profiles if --profile omitted)'
-complete -c owa-piggy -n 'not __fish_seen_subcommand_from token status debug decode remaining setup reseed edge tui audiences install-owa-tools version profiles' -a debug -d 'dump full setup diagnostics for one profile'
-complete -c owa-piggy -n 'not __fish_seen_subcommand_from token status debug decode remaining setup reseed edge tui audiences install-owa-tools version profiles' -a decode -d 'print the JWT header and payload of the current access token'
-complete -c owa-piggy -n 'not __fish_seen_subcommand_from token status debug decode remaining setup reseed edge tui audiences install-owa-tools version profiles' -a remaining -d 'print minutes remaining on the current access token'
-complete -c owa-piggy -n 'not __fish_seen_subcommand_from token status debug decode remaining setup reseed edge tui audiences install-owa-tools version profiles' -a setup -d 'interactive first-time setup; creates the profile if new'
-complete -c owa-piggy -n 'not __fish_seen_subcommand_from token status debug decode remaining setup reseed edge tui audiences install-owa-tools version profiles' -a reseed -d 'fetch a fresh refresh token headlessly from the Edge sidecar'
-complete -c owa-piggy -n 'not __fish_seen_subcommand_from token status debug decode remaining setup reseed edge tui audiences install-owa-tools version profiles' -a edge -d 'open a normal Edge window using a profile\'s sidecar session'
-complete -c owa-piggy -n 'not __fish_seen_subcommand_from token status debug decode remaining setup reseed edge tui audiences install-owa-tools version profiles' -a tui -d 'interactive token-health dashboard (profiles + freshness)'
-complete -c owa-piggy -n 'not __fish_seen_subcommand_from token status debug decode remaining setup reseed edge tui audiences install-owa-tools version profiles' -a audiences -d 'list all known FOCI-accessible audiences'
-complete -c owa-piggy -n 'not __fish_seen_subcommand_from token status debug decode remaining setup reseed edge tui audiences install-owa-tools version profiles' -a install-owa-tools -d 'install the companion owa-tools suite via Homebrew'
-complete -c owa-piggy -n 'not __fish_seen_subcommand_from token status debug decode remaining setup reseed edge tui audiences install-owa-tools version profiles' -a version -d 'print version information'
-complete -c owa-piggy -n 'not __fish_seen_subcommand_from token status debug decode remaining setup reseed edge tui audiences install-owa-tools version profiles' -a profiles -d 'list / manage profiles'
+complete -c owa-piggy -n 'not __fish_seen_subcommand_from token status debug decode remaining setup reseed edge tui audiences install-owa-tools version clients profiles' -a token -d 'print access token (default when no command given)'
+complete -c owa-piggy -n 'not __fish_seen_subcommand_from token status debug decode remaining setup reseed edge tui audiences install-owa-tools version clients profiles' -a status -d 'compact ISO8601 health summary (all profiles if --profile omitted)'
+complete -c owa-piggy -n 'not __fish_seen_subcommand_from token status debug decode remaining setup reseed edge tui audiences install-owa-tools version clients profiles' -a debug -d 'dump full setup diagnostics for one profile'
+complete -c owa-piggy -n 'not __fish_seen_subcommand_from token status debug decode remaining setup reseed edge tui audiences install-owa-tools version clients profiles' -a decode -d 'print the JWT header and payload of the current access token'
+complete -c owa-piggy -n 'not __fish_seen_subcommand_from token status debug decode remaining setup reseed edge tui audiences install-owa-tools version clients profiles' -a remaining -d 'print minutes remaining on the current access token'
+complete -c owa-piggy -n 'not __fish_seen_subcommand_from token status debug decode remaining setup reseed edge tui audiences install-owa-tools version clients profiles' -a setup -d 'interactive first-time setup; creates the profile if new'
+complete -c owa-piggy -n 'not __fish_seen_subcommand_from token status debug decode remaining setup reseed edge tui audiences install-owa-tools version clients profiles' -a reseed -d 'fetch a fresh refresh token headlessly from the Edge sidecar'
+complete -c owa-piggy -n 'not __fish_seen_subcommand_from token status debug decode remaining setup reseed edge tui audiences install-owa-tools version clients profiles' -a edge -d 'open a normal Edge window using a profile\'s sidecar session'
+complete -c owa-piggy -n 'not __fish_seen_subcommand_from token status debug decode remaining setup reseed edge tui audiences install-owa-tools version clients profiles' -a tui -d 'interactive token-health dashboard (profiles + freshness)'
+complete -c owa-piggy -n 'not __fish_seen_subcommand_from token status debug decode remaining setup reseed edge tui audiences install-owa-tools version clients profiles' -a audiences -d 'list all known FOCI-accessible audiences'
+complete -c owa-piggy -n 'not __fish_seen_subcommand_from token status debug decode remaining setup reseed edge tui audiences install-owa-tools version clients profiles' -a install-owa-tools -d 'install the companion owa-tools suite via Homebrew'
+complete -c owa-piggy -n 'not __fish_seen_subcommand_from token status debug decode remaining setup reseed edge tui audiences install-owa-tools version clients profiles' -a version -d 'print version information'
+complete -c owa-piggy -n 'not __fish_seen_subcommand_from token status debug decode remaining setup reseed edge tui audiences install-owa-tools version clients profiles' -a clients -d 'list / add / remove the other services a profile signs in to'
+complete -c owa-piggy -n 'not __fish_seen_subcommand_from token status debug decode remaining setup reseed edge tui audiences install-owa-tools version clients profiles' -a profiles -d 'list / manage profiles'
 complete -c owa-piggy -n '__fish_seen_subcommand_from token' -o h
 complete -c owa-piggy -n '__fish_seen_subcommand_from token' -l help
 complete -c owa-piggy -n '__fish_seen_subcommand_from token' -l profile
@@ -85,6 +86,12 @@ complete -c owa-piggy -n '__fish_seen_subcommand_from install-owa-tools' -l help
 complete -c owa-piggy -n '__fish_seen_subcommand_from version' -o h
 complete -c owa-piggy -n '__fish_seen_subcommand_from version' -l help
 complete -c owa-piggy -n '__fish_seen_subcommand_from version' -l json
+complete -c owa-piggy -n '__fish_seen_subcommand_from clients' -a add -d 'sign in to another service under this identity'
+complete -c owa-piggy -n '__fish_seen_subcommand_from clients' -a remove -d 'forget a service and its token'
+complete -c owa-piggy -n '__fish_seen_subcommand_from clients' -o h
+complete -c owa-piggy -n '__fish_seen_subcommand_from clients' -l help
+complete -c owa-piggy -n '__fish_seen_subcommand_from clients' -l profile
+complete -c owa-piggy -n '__fish_seen_subcommand_from clients' -l json
 complete -c owa-piggy -n '__fish_seen_subcommand_from profiles' -a list -d 'list profiles (non-interactive alias of bare `profiles`)'
 complete -c owa-piggy -n '__fish_seen_subcommand_from profiles' -a set-default -d 'make <alias> the default profile'
 complete -c owa-piggy -n '__fish_seen_subcommand_from profiles' -a new -d 'create a new profile (alias of `setup --profile <alias>`)'

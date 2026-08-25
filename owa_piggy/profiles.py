@@ -31,7 +31,7 @@ from .config import (
 )
 from .launchd import is_scheduled as launchd_is_scheduled
 from .launchd import unschedule as launchd_unschedule
-from .setup import interactive_setup
+from .setup import interactive_setup, prompt_for_clients, prompt_for_email
 
 
 def promote_default_if_missing() -> dict[str, Any]:
@@ -101,6 +101,7 @@ def create_profile(
     google_client_id: str | None = None,
     google_client_secret: str | None = None,
     with_client: list[str] | None = None,
+    ask_email: bool = True,
 ) -> int:
     """Run interactive_setup for a profile, persist its preferred audience,
     and register the profile in profiles.conf.
@@ -118,6 +119,19 @@ def create_profile(
     # the pre-setup identity and must not leak past this point.
     clear_cache()
     config, _ = load_config()
+    # Ask everything before the first browser opens, so the flow is
+    # "answer the questions, then sign in N times" instead of a sign-in
+    # followed by more questions. Only on a TTY, and only for what the
+    # caller did not already specify: a piped or flag-driven setup must
+    # stay exactly as non-interactive as it was.
+    interactive = sys.stdin.isatty() and not google and not trough_url
+    # `ask_email=False` says the caller already put the question to the user
+    # and a blank answer was a real answer (the TUI's add-profile flow treats
+    # blank as "use the paste flow"). Re-asking would override their choice.
+    if interactive and ask_email and email is None:
+        email = prompt_for_email(alias)
+    if interactive and with_client is None:
+        with_client = prompt_for_clients(alias)
     if audience and audience != "graph":
         # Pre-set OWA_DEFAULT_AUDIENCE on the in-memory config so
         # interactive_setup's save_config call writes it alongside the

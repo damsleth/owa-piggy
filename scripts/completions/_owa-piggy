@@ -15,6 +15,7 @@ _owa_piggy() {
     'audiences:list all known FOCI-accessible audiences'
     'install-owa-tools:install the companion owa-tools suite via Homebrew'
     'version:print version information'
+    'clients:list / add / remove the other services a profile signs in to'
     'profiles:list / manage profiles'
   )
   if (( CURRENT == 2 )); then
@@ -34,6 +35,7 @@ _owa_piggy() {
     audiences) compadd -- -h --help ;;
     install-owa-tools) compadd -- -h --help ;;
     version) compadd -- -h --help --json ;;
+    clients) compadd -- -h --help --profile --json add remove ;;
     profiles) compadd -- -h --help --json list set-default new delete schedule unschedule ;;
   esac
 }

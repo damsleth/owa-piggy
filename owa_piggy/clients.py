@@ -174,6 +174,26 @@ def forget_client(alias: str, client_id: str) -> bool:
     return True
 
 
+def normalize_capture_url(client_id: str, value: str | None) -> str | None:
+    """Turn what a human typed into the URL the sidecar should open.
+
+    Azure DevOps is the reason this exists: its sign-in URL is org-specific,
+    but nobody should have to remember
+    `https://dev.azure.com/<org>/<project>/_workitems` to answer a prompt. A
+    bare org name is enough, a full URL is passed through untouched, and
+    anything else falls back to the client's default.
+    """
+    text = (value or "").strip().rstrip("/")
+    if not text:
+        return KNOWN_CLIENTS.get(client_id, {}).get("capture_url")
+    if text.startswith(("http://", "https://")):
+        return text
+    if client_id == DEVOPS_CLIENT_ID:
+        # Bare org name, or `org/project`.
+        return f"https://dev.azure.com/{text.lstrip('/')}"
+    return text
+
+
 def parse_spec(spec: str | None) -> tuple[str | None, str | None, str]:
     """Parse a `--with-client` value into `(client_id, capture_url, err)`.
 
@@ -195,7 +215,7 @@ def parse_spec(spec: str | None) -> tuple[str | None, str | None, str]:
         )
     if client_id not in KNOWN_CLIENTS and not url:
         return None, None, f"client {name!r} needs an explicit =<url>"
-    return client_id, url or None, ""
+    return client_id, normalize_capture_url(client_id, url), ""
 
 
 def capture_targets(alias: str) -> list[tuple[str, ClientEntry]]:

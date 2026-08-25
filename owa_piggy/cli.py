@@ -367,6 +367,32 @@ def _build_parser() -> argparse.ArgumentParser:
     p_version = sub.add_parser("version", help="print version information")
     p_version.add_argument("--json", action="store_true", help="print version information as JSON")
 
+    p_clients = sub.add_parser(
+        "clients",
+        help="list / add / remove the other services a profile signs in to",
+    )
+    p_clients.add_argument(
+        "--profile", metavar="<alias>", default=None, help="target a specific profile"
+    )
+    p_clients.add_argument("--json", action="store_true", help="print clients as JSON")
+    clients_sub = p_clients.add_subparsers(dest="clients_command", metavar="<subcommand>")
+
+    p_cl_add = clients_sub.add_parser("add", help="sign in to another service under this identity")
+    p_cl_add.add_argument(
+        "name",
+        metavar="<name[=org-or-url]>",
+        help="teams, or devops=<org name or full URL>",
+    )
+    p_cl_add.add_argument(
+        "--profile", metavar="<alias>", default=None, help="target a specific profile"
+    )
+
+    p_cl_rm = clients_sub.add_parser("remove", help="forget a service and its token")
+    p_cl_rm.add_argument("name", metavar="<name>", help="teams, devops, or a client id")
+    p_cl_rm.add_argument(
+        "--profile", metavar="<alias>", default=None, help="target a specific profile"
+    )
+
     p_profiles = sub.add_parser("profiles", help="list / manage profiles")
     p_profiles.add_argument("--json", action="store_true", help="print profiles as JSON")
     profiles_sub = p_profiles.add_subparsers(dest="profiles_command", metavar="<subcommand>")
@@ -451,6 +477,7 @@ COMMANDS = (
     "audiences",
     "version",
     "profiles",
+    "clients",
     "install-owa-tools",
 )
 
@@ -1065,6 +1092,85 @@ def _cmd_version(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_clients(args: argparse.Namespace) -> int:
+    """`clients` - show or change the other services a profile signs in to.
+
+    The counterpart to setup's prompts: adding a service later must not mean
+    re-running setup or editing clients.json by hand.
+    """
+    alias, rc = _resolve_and_activate(args)
+    if rc:
+        return rc
+    sub = getattr(args, "clients_command", None)
+
+    if sub == "add":
+        client_id, url, err = clients.parse_spec(args.name)
+        if err or client_id is None:
+            print(f"ERROR: {err}", file=sys.stderr)
+            return 1
+        entry, derr = clients.declare_client(alias, client_id, capture_url=url)
+        if derr or entry is None:
+            print(f"ERROR: {derr}", file=sys.stderr)
+            return 1
+        name = clients.client_name(client_id)
+        print(f"[{alias}] {name}: {entry.get('capture_url')}", file=sys.stderr)
+        print(f"[{alias}] signing in to {name}...", file=sys.stderr)
+        from . import capture
+
+        ok, failed = capture.capture_bound_clients(alias, only=[client_id])
+        if not ok:
+            # The declaration stays: the sign-in is retried by the next
+            # reseed, and the user may just need to authenticate once in
+            # the sidecar (capture_bound_clients prints how).
+            print(
+                f"ERROR: [{alias}] could not capture {name} yet; "
+                f"it stays on the profile and reseed will retry.",
+                file=sys.stderr,
+            )
+            return 1
+        return 0
+
+    if sub == "remove":
+        client_id = clients.client_id_for_name(args.name) or args.name
+        if clients.forget_client(alias, client_id):
+            print(f"[{alias}] removed {clients.client_name(client_id)}", file=sys.stderr)
+            return 0
+        print(f"ERROR: [{alias}] no such client {args.name!r}", file=sys.stderr)
+        return 1
+
+    # Bare `clients`: list what this profile can mint.
+    bound = clients.load_clients(alias)
+    if getattr(args, "json", False):
+        print(
+            json.dumps(
+                {
+                    "profile": alias,
+                    "clients": [
+                        {
+                            "name": clients.client_name(cid),
+                            "client_id": cid,
+                            "capture_url": entry.get("capture_url", ""),
+                            "has_token": bool(entry.get("refresh_token")),
+                            "rt_issued_at": entry.get("rt_issued_at", ""),
+                        }
+                        for cid, entry in bound.items()
+                    ],
+                },
+                indent=2,
+            )
+        )
+        return 0
+    print(f"profile: {alias}")
+    print("  outlook/m365   (the profile's own token)")
+    if not bound:
+        print("  no other services. Add one: owa-piggy clients add teams")
+        return 0
+    for cid, entry in bound.items():
+        state = "ok" if entry.get("refresh_token") else "not signed in yet"
+        print(f"  {clients.client_name(cid):<14} {entry.get('capture_url', '?')}  [{state}]")
+    return 0
+
+
 def _cmd_profiles(args: argparse.Namespace) -> int:
     sub = getattr(args, "profiles_command", None)
     # `list` uses a distinct dest (profiles_list_json) so the subparser
@@ -1328,7 +1434,10 @@ def _do_profiles_schedule(alias: str, schedule: bool, as_json: bool = False) -> 
     return 0
 
 
-_DISPATCH = {
+# Annotated so the dispatch's return type is int rather than Any - handlers
+# that are still untyped are compatible, and the one typed handler no longer
+# makes `return handler(args)` an untyped-return error.
+_DISPATCH: dict[str, Callable[[argparse.Namespace], int]] = {
     "token": _cmd_token,
     "status": _cmd_status,
     "debug": _cmd_debug,
@@ -1341,6 +1450,7 @@ _DISPATCH = {
     "audiences": _cmd_audiences,
     "version": _cmd_version,
     "profiles": _cmd_profiles,
+    "clients": _cmd_clients,
     "install-owa-tools": _cmd_install_owa_tools,
 }
 
