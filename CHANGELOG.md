@@ -11,6 +11,17 @@ Releases before v0.12.0 are recorded only in the annotated git tags
 ## [Unreleased]
 
 ### Added
+- **`setup` asks which services an identity uses, instead of taking flags.**
+  On a TTY it now prompts for the sign-in address and then for Teams (default
+  yes) and Azure DevOps (default no, asks for an org), before any browser
+  opens - so adding an identity with Outlook + Teams + an ADO org is three
+  questions rather than three `--with-client` values. An Azure DevOps org name
+  is enough; the full `_workitems` URL still works. Every prompt still has its
+  flag, and a non-TTY or flag-driven `setup` asks nothing, so scripts and cron
+  behave exactly as before.
+- **`owa-piggy clients`** lists a profile's services, and `clients add
+  <name[=org-or-url]>` / `clients remove <name>` change them without re-running
+  setup or hand-editing `clients.json`. `--json` for scripts.
 - **Quality gates in CI: ruff, mypy, and a branch-coverage floor.** `pyproject`
   carries the ruff/mypy/coverage config and a `dev` extra; CI runs
   `ruff check` + `ruff format --check`, `mypy owa_piggy` (every module typed,

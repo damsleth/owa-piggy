@@ -117,13 +117,33 @@ def test_declare_keeps_an_existing_token(profile):
 
 
 def test_parse_spec_forms():
-    assert clients.parse_spec("teams") == (TEAMS, None, "")
+    # A bare name resolves to that client's default sign-in URL.
+    assert clients.parse_spec("teams") == (TEAMS, "https://teams.microsoft.com/", "")
     cid, url, err = clients.parse_spec("devops=https://dev.azure.com/o/p/_workitems")
     assert (cid, url, err) == (DEVOPS_CLIENT_ID, "https://dev.azure.com/o/p/_workitems", "")
     _, _, err = clients.parse_spec("nonesuch")
     assert "unknown client" in err
     _, _, err = clients.parse_spec("")
     assert err
+
+
+def test_parse_spec_normalizes_an_azure_devops_org():
+    """Nobody should have to remember the full
+    `https://dev.azure.com/<org>/<project>/_workitems` shape to name their
+    org - a bare org (or org/project) is enough, and a full URL passes
+    through untouched."""
+    assert clients.parse_spec("devops=MyOrg") == (
+        DEVOPS_CLIENT_ID,
+        "https://dev.azure.com/MyOrg",
+        "",
+    )
+    assert clients.parse_spec("devops=MyOrg/MyProject")[1] == (
+        "https://dev.azure.com/MyOrg/MyProject"
+    )
+    full = "https://dev.azure.com/MyOrg/MyProject/_workitems"
+    assert clients.parse_spec(f"devops={full}")[1] == full
+    # Trailing slashes are noise, not a different URL.
+    assert clients.parse_spec("devops=MyOrg/")[1] == "https://dev.azure.com/MyOrg"
 
 
 def test_parse_spec_accepts_a_raw_client_id_with_a_url():
