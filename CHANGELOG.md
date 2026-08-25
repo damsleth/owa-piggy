@@ -10,6 +10,20 @@ Releases before v0.12.0 are recorded only in the annotated git tags
 
 ## [Unreleased]
 
+### Changed
+- **`token --json` is served from the access-token cache.** `--json` was the
+  one mode that bypassed the cache, because its envelope echoes the rotated
+  refresh_token and that is never cached. But no consumer wants that field:
+  owa-tools strips it on arrival with a test asserting it never appears, and
+  teaminal's notes call it a leak and say to use default-mode stdout. Since
+  every `owa-*` CLI authenticates with `token --audience X --json`, each
+  invocation paid a full AAD round-trip - 0.31s against 0.03s from cache - and
+  an `owa-teams` channel fan-out burned ~80 AAD hits per run, exactly the
+  quota the cache exists to protect. A cache hit now synthesizes the envelope
+  from the cached AT and its `exp`, so `--json` is ~10x faster and no longer
+  emits a refresh token on the hot path. Cold exchanges still echo AAD's
+  response verbatim.
+
 ### Added
 - **`setup` asks which services an identity uses, instead of taking flags.**
   On a TTY it now prompts for the sign-in address and then for Teams (default
