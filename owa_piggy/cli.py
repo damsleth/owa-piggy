@@ -19,6 +19,7 @@ import sys
 import time
 
 from . import __version__
+from . import clients
 from . import schema as schema_mod
 from .cache import (
     clear_cache,
@@ -38,7 +39,7 @@ from .config import (
     validate_alias,
 )
 from .jwt import decode_jwt, decode_jwt_segment, token_minutes_remaining
-from .migration import migrate_if_needed
+from .migration import fold_bound_clients_if_needed, migrate_if_needed
 from .oauth import CLIENT_ID
 from .profiles import create_profile, delete_profile, set_default_profile
 from .reseed import do_reseed, do_reseed_all, do_reseed_scheduled
@@ -242,6 +243,14 @@ def _build_parser():
                          help='SharePoint tenant name (e.g. norconsult365) to '
                               'persist as OWA_SHAREPOINT_TENANT, enabling '
                               '`--audience sharepoint` on this profile')
+    p_setup.add_argument('--with-client', metavar='<name[=url]>', default=None,
+                         dest='with_client', action='append',
+                         help='also sign in to another SPA under this same '
+                              'identity and keep its client-bound refresh '
+                              'token alongside the OWA one: `teams` (default '
+                              'URL) or `devops=https://dev.azure.com/<org>/'
+                              '<proj>/_workitems`. Repeatable. Recorded on the '
+                              'profile, so every later reseed rotates it too.')
     p_setup.add_argument('--google', action='store_true',
                          help='seed this profile via Google OAuth consent '
                               '(a real app registration you own, not a '
@@ -398,6 +407,15 @@ def _resolve_and_activate(args, *, allow_missing=False):
         print(f'ERROR: {err}', file=sys.stderr)
         return '', 1
     set_active_profile(alias)
+    # A folded alias is a pointer, not a profile: its token now lives in the
+    # parent's clients.json (see migration.fold_bound_clients_if_needed), so
+    # `--profile nc-ado` has to land on `nc` and let audience routing pick
+    # the ADO client from there.
+    config, _ = load_config()
+    parent = (config.get('OWA_FOLDED_INTO', '') or '').strip()
+    if parent and parent != alias:
+        alias = parent
+        set_active_profile(alias)
     return alias, 0
 
 
@@ -471,10 +489,29 @@ def _mint_and_emit(args, *, mode):
             profile_default=profile_default,
             sharepoint_tenant=sp_flag,
             profile_sharepoint_tenant=sp_cfg,
+            client_id=client_id,
         )
     if err:
         print(f'ERROR: {err}', file=sys.stderr)
         return 1
+
+    # Bound-client routing. Some endpoints authorize on the token's appid,
+    # not its scopes (teams authsvc answers only the Teams web app; the
+    # Azure DevOps app sits behind a preauth wall), so a profile can hold
+    # extra client-bound refresh tokens beside its FOCI one. If this
+    # audience belongs to a client the profile has, mint under that client:
+    # same user, same sidecar session, different minting app.
+    bound_id, bound_entry = clients.select_for_scope(alias, scope)
+    token_sink = None
+    if bound_id:
+        config = clients.overlay_config(config, bound_id, bound_entry)
+        client_id = bound_id
+        # Rotation belongs in clients.json, not the profile config - the
+        # FOCI token there is a different token for a different client.
+        token_sink = lambda new_rt: clients.save_client(  # noqa: E731
+            alias, bound_id, refresh_token=new_rt,
+            origin=bound_entry.get('origin'),
+            capture_url=bound_entry.get('capture_url'))
 
     # Access-token cache short-circuit. Modes that only need the AT (or
     # something derivable from it locally) can be served from the
@@ -500,7 +537,7 @@ def _mint_and_emit(args, *, mode):
     # We replay the captured stderr immediately so the user-facing
     # 'ERROR: AADSTS...' line still reaches the terminal verbatim.
     result, info = exchange_fresh(config, scope, persist=persist,
-                                  capture_stderr=True)
+                                  capture_stderr=True, token_sink=token_sink)
     if info['stderr_text']:
         sys.stderr.write(info['stderr_text'])
         sys.stderr.flush()
@@ -546,8 +583,14 @@ def _mint_and_emit(args, *, mode):
         rc = do_reseed(alias)
         if rc == 0:
             config, persist = load_config()
+            # Reload dropped the bound-client overlay; reapply it (reseed
+            # rotated that client's token too, so re-read the entry).
+            if bound_id:
+                refreshed = clients.load_clients(alias).get(bound_id, bound_entry)
+                config = clients.overlay_config(config, bound_id, refreshed)
             result, info = exchange_fresh(config, scope, persist=persist,
-                                          capture_stderr=True)
+                                          capture_stderr=True,
+                                          token_sink=token_sink)
             if info['stderr_text']:
                 sys.stderr.write(info['stderr_text'])
                 sys.stderr.flush()
@@ -638,6 +681,7 @@ def _cmd_setup(args):
         user_agent=(getattr(args, 'user_agent', None)
                     or os.environ.get('OWA_USER_AGENT') or None),
         sharepoint_tenant=getattr(args, 'sharepoint_tenant', None),
+        with_client=getattr(args, 'with_client', None),
         google=google,
         google_client_id=(getattr(args, 'google_client_id', None)
                            or os.environ.get('GOOGLE_OAUTH_CLIENT_ID') or None),
@@ -1112,6 +1156,7 @@ def _dispatch(raw):
 
     # Idempotent on fresh or already-migrated installs.
     migrate_if_needed()
+    fold_bound_clients_if_needed()
 
     command = args.command or 'token'
     handler = _DISPATCH.get(command)

@@ -163,3 +163,54 @@ def test_malformed_profile_default_falls_back(clean_env, capsys):
     captured = capsys.readouterr()
     assert 'WARNING' in captured.err
     assert 'profile' in captured.err
+
+
+# --- client-implied tier ----------------------------------------------
+
+
+TEAMS_WEB_CLIENT = '5e3ce6c0-2b1f-4285-8d4b-75ee78787346'
+ADO_CLIENT = '499b84ac-1321-427f-aa17-267ca6975798'
+
+
+def test_client_id_implies_its_audience(clean_env):
+    """A profile bound to a non-default client can only reach what that
+    client is preauthorized for, so `--profile dno-teams` needs no
+    `--audience teams` and `--profile nc-ado` needs no `--audience devops`."""
+    scope, err = resolve_audience(client_id=TEAMS_WEB_CLIENT)
+    assert err == ''
+    assert scope.startswith('https://api.spaces.skype.com/.default ')
+
+    scope, err = resolve_audience(client_id=ADO_CLIENT)
+    assert err == ''
+    assert scope.startswith('https://app.vssps.visualstudio.com/.default ')
+
+
+def test_default_owa_client_still_falls_back_to_graph(clean_env):
+    """The FOCI client reaches everything, so it keeps the graph default."""
+    scope, err = resolve_audience(client_id='9199bf20-a13f-4107-85dc-02114787ef48')
+    assert err == ''
+    assert scope.startswith(f'{DEFAULT_AUDIENCE}/.default ')
+
+
+def test_unknown_client_falls_back_to_graph(clean_env):
+    scope, err = resolve_audience(client_id='00000000-0000-0000-0000-000000000000')
+    assert err == ''
+    assert scope.startswith(f'{DEFAULT_AUDIENCE}/.default ')
+
+
+def test_explicit_selections_beat_the_client_default(monkeypatch, clean_env):
+    """Every louder tier still wins: a client-implied audience is the
+    fallback, not a lock - asking the Teams client for ic3 or graph is
+    legitimate (both are preauthorized for it)."""
+    scope, _ = resolve_audience(audience='ic3', client_id=TEAMS_WEB_CLIENT)
+    assert scope.startswith('https://ic3.teams.office.com/.default ')
+
+    scope, _ = resolve_audience(profile_default='csa', client_id=TEAMS_WEB_CLIENT)
+    assert scope.startswith('https://chatsvcagg.teams.microsoft.com/.default ')
+
+    monkeypatch.setenv('OWA_DEFAULT_AUDIENCE', 'graph')
+    scope, _ = resolve_audience(client_id=TEAMS_WEB_CLIENT)
+    assert scope.startswith('https://graph.microsoft.com/.default ')
+
+    scope, _ = resolve_audience(scope='custom', client_id=TEAMS_WEB_CLIENT)
+    assert scope == 'custom'

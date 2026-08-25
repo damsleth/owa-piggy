@@ -86,7 +86,8 @@ def enable_profile(alias):
 def create_profile(alias, *, email=None, audience=None, full_banner=False,
                     trough_url=None, trough_tenant=None, trough_sub=None,
                     user_agent=None, sharepoint_tenant=None, google=False,
-                    google_client_id=None, google_client_secret=None):
+                    google_client_id=None, google_client_secret=None,
+                    with_client=None):
     """Run interactive_setup for a profile, persist its preferred audience,
     and register the profile in profiles.conf.
 
@@ -122,6 +123,8 @@ def create_profile(alias, *, email=None, audience=None, full_banner=False,
                               google_client_id=google_client_id,
                               google_client_secret=google_client_secret):
         return 1
+    if not google:
+        _seed_bound_clients(alias, with_client, user_agent=user_agent)
     ensure_profile_registered(alias, make_default_if_first=True)
     print(f'\n\tOWA-PIGGY 🐽  CONFIGURED [{alias}]', file=sys.stderr)
     # The app-reg-free banner is about the MSAL piggyback trick specifically -
@@ -129,6 +132,59 @@ def create_profile(alias, *, email=None, audience=None, full_banner=False,
     if full_banner and not google:
         print('\n\tENJOY YOUR APP-REG-FREE SCOPES\n', file=sys.stderr)
     return 0
+
+
+def _seed_bound_clients(alias, with_client, *, user_agent=None):
+    """Sign the fresh profile in to its other SPAs, same identity.
+
+    The Edge sidecar just completed an interactive sign-in, so its cookies
+    are as warm as they will ever be - the cheapest moment to pick up each
+    extra client's refresh token. `--with-client` names them explicitly;
+    the defaults are tried anyway because a Teams token is what makes
+    chatsvc / authsvc reachable at all and its sign-in URL is the same for
+    every tenant.
+
+    A default that fails to mint is un-declared again: the tenant probably
+    has no Teams, and a declaration nobody can capture would cost an Edge
+    launch plus a capture timeout on every hourly reseed from now on. An
+    explicitly requested client keeps its declaration, so the next reseed
+    retries it.
+    """
+    from . import capture
+    from . import clients as clients_mod
+
+    requested, defaulted = [], []
+    for spec in (with_client or ()):
+        client_id, url, err = clients_mod.parse_spec(spec)
+        if err:
+            print(f'WARNING: --with-client {spec!r}: {err}', file=sys.stderr)
+            continue
+        entry, derr = clients_mod.declare_client(alias, client_id, capture_url=url)
+        if derr:
+            print(f'WARNING: {derr}', file=sys.stderr)
+            continue
+        requested.append(client_id)
+    for client_id in clients_mod.DEFAULT_CLIENTS:
+        if client_id in requested or client_id in clients_mod.load_clients(alias):
+            continue
+        entry, derr = clients_mod.declare_client(alias, client_id)
+        if not derr:
+            defaulted.append(client_id)
+
+    targets = requested + defaulted
+    if not targets:
+        return
+    names = ', '.join(clients_mod.client_name(c) for c in targets)
+    print(f'\n[{alias}] signing in to {names} under the same identity...',
+          file=sys.stderr)
+    _, failed = capture.capture_bound_clients(alias, user_agent=user_agent,
+                                              only=targets)
+    for client_id in defaulted:
+        if clients_mod.client_name(client_id) in failed:
+            clients_mod.forget_client(alias, client_id)
+            print(f'[{alias}] {clients_mod.client_name(client_id)} not '
+                  f'available for this tenant; not added to the profile',
+                  file=sys.stderr)
 
 
 def disable_profile(alias, *, promote_replacement=True):

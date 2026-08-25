@@ -28,7 +28,7 @@ _RECOVERABLE_AAD_CODES = ('AADSTS70043', 'AADSTS700084')
 
 
 def exchange_fresh(config, scope, *, persist, capture_stderr=False,
-                   config_path=None):
+                   config_path=None, token_sink=None):
     """Live AAD exchange against the profile in `config` for `scope`.
 
     Returns ``(result, info)``:
@@ -49,6 +49,12 @@ def exchange_fresh(config, scope, *, persist, capture_stderr=False,
             detected in captured stderr, else ``None``
         ``rotated`` - True iff a new refresh token was written back to
             ``config`` (and to disk when ``persist`` is True)
+
+    ``token_sink`` redirects rotation persistence: when set, the rotated
+    refresh token is handed to it instead of being written to the profile
+    config. Callers minting under a bound client (see ``clients``) pass one
+    so that client's token lands in ``clients.json`` and the profile's FOCI
+    token in ``config`` is left alone.
 
     Side effect: when the response carries a rotated refresh token and
     ``persist`` is True, ``config['OWA_REFRESH_TOKEN']`` is updated and
@@ -131,5 +137,8 @@ def exchange_fresh(config, scope, *, persist, capture_stderr=False,
         config['OWA_REFRESH_TOKEN'] = new_rt
         info['rotated'] = True
         if persist:
-            save_config(config, config_path)
+            if token_sink is not None:
+                token_sink(new_rt)
+            else:
+                save_config(config, config_path)
     return result, info

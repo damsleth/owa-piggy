@@ -38,6 +38,19 @@ KNOWN_AUDIENCES = {
     'devops':     ('https://app.vssps.visualstudio.com',           'Azure DevOps'),
 }
 
+# A profile bound to a non-default client (OWA_CLIENT_ID) can only reach the
+# audiences that client is preauthorized for, so the client implies its own
+# default audience - `--profile nc-ado` means Azure DevOps, `--audience devops`
+# adds nothing. Slots in below the profile's own OWA_DEFAULT_AUDIENCE (an
+# explicit override still wins) and above the graph fallback.
+CLIENT_DEFAULT_AUDIENCE = {
+    # Azure DevOps public client (see the nc-ado profile).
+    '499b84ac-1321-427f-aa17-267ca6975798': 'devops',
+    # Teams web client - the only client authsvc still answers for, so
+    # profiles captured against it exist to talk to Teams.
+    '5e3ce6c0-2b1f-4285-8d4b-75ee78787346': 'teams',
+}
+
 # Tenant-templated audiences. Unlike KNOWN_AUDIENCES, SharePoint's resource
 # URL embeds the tenant's SharePoint name (the `.onmicrosoft.com` prefix,
 # e.g. `norconsult365`), which is NOT the AAD tenant GUID and NOT derivable
@@ -93,14 +106,17 @@ def _resolve_sharepoint_tenant(sharepoint_tenant, profile_sharepoint_tenant):
 
 
 def resolve_audience(audience=None, scope=None, profile_default=None,
-                     sharepoint_tenant=None, profile_sharepoint_tenant=None):
+                     sharepoint_tenant=None, profile_sharepoint_tenant=None,
+                     client_id=None):
     """Compute the scope string to request, honoring precedence:
       1. `scope`                 - explicit --scope value, returned as-is
       2. `audience`              - --audience short name (KNOWN_AUDIENCES or a
                                    tenant-templated name like `sharepoint`)
       3. OWA_DEFAULT_AUDIENCE    - short name or full https URL (env)
       4. `profile_default`       - per-profile config OWA_DEFAULT_AUDIENCE
-      5. DEFAULT_AUDIENCE        - graph
+      5. `client_id`             - CLIENT_DEFAULT_AUDIENCE for a profile bound
+                                   to a non-default client (OWA_CLIENT_ID)
+      6. DEFAULT_AUDIENCE        - graph
 
     Tenant-templated audiences (see KNOWN_AUDIENCE_TEMPLATES) need a
     SharePoint tenant name, resolved from `sharepoint_tenant` (flag),
@@ -146,6 +162,10 @@ def resolve_audience(audience=None, scope=None, profile_default=None,
             profile_default.strip(), sp_tenant, 'profile OWA_DEFAULT_AUDIENCE')
         if pd_err:
             return '', pd_err
+    if aud_url is None and client_id:
+        implied = CLIENT_DEFAULT_AUDIENCE.get(client_id.strip())
+        if implied:
+            aud_url = KNOWN_AUDIENCES[implied][0]
     if aud_url is None:
         aud_url = DEFAULT_AUDIENCE
     return f'{aud_url}/.default openid profile offline_access', ''
