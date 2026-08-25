@@ -644,17 +644,27 @@ def _mint_and_emit(args: argparse.Namespace, *, mode: str) -> int:
     # callers shell out to `owa-piggy` in tight loops and would otherwise
     # risk 429s.
     #
-    # Bypass for: json (needs the fresh refresh_token from the response
-    # which we intentionally don't cache). Other bypass paths (status,
-    # debug, reseed) return earlier in main() and never reach here.
+    # json is served from cache too: a cache hit synthesizes the envelope
+    # from the cached AT + exp and therefore carries no refresh_token.
+    # That was the old reason for bypassing the cache here, but no
+    # consumer wants that field - owa-tools strips it on arrival and
+    # teaminal's notes call it a leak - and paying an AAD round-trip per
+    # call to emit it made every `owa-teams`-style fan-out ~10x slower
+    # (0.03s -> 0.31s a call) while burning quota the cache exists to save.
+    # Other bypass paths (status, debug, reseed) return earlier in main()
+    # and never reach here.
     #
     # Cache key is (tenant, client, scope) AND scoped per-profile via
     # a separate cache.json under each profile dir, so switching profiles
     # or tenants naturally misses the old entries.
-    if mode != "json" and tenant_id:
+    if tenant_id:
         cached_at = get_cached_token(tenant_id, client_id, scope)
         if cached_at:
-            return _emit(cached_at, mode, cache_hit_exp=get_cached_exp(tenant_id, client_id, scope))
+            return _emit(
+                cached_at, mode,
+                cache_hit_exp=get_cached_exp(tenant_id, client_id, scope),
+                scope=scope,
+            )
 
     # exchange_fresh handles config-field extraction, FOCI shape check,
     # stderr capture, AAD-error detection, and rotated-RT persistence.
@@ -769,11 +779,22 @@ def _emit(
     *,
     full_response: dict[str, Any] | None = None,
     cache_hit_exp: float | None = None,
+    scope: str | None = None,
 ) -> int:
     """Print access token in the requested mode. Returns 0."""
     if mode == "json":
-        # json is only used on fresh-exchange path (bypasses cache), so
-        # full_response is always present.
+        # On a cache hit there is no AAD response to echo, so synthesize
+        # the envelope from the cached AT + exp. No refresh_token: the
+        # cache never holds one, and consumers strip it anyway.
+        if full_response is None:
+            exp = int(cache_hit_exp or 0)
+            full_response = {
+                "access_token": access_token,
+                "token_type": "Bearer",
+                "expires_in": max(0, exp - int(time.time())),
+                "expires_at": exp,
+                "scope": scope or "",
+            }
         print(json.dumps(full_response, indent=2))
     elif mode == "env":
         print(f"ACCESS_TOKEN={access_token}")
