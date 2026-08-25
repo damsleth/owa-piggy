@@ -478,9 +478,11 @@ def test_edge_reports_missing_edge_binary(monkeypatch, capsys, tmp_config, clean
     assert "Microsoft Edge not found" in capsys.readouterr().err
 
 
-def test_json_bypasses_cache(monkeypatch, capsys, tmp_config, clean_env, make_jwt):
-    """--json includes a fresh refresh_token we don't cache, so it must
-    always hit AAD even when a valid AT is cached."""
+def test_json_served_from_cache_without_refresh_token(
+    monkeypatch, capsys, tmp_config, clean_env, make_jwt
+):
+    """--json is served from the AT cache like every other mode: no AAD
+    round-trip, and the synthesized envelope carries no refresh_token."""
     import time as _time
 
     from owa_piggy.cache import store_token
@@ -504,10 +506,12 @@ def test_json_bypasses_cache(monkeypatch, capsys, tmp_config, clean_env, make_jw
 
     rc = _run(monkeypatch, ["token", "--json"])
     assert rc == 0
-    assert called["n"] == 1
+    assert called["n"] == 0            # cache hit: AAD never contacted
     out = capsys.readouterr().out
-    assert fresh_token in out
-    assert "1.AQ_rotated" in out
+    assert cached_token in out
+    assert fresh_token not in out
+    assert "refresh_token" not in out  # the cache never holds one
+    assert json.loads(out)["expires_in"] > 0
 
 
 def test_expired_cache_falls_through_to_exchange(
