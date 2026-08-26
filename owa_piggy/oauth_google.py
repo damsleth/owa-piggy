@@ -7,6 +7,8 @@ scraping. `run_local_consent_flow` is the one-time interactive seed;
 `refresh_access_token` is what every later mint/status/reseed call uses.
 """
 
+from __future__ import annotations
+
 import http.server
 import json
 import secrets
