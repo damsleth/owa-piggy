@@ -10,6 +10,24 @@ Releases before v0.12.0 are recorded only in the annotated git tags
 
 ## [Unreleased]
 
+### Fixed
+- **Redirect-based apps (Azure DevOps) can be reseeded headlessly again.**
+  `capture_silent` treated any `login.*` hostname as proof the sidecar session
+  had expired and returned `reauth` on the first sample that saw one. That
+  holds for MSAL SPAs - OWA and Teams refresh in a hidden iframe, so the
+  top-level document never leaves the app - but a redirect-based app passes
+  *through* AAD on the happy path: `dev.azure.com` bounces to
+  `/oauth2/authorize`, to `vssps/_signedin`, back, then through the MSAL v2 leg
+  and back again, all silently in ~5s. The check fired ~0.7s in, so every
+  Azure DevOps rotation reported `capture returned 'reauth'` and asked for an
+  interactive sign-in that changed nothing - the profile's `devops` token then
+  rotted until its 24h SPA hard-expiry (AADSTS700084). The verdict is now
+  based on where the document comes to *rest*: the capture URL's own host held
+  for 1.5s means live, still parked on `login.*` when the budget runs out
+  means `reauth`. The 1.5s hold matters - the ADO chain touches its target
+  host for ~1s mid-flight, and treating that as arrival wipes localStorage on
+  a page about to be replaced.
+
 ### Changed
 - **`token --json` is served from the access-token cache.** `--json` was the
   one mode that bypassed the cache, because its envelope echoes the rotated
