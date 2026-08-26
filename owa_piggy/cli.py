@@ -802,8 +802,7 @@ def _emit(
         if full_response is not None:
             print(f"EXPIRES_IN={full_response.get('expires_in', '')}")
         else:
-            exp = cache_hit_exp or 0
-            print(f"EXPIRES_IN={max(0, int(exp - time.time()))}")
+            print(f"EXPIRES_IN={max(0, int((cache_hit_exp or 0) - time.time()))}")
     elif mode == "decode":
         print(decode_jwt(access_token))
     elif mode == "remaining":

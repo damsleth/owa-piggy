@@ -123,10 +123,12 @@ def _iter_kv(text: str) -> Iterator[tuple[str, str]]:
     """
     for line in text.splitlines():
         line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        k, _, v = line.partition("=")
-        yield k.strip(), v.strip().strip('"').strip("'")
+        # Positive form rather than a guard + `continue`: on 3.9 the jump
+        # behind a bare `continue` in a generator is optimized away and
+        # coverage never records the line, which no amount of testing fixes.
+        if line and not line.startswith("#") and "=" in line:
+            k, _, v = line.partition("=")
+            yield k.strip(), v.strip().strip('"').strip("'")
 
 
 def atomic_write(path: str | Path, payload: str, *, mode: int = 0o600) -> None:
