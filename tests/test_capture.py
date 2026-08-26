@@ -8,6 +8,8 @@ matching, and the small _build_config translator that turns an AAD
 token response into the profile-config KV dict.
 """
 
+import json
+
 import pytest
 
 from owa_piggy import capture
@@ -304,9 +306,12 @@ def test_offscreen_launch_starts_windowless(monkeypatch, tmp_path):
     )
     assert "--no-startup-window" in seen["args"]
     assert "https://outlook.cloud.microsoft" not in seen["args"]
-    # Headless and visible modes still navigate via the command line.
+    # Headless is offscreen too, and skips the URL for a second reason: a
+    # page already loading before Network.enable arrives can finish its
+    # start-up token exchange unwatched.
     capture.launch_edge(tmp_path, 9999, headless=True, url="https://x", offscreen=True)
-    assert "https://x" in seen["args"]
+    assert "https://x" not in seen["args"]
+    # Only the visible sign-in window still navigates from the command line.
     capture.launch_edge(tmp_path, 9999, headless=False, url="https://y")
     assert "https://y" in seen["args"]
 
@@ -400,3 +405,73 @@ def test_settle_host_keeps_polling_through_a_navigation(fast_poll):
 
 def _settle(session, **kw):
     return capture._settle_host(session, log=lambda _m: None, phase="test", **kw)
+
+
+# --- start-up burst capture -----------------------------------------------
+
+
+class _BurstSession:
+    """A page that fires one /token exchange while it boots, the way Teams
+    does. Records every CDP method so a test can assert what did *not* run."""
+
+    def __init__(self, body):
+        self.body = body
+        self.methods = []
+        self.delivered = set()
+
+    def call(self, method, params=None, timeout=None):
+        self.methods.append(method)
+        if method == "Runtime.evaluate":
+            return {"result": {"value": "teams.microsoft.com"}}
+        if method == "Network.getResponseBody":
+            return {"body": self.body}
+        return {}
+
+    def wait_event(self, method_name, predicate=None, *, timeout=60.0):
+        # Each event is handed over once, so a second pass round the capture
+        # loop times out instead of replaying the same response forever.
+        if method_name in self.delivered:
+            raise TimeoutError(method_name)
+        self.delivered.add(method_name)
+        if method_name == "Network.responseReceived":
+            params = {
+                "requestId": "1",
+                "response": {
+                    "url": "https://login.microsoftonline.com/t" + capture.TOKEN_PATH_SUFFIX
+                },
+            }
+        elif method_name == "Network.loadingFinished":
+            params = {"requestId": "1"}
+        else:
+            raise TimeoutError(method_name)
+        assert predicate is None or predicate(params)
+        return params
+
+    def close(self):
+        pass
+
+
+def test_silent_takes_the_startup_exchange_without_reloading(monkeypatch, tmp_path, make_jwt):
+    """Teams keeps no accesstoken entries in localStorage, so the wipe has
+    nothing to remove and the reload gives it no reason to call /token again -
+    its start-up burst is the only exchange on offer. Taking it before the
+    reload also keeps the response body alive; the reload is what frees it."""
+    edge_dir = tmp_path / "edge-profile"
+    edge_dir.mkdir()
+    body = json.dumps(
+        {
+            "refresh_token": "fake-rt-for-tests",
+            "id_token": make_jwt({"tid": "fake-tenant", "aud": "fake-client"}),
+        }
+    )
+    session = _BurstSession(body)
+    monkeypatch.setattr(capture._config, "profile_edge_dir", lambda a: edge_dir)
+    monkeypatch.setattr(capture, "launch_edge", lambda *a, **kw: None)
+    monkeypatch.setattr(capture, "_terminate", lambda proc: None)
+    monkeypatch.setattr(capture, "_open_session", lambda port: session)
+
+    status, captured = capture.capture_silent("nc", headless=True)
+
+    assert status == "ok"
+    assert captured["OWA_REFRESH_TOKEN"] == "fake-rt-for-tests"
+    assert "Page.reload" not in session.methods
