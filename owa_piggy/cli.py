@@ -661,7 +661,8 @@ def _mint_and_emit(args: argparse.Namespace, *, mode: str) -> int:
         cached_at = get_cached_token(tenant_id, client_id, scope)
         if cached_at:
             return _emit(
-                cached_at, mode,
+                cached_at,
+                mode,
                 cache_hit_exp=get_cached_exp(tenant_id, client_id, scope),
                 scope=scope,
             )
