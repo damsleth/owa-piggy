@@ -22,11 +22,26 @@ Releases before v0.12.0 are recorded only in the annotated git tags
   Azure DevOps rotation reported `capture returned 'reauth'` and asked for an
   interactive sign-in that changed nothing - the profile's `devops` token then
   rotted until its 24h SPA hard-expiry (AADSTS700084). The verdict is now
-  based on where the document comes to *rest*: the capture URL's own host held
-  for 1.5s means live, still parked on `login.*` when the budget runs out
-  means `reauth`. The 1.5s hold matters - the ADO chain touches its target
-  host for ~1s mid-flight, and treating that as arrival wipes localStorage on
-  a page about to be replaced.
+  based on where the document comes to *rest*: a host that is not a sign-in
+  page means live, still parked on `login.*` when the budget runs out means
+  `reauth`. The post-reload check keeps the fixed 4s it always had before it
+  starts listening, because a /token response belonging to the document the
+  reload is replacing has its body freed the moment the new one commits -
+  latching onto that one burns the single exchange the capture gets, which is
+  how a first cut at this broke the OWA and Teams captures.
+- **A settle sample that races a navigation no longer aborts the capture.**
+  Teams' `teams.microsoft.com` -> `/v2/` hop makes `Runtime.evaluate` fail with
+  "Inspected target navigated or closed". A navigation is the opposite of
+  settled, so the poll now keeps going instead of surfacing a bare CDP failure.
+- **A bound-client capture with nothing to wipe reports `reauth`, not `error`.**
+  The reload only forces a `/token` because the access token it would have
+  served was removed from localStorage first. If there was none to remove,
+  nothing forces anything and the wait is doomed - and the state perpetuates
+  itself, because a capture that wipes the last entry and then fails leaves
+  zero behind for every run after it. That read as a transient error, so it was
+  retried (two 60s timeouts per reseed) and blamed on the tenant needing a
+  non-headless Edge. It now fails once with the hint that actually fixes it:
+  visit the app once in the sidecar via `owa-piggy edge --profile <alias>`.
 
 ### Changed
 - **`token --json` is served from the access-token cache.** `--json` was the
