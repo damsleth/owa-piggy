@@ -41,7 +41,6 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
 
 from . import config as _config
 from .cdp import CdpError, CdpSession, browser_ws, find_tab
@@ -643,52 +642,61 @@ def _is_login_host(host: str) -> bool:
 
 def _settle_host(
     session: CdpSession,
-    target: str,
     *,
     budget: float,
-    hold: float = 1.5,
+    linger: float = 0.0,
     log: Callable[[str], None],
     phase: str,
 ) -> str:
-    """Poll location.hostname until the page comes to rest, return the host.
+    """Poll location.hostname until the document is somewhere that is not a
+    sign-in page, and return that host ("" if it never navigated).
 
     A login.* host is not a verdict on sight. MSAL SPAs (OWA, Teams) refresh
     in a hidden iframe so the top-level document never leaves the app - but
-    redirect-based apps pass *through* login.* on the happy path. Azure
-    DevOps goes dev.azure.com -> login.microsoftonline.com/oauth2/authorize
-    -> vssps/_signedin -> dev.azure.com -> login again for the MSAL v2 leg
-    -> vssps/_msal/_popup -> back, and the whole chain completes silently in
-    ~5s on a live session. Bailing at the first login.* sample (which is
-    what this used to do, ~0.7s in) declared every single ADO rotation
-    'reauth' even though the sidecar cookies were perfectly good.
+    redirect-based apps reach their landing page *through* AAD. Azure DevOps
+    goes dev.azure.com -> login.microsoftonline.com/oauth2/authorize ->
+    vssps/_signedin -> dev.azure.com -> login again for the MSAL v2 leg ->
+    vssps/_msal/_popup -> back, and the whole chain completes silently in ~5s
+    on a live session. Returning on the first login.* sample (which is what
+    this used to do, ~0.7s in) declared every ADO rotation 'reauth' even
+    though the sidecar cookies were perfectly good. A session that really is
+    dead parks on login.* and stays there, so the caller judges the host this
+    returns - reached the budget still on login.* means reauth.
 
-    So we only judge by where the document is when it stops moving: `target`
-    held for `hold` seconds means live, still on login.* at the budget means
-    the session really is dead. The hold matters - the ADO chain touches
-    dev.azure.com for ~1s mid-flight before bouncing off again, and treating
-    that as arrival wipes localStorage on a page about to be replaced.
+    `linger` keeps polling for at least that long instead of returning on the
+    first usable host. The post-reload caller needs it: a /token response
+    belonging to the document the reload is replacing has its body freed the
+    moment the new one commits, and latching onto that one burns the single
+    exchange the capture gets.
     """
-    deadline = time.monotonic() + budget
-    settled_at: float | None = None
+    start = time.monotonic()
+    deadline = start + budget
     host = ""
     while True:
         now = time.monotonic()
         if now >= deadline:
             break
-        loc = session.call(
-            "Runtime.evaluate",
-            {"expression": "location.hostname", "returnByValue": True},
-        )
+        try:
+            loc = session.call(
+                "Runtime.evaluate",
+                {"expression": "location.hostname", "returnByValue": True},
+            )
+        except CdpError as e:
+            # "Inspected target navigated or closed" - we sampled in the gap
+            # where the old execution context is gone and the new one is not
+            # up yet. Teams hits this reliably on its teams.microsoft.com ->
+            # /v2/ hop. A navigation is the opposite of settled, so keep
+            # polling; a target that is genuinely gone fails the next call
+            # after this loop and lands in capture_silent's CDP handler.
+            log(f"{phase} sample raced a navigation ({e}); still polling")
+            time.sleep(0.3)
+            continue
         # session.call returns the `result` field of the JSON-RPC envelope
         # already, so `loc.result` IS the RemoteObject - no double-deref.
         host = (loc.get("result", {}) or {}).get("value", "") or ""
-        if host and host == target:
-            if settled_at is None:
-                settled_at = now
-            elif now - settled_at >= hold:
-                break
-        else:
-            settled_at = None
+        settled = bool(host) and host != "about:blank" and not _is_login_host(host)
+        if settled and now - start >= linger:
+            break
         time.sleep(0.3)
     log(f"{phase} host: {host or '(blank)'}")
     return host
@@ -780,6 +788,9 @@ def capture_silent(
         return "error", None
 
     session = None
+    # Set once the localStorage wipe has run; distinguishes "wiped nothing"
+    # from "never got that far" in the timeout handler below.
+    wiped: int | None = None
     try:
         # Non-headless booted Edge windowless, so its tab is created already
         # minimized - nothing lingers onscreen while we drive it.
@@ -794,8 +805,7 @@ def capture_silent(
         # and a redirect-based app spends another ~5s bouncing through AAD.
         # Every second short here is a bogus 'headless_blocked' and a
         # fallback that puts a window onscreen for no reason.
-        target = urlsplit(capture_url).hostname or ""
-        host = _settle_host(session, target, budget=20.0, log=log, phase="post-load")
+        host = _settle_host(session, budget=20.0, log=log, phase="post-load")
         if _is_login_host(host):
             log(f"post-load parked on {host} (reauth required)")
             return "reauth", None
@@ -860,8 +870,16 @@ def capture_silent(
         # have a definitive signal that the session is dead. Same settle
         # rule as post-load: passing through login.* is the happy path for
         # a redirect-based app, so only a page that comes to rest there is
-        # a verdict. 12s covers the ~5s ADO chain with headroom.
-        h = _settle_host(session, target, budget=12.0, log=log, phase="post-reload")
+        # a verdict.
+        #
+        # The 4s linger is load-bearing and pre-dates the settle rewrite
+        # (this used to be a fixed 4s poll): it lets the reload commit
+        # before the /token wait starts listening. Return sooner and the
+        # first token-endpoint response we latch onto is the one the dying
+        # document had in flight - Chromium frees its body when the new
+        # document lands, getResponseBody fails, and the capture then waits
+        # out its full timeout for an exchange MSAL has no reason to repeat.
+        h = _settle_host(session, budget=12.0, linger=4.0, log=log, phase="post-reload")
         if _is_login_host(h):
             log(f"post-reload parked on {h} (reauth required, fast-fail)")
             return "reauth", None
@@ -891,6 +909,20 @@ def capture_silent(
                 file=sys.stderr,
             )
         log(f"timeout: {e}")
+        if expected_client_id and wiped == 0:
+            # Nothing was wiped, so nothing forced this refresh: the app had
+            # no access token in localStorage and had no reason to ask for
+            # one. That state is self-perpetuating - a capture that wipes the
+            # one entry and then fails leaves zero behind, so every later run
+            # finds nothing to wipe and times out the same way, forever. It
+            # is not a transient error and retrying is pure waste; one
+            # interactive visit to the app repopulates the cache and the
+            # lever works again, which is exactly what 'reauth' tells the
+            # user to do. Bound clients only - the FOCI path keeps its
+            # existing headless->offscreen fallback ladder, which a 'reauth'
+            # here would short-circuit.
+            log("nothing was wiped, so nothing forced a refresh; treating as reauth")
+            return "reauth", None
         return "error", None
     except (ConnectionError, CdpError, OSError) as e:
         log(f"CDP failure: {e}")
