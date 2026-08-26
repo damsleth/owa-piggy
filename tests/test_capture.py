@@ -332,3 +332,62 @@ def test_silent_timeout_before_session_does_not_blame_the_tenant(monkeypatch, tm
     err = capsys.readouterr().err
     assert "never came up on CDP port" in err
     assert "OWA_CAPTURE_HEADLESS=0" not in err
+
+
+# --- _settle_host ---------------------------------------------------------
+
+
+@pytest.fixture
+def fast_poll(monkeypatch):
+    """Virtual clock: sleep() advances it instead of blocking. The settle
+    logic is all deadline arithmetic, so scripted samples replay in no real
+    time at all."""
+    now = [0.0]
+    monkeypatch.setattr(capture.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(capture.time, "sleep", lambda s: now.__setitem__(0, now[0] + s))
+
+
+class _HostScript:
+    """Replays a scripted sequence of location.hostname samples."""
+
+    def __init__(self, hosts):
+        self.hosts = list(hosts)
+        self.seen = 0
+
+    def call(self, method, params=None):
+        assert method == "Runtime.evaluate"
+        i = min(self.seen, len(self.hosts) - 1)
+        self.seen += 1
+        return {"result": {"value": self.hosts[i]}}
+
+
+def test_settle_host_ignores_a_login_bounce_on_the_way_in(fast_poll):
+    """Azure DevOps reaches dev.azure.com by bouncing through AAD twice, and
+    it touches the target host mid-chain before leaving again. Neither the
+    login hosts nor that early touch may be mistaken for the resting state -
+    that misread declared every ADO rotation 'reauth' at ~0.7s."""
+    chain = (
+        ["about:blank"] * 2
+        + ["login.microsoftonline.com"] * 2
+        + ["spsprodweu4.vssps.visualstudio.com"] * 2
+        + ["dev.azure.com"] * 3  # mid-chain touch, shorter than `hold`
+        + ["login.microsoftonline.com"] * 2
+        + ["dev.azure.com"]  # the real resting state
+    )
+    s = _HostScript(chain)
+    host = _settle(s, "dev.azure.com", budget=30.0, hold=1.5)
+    assert host == "dev.azure.com"
+    # It must have polled past the mid-chain touch, not stopped inside it.
+    assert s.seen > chain.index("login.microsoftonline.com", 6)
+
+
+def test_settle_host_reports_a_dead_session_parked_on_login(fast_poll):
+    """The fast-fail still has to fire: a session whose cookies really are
+    gone sits on login.* forever, and capture_silent maps that to 'reauth'."""
+    s = _HostScript(["about:blank", "login.microsoftonline.com"])
+    host = _settle(s, "outlook.cloud.microsoft", budget=1.0, hold=0.1)
+    assert capture._is_login_host(host)
+
+
+def _settle(session, target, **kw):
+    return capture._settle_host(session, target, log=lambda _m: None, phase="test", **kw)
