@@ -41,6 +41,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from . import config as _config
 from .cdp import CdpError, CdpSession, browser_ws, find_tab
@@ -631,6 +632,68 @@ def capture_signin(
     return _build_config(token_response, email=email, mode="capture")
 
 
+def _is_login_host(host: str) -> bool:
+    """True for the AAD/MSA sign-in hosts a dead session parks on."""
+    return (
+        host.startswith("login.")
+        or host.endswith(".b2clogin.com")
+        or host == "account.microsoft.com"
+    )
+
+
+def _settle_host(
+    session: CdpSession,
+    target: str,
+    *,
+    budget: float,
+    hold: float = 1.5,
+    log: Callable[[str], None],
+    phase: str,
+) -> str:
+    """Poll location.hostname until the page comes to rest, return the host.
+
+    A login.* host is not a verdict on sight. MSAL SPAs (OWA, Teams) refresh
+    in a hidden iframe so the top-level document never leaves the app - but
+    redirect-based apps pass *through* login.* on the happy path. Azure
+    DevOps goes dev.azure.com -> login.microsoftonline.com/oauth2/authorize
+    -> vssps/_signedin -> dev.azure.com -> login again for the MSAL v2 leg
+    -> vssps/_msal/_popup -> back, and the whole chain completes silently in
+    ~5s on a live session. Bailing at the first login.* sample (which is
+    what this used to do, ~0.7s in) declared every single ADO rotation
+    'reauth' even though the sidecar cookies were perfectly good.
+
+    So we only judge by where the document is when it stops moving: `target`
+    held for `hold` seconds means live, still on login.* at the budget means
+    the session really is dead. The hold matters - the ADO chain touches
+    dev.azure.com for ~1s mid-flight before bouncing off again, and treating
+    that as arrival wipes localStorage on a page about to be replaced.
+    """
+    deadline = time.monotonic() + budget
+    settled_at: float | None = None
+    host = ""
+    while True:
+        now = time.monotonic()
+        if now >= deadline:
+            break
+        loc = session.call(
+            "Runtime.evaluate",
+            {"expression": "location.hostname", "returnByValue": True},
+        )
+        # session.call returns the `result` field of the JSON-RPC envelope
+        # already, so `loc.result` IS the RemoteObject - no double-deref.
+        host = (loc.get("result", {}) or {}).get("value", "") or ""
+        if host and host == target:
+            if settled_at is None:
+                settled_at = now
+            elif now - settled_at >= hold:
+                break
+        else:
+            settled_at = None
+        time.sleep(0.3)
+    log(f"{phase} host: {host or '(blank)'}")
+    return host
+
+
 def capture_silent(
     alias: str,
     *,
@@ -724,41 +787,19 @@ def capture_silent(
         session.call("Page.enable", {})
         session.call("Network.enable", {})
 
-        # Poll location.hostname while Edge navigates. The page often goes
-        # about:blank -> outlook.cloud.microsoft -> (maybe) login.* over a
-        # few hundred ms; sampling once is racy and misses login redirects
-        # that resolve a hair after the sample, leaving us to time out on
-        # the /token wait instead of returning a clean 'reauth'.
-        host = ""
-        # 15s, not the historical 7s: Edge sidecar profile dirs grow to
-        # ~1GB and the scheduled run launches them back to back, so a cold
-        # start regularly needs >7s to resolve the first navigation. Every
-        # second short here is a bogus 'headless_blocked' and a fallback
-        # that puts a window onscreen for no reason.
-        host_deadline = time.monotonic() + 15.0
-        while time.monotonic() < host_deadline:
-            loc = session.call(
-                "Runtime.evaluate",
-                {
-                    "expression": "location.hostname",
-                    "returnByValue": True,
-                },
-            )
-            # session.call returns the `result` field of the JSON-RPC envelope
-            # already, so `loc.result` IS the RemoteObject - no double-deref.
-            host = (loc.get("result", {}) or {}).get("value", "") or ""
-            if (
-                host.startswith("login.")
-                or host.endswith(".b2clogin.com")
-                or host == "account.microsoft.com"
-            ):
-                log(f"post-load host: {host} (reauth required)")
-                return "reauth", None
-            if host and host != "about:blank":
-                log(f"post-load host: {host}")
-                break
-            time.sleep(0.3)
-        else:
+        # Wait for the navigation (and any auth redirect chain) to come to
+        # rest. 20s, not the historical 7s: Edge sidecar profile dirs grow
+        # to ~1GB and the scheduled run launches them back to back, so a
+        # cold start regularly needs >7s to resolve the first navigation,
+        # and a redirect-based app spends another ~5s bouncing through AAD.
+        # Every second short here is a bogus 'headless_blocked' and a
+        # fallback that puts a window onscreen for no reason.
+        target = urlsplit(capture_url).hostname or ""
+        host = _settle_host(session, target, budget=20.0, log=log, phase="post-load")
+        if _is_login_host(host):
+            log(f"post-load parked on {host} (reauth required)")
+            return "reauth", None
+        if not host or host == "about:blank":
             # Hostname never populated - Edge is stuck on a blank document
             # for 7+ seconds. Causes we have actually seen:
             #   - Edge launch was abnormally slow (cold cache, GPU init hang)
@@ -770,7 +811,7 @@ def capture_silent(
             # silently returning '' for every poll, so this branch fired
             # on every run). Keep the status name for backwards-compat
             # with reseed.py's fallback ladder.
-            log("post-load host stayed empty after 15s")
+            log("post-load host stayed empty after 20s")
             if headless:
                 return "headless_blocked", None
             # Non-headless and still no navigation: cookies are almost
@@ -814,28 +855,16 @@ def capture_silent(
         # Fast-fail reauth check. If MSAL's silent refresh attempt fails
         # (no usable RT in localStorage, sidecar cookies past their
         # lifetime, etc.) the SPA redirects to login.microsoftonline.com
-        # within a couple of seconds of the reload. Without this poll the
-        # caller waits the full /token timeout (20s) for a token request
-        # that will never come, even though we have a definitive signal
-        # that the session is dead within ~3s.
-        post_reload_deadline = time.monotonic() + 4.0
-        while time.monotonic() < post_reload_deadline:
-            time.sleep(0.5)
-            loc = session.call(
-                "Runtime.evaluate",
-                {
-                    "expression": "location.hostname",
-                    "returnByValue": True,
-                },
-            )
-            h = (loc.get("result", {}) or {}).get("value", "") or ""
-            if (
-                h.startswith("login.")
-                or h.endswith(".b2clogin.com")
-                or h == "account.microsoft.com"
-            ):
-                log(f"post-reload host: {h} (reauth required, fast-fail)")
-                return "reauth", None
+        # and stays there. Without this the caller waits the full /token
+        # timeout for a token request that will never come, even though we
+        # have a definitive signal that the session is dead. Same settle
+        # rule as post-load: passing through login.* is the happy path for
+        # a redirect-based app, so only a page that comes to rest there is
+        # a verdict. 12s covers the ~5s ADO chain with headroom.
+        h = _settle_host(session, target, budget=12.0, log=log, phase="post-reload")
+        if _is_login_host(h):
+            log(f"post-reload parked on {h} (reauth required, fast-fail)")
+            return "reauth", None
 
         deadline = time.monotonic() + timeout
         log(
