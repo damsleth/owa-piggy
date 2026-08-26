@@ -348,7 +348,8 @@ def fast_poll(monkeypatch):
 
 
 class _HostScript:
-    """Replays a scripted sequence of location.hostname samples."""
+    """Replays a scripted sequence of location.hostname samples. A sample of
+    None raises the CDP error a mid-navigation Runtime.evaluate gets."""
 
     def __init__(self, hosts):
         self.hosts = list(hosts)
@@ -358,36 +359,44 @@ class _HostScript:
         assert method == "Runtime.evaluate"
         i = min(self.seen, len(self.hosts) - 1)
         self.seen += 1
+        if self.hosts[i] is None:
+            raise capture.CdpError(method, {"message": "Inspected target navigated or closed"})
         return {"result": {"value": self.hosts[i]}}
 
 
-def test_settle_host_ignores_a_login_bounce_on_the_way_in(fast_poll):
-    """Azure DevOps reaches dev.azure.com by bouncing through AAD twice, and
-    it touches the target host mid-chain before leaving again. Neither the
-    login hosts nor that early touch may be mistaken for the resting state -
-    that misread declared every ADO rotation 'reauth' at ~0.7s."""
-    chain = (
-        ["about:blank"] * 2
-        + ["login.microsoftonline.com"] * 2
-        + ["spsprodweu4.vssps.visualstudio.com"] * 2
-        + ["dev.azure.com"] * 3  # mid-chain touch, shorter than `hold`
-        + ["login.microsoftonline.com"] * 2
-        + ["dev.azure.com"]  # the real resting state
+def test_settle_host_passes_through_a_login_bounce(fast_poll):
+    """Azure DevOps reaches dev.azure.com *through* AAD, so a login host on
+    the way in is the happy path, not a dead session - reading it as one
+    declared every ADO rotation 'reauth' at ~0.7s."""
+    s = _HostScript(
+        ["about:blank", "login.microsoftonline.com", "spsprodweu4.vssps.visualstudio.com"]
     )
-    s = _HostScript(chain)
-    host = _settle(s, "dev.azure.com", budget=30.0, hold=1.5)
-    assert host == "dev.azure.com"
-    # It must have polled past the mid-chain touch, not stopped inside it.
-    assert s.seen > chain.index("login.microsoftonline.com", 6)
+    assert _settle(s, budget=30.0) == "spsprodweu4.vssps.visualstudio.com"
 
 
 def test_settle_host_reports_a_dead_session_parked_on_login(fast_poll):
     """The fast-fail still has to fire: a session whose cookies really are
     gone sits on login.* forever, and capture_silent maps that to 'reauth'."""
     s = _HostScript(["about:blank", "login.microsoftonline.com"])
-    host = _settle(s, "outlook.cloud.microsoft", budget=1.0, hold=0.1)
-    assert capture._is_login_host(host)
+    assert capture._is_login_host(_settle(s, budget=1.0))
 
 
-def _settle(session, target, **kw):
-    return capture._settle_host(session, target, log=lambda _m: None, phase="test", **kw)
+def test_settle_host_lingers_past_an_in_flight_reload(fast_poll):
+    """The post-reload caller must not start listening while the old document
+    is still there: its in-flight /token has its body freed when the new one
+    commits, and latching onto that burns the one exchange we get."""
+    s = _HostScript(["teams.microsoft.com"])
+    assert _settle(s, budget=12.0, linger=4.0) == "teams.microsoft.com"
+    assert s.seen >= 4.0 / 0.3  # polled through the linger, not returned at once
+
+
+def test_settle_host_keeps_polling_through_a_navigation(fast_poll):
+    """Teams' teams.microsoft.com -> /v2/ hop makes Runtime.evaluate throw
+    mid-flight. A navigation is the opposite of settled, so that must not
+    abort the capture - it used to surface as a bare CDP failure."""
+    s = _HostScript([None, None, "teams.microsoft.com"])
+    assert _settle(s, budget=12.0) == "teams.microsoft.com"
+
+
+def _settle(session, **kw):
+    return capture._settle_host(session, log=lambda _m: None, phase="test", **kw)
