@@ -506,7 +506,7 @@ def test_json_served_from_cache_without_refresh_token(
 
     rc = _run(monkeypatch, ["token", "--json"])
     assert rc == 0
-    assert called["n"] == 0            # cache hit: AAD never contacted
+    assert called["n"] == 0  # cache hit: AAD never contacted
     out = capsys.readouterr().out
     assert cached_token in out
     assert fresh_token not in out
