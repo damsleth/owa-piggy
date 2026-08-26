@@ -56,6 +56,12 @@ OWA_URL = "https://outlook.cloud.microsoft"
 # use different login hosts but the same /oauth2/v2.0/token suffix.
 TOKEN_PATH_SUFFIX = "/oauth2/v2.0/token"
 
+# How long to listen for the app's own start-up token exchange before
+# falling back to forcing one. Covers the two bursts we have measured:
+# Teams fires its /token calls 0.8-2.3s after load, and the Azure DevOps
+# redirect chain redeems its auth code at ~3s.
+_STARTUP_BURST_WINDOW = 10.0
+
 # Edge binaries we know about. macOS first since this tool is macOS-first;
 # the Linux paths exist for the rare dev who runs the test suite on Linux.
 _EDGE_CANDIDATES = (
@@ -150,10 +156,18 @@ def launch_edge(
     else:
         args += ["--window-position=100,100", "--window-size=900,750"]
     launch_url: str | None = url
-    if offscreen and not headless:
-        # --no-startup-window and a URL argument contradict each other:
-        # Chromium would open a window for the URL, which is the flash we
-        # are trying to avoid. The caller navigates over CDP instead.
+    if offscreen:
+        # Two reasons the offscreen modes navigate over CDP instead:
+        #
+        # Non-headless: --no-startup-window and a URL argument contradict
+        # each other; Chromium would open a window for the URL, which is
+        # the flash we are trying to avoid.
+        #
+        # Either: a page that starts loading from the command line is
+        # already loading before we attach, and an app that mints its
+        # tokens while booting (Teams does, 0.8-2.3s in) can finish the
+        # whole exchange before Network.enable arrives. Attaching first and
+        # navigating second is the only way to be sure we see it.
         launch_url = None
     if user_agent:
         # Spoof the UA before any navigation so AAD's first request hits
@@ -416,9 +430,12 @@ def _open_session(port: int) -> CdpSession:
     return CdpSession(port, tab["webSocketDebuggerUrl"])
 
 
-def _open_parked_session(port: int, url: str, log: Callable[[str], None]) -> CdpSession:
+def _open_parked_session(port: int, log: Callable[[str], None]) -> CdpSession:
     """Open the capture tab for offscreen non-headless mode without
     letting its window sit onscreen.
+
+    The tab is created blank; the caller navigates it once it has the
+    Network domain enabled, so no part of the page load happens unwatched.
 
     Edge was launched with --no-startup-window, so nothing is visible
     during its ~1.3s cold start. We attach to the browser-level CDP
@@ -430,7 +447,7 @@ def _open_parked_session(port: int, url: str, log: Callable[[str], None]) -> Cdp
     """
     browser = CdpSession(port, browser_ws(port, timeout=20.0))
     try:
-        target_id = browser.call("Target.createTarget", {"url": url})["targetId"]
+        target_id = browser.call("Target.createTarget", {"url": "about:blank"})["targetId"]
         try:
             wid = browser.call("Browser.getWindowForTarget", {"targetId": target_id})["windowId"]
             # Shove it off the edge first: that's a 1ms window-server move,
@@ -788,15 +805,16 @@ def capture_silent(
         return "error", None
 
     session = None
-    # Set once the localStorage wipe has run; distinguishes "wiped nothing"
-    # from "never got that far" in the timeout handler below.
-    wiped: int | None = None
     try:
         # Non-headless booted Edge windowless, so its tab is created already
         # minimized - nothing lingers onscreen while we drive it.
-        session = _open_session(port) if headless else _open_parked_session(port, capture_url, log)
+        session = _open_session(port) if headless else _open_parked_session(port, log)
         session.call("Page.enable", {})
         session.call("Network.enable", {})
+        # Only now navigate. Edge was launched blank precisely so that the
+        # whole page load - including any token exchange the app makes while
+        # booting - happens with us already listening.
+        session.call("Page.navigate", {"url": capture_url})
 
         # Wait for the navigation (and any auth redirect chain) to come to
         # rest. 20s, not the historical 7s: Edge sidecar profile dirs grow
@@ -830,11 +848,49 @@ def capture_silent(
             # Silent capture can't do MFA - kick the user to setup.
             return "reauth", None
 
-        # Wipe cached access tokens so MSAL has to round-trip /token.
-        # The RT and idToken entries are kept so MSAL knows who the
-        # session belongs to. In encrypted-cache mode the values are
-        # opaque AES-GCM blobs but the keys are still readable, so the
-        # substring filter on key names works regardless.
+        # Take the app's own start-up exchange if it makes one. Plenty of
+        # SPAs mint everything they need in a burst while booting - Teams
+        # fires seven /token calls between 0.8s and 2.3s after load, and the
+        # ADO redirect chain redeems its code at ~3s - and one of those
+        # responses is as good a rotated refresh token as any we could force.
+        # Ordering is the whole point: consumed here, before the reload, the
+        # bodies are still alive. The reload is what frees them, which is how
+        # a token we had already seen turned into a 60s wait for one that
+        # never came again.
+        #
+        # It also rescues apps the wipe cannot force at all. Teams keeps no
+        # accesstoken entries in localStorage, so there is nothing to remove
+        # and the reload gives it no reason to re-acquire: it serves what it
+        # already has and never touches /token again. Its start-up burst is
+        # the only exchange on offer, and this is the only place we can see
+        # it.
+        burst = None
+        with contextlib.suppress(TimeoutError):
+            burst = _capture_token_response(
+                session,
+                deadline=time.monotonic() + _STARTUP_BURST_WINDOW,
+                log=log,
+                tick=tick,
+                expected_client_id=expected_client_id,
+            )
+        if burst is not None:
+            try:
+                started = _build_config(burst, email=None, mode="capture")
+            except RuntimeError as e:
+                # A /token response can carry a refresh_token without an
+                # id_token to name its tenant. Not fatal - fall through and
+                # force a proper refresh.
+                log(f"start-up token unusable ({e}); forcing a refresh instead")
+            else:
+                log("captured the app's start-up token exchange; no reload needed")
+                return "ok", started
+
+        # Nothing on start-up: force a refresh instead. Wipe cached access
+        # tokens so MSAL has to round-trip /token. The RT and idToken entries
+        # are kept so MSAL knows who the session belongs to. In
+        # encrypted-cache mode the values are opaque AES-GCM blobs but the
+        # keys are still readable, so the substring filter on key names works
+        # regardless.
         wipe = session.call(
             "Runtime.evaluate",
             {
@@ -909,20 +965,6 @@ def capture_silent(
                 file=sys.stderr,
             )
         log(f"timeout: {e}")
-        if expected_client_id and wiped == 0:
-            # Nothing was wiped, so nothing forced this refresh: the app had
-            # no access token in localStorage and had no reason to ask for
-            # one. That state is self-perpetuating - a capture that wipes the
-            # one entry and then fails leaves zero behind, so every later run
-            # finds nothing to wipe and times out the same way, forever. It
-            # is not a transient error and retrying is pure waste; one
-            # interactive visit to the app repopulates the cache and the
-            # lever works again, which is exactly what 'reauth' tells the
-            # user to do. Bound clients only - the FOCI path keeps its
-            # existing headless->offscreen fallback ladder, which a 'reauth'
-            # here would short-circuit.
-            log("nothing was wiped, so nothing forced a refresh; treating as reauth")
-            return "reauth", None
         return "error", None
     except (ConnectionError, CdpError, OSError) as e:
         log(f"CDP failure: {e}")

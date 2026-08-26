@@ -33,15 +33,29 @@ Releases before v0.12.0 are recorded only in the annotated git tags
   Teams' `teams.microsoft.com` -> `/v2/` hop makes `Runtime.evaluate` fail with
   "Inspected target navigated or closed". A navigation is the opposite of
   settled, so the poll now keeps going instead of surfacing a bare CDP failure.
-- **A bound-client capture with nothing to wipe reports `reauth`, not `error`.**
-  The reload only forces a `/token` because the access token it would have
-  served was removed from localStorage first. If there was none to remove,
-  nothing forces anything and the wait is doomed - and the state perpetuates
-  itself, because a capture that wipes the last entry and then fails leaves
-  zero behind for every run after it. That read as a transient error, so it was
-  retried (two 60s timeouts per reseed) and blamed on the tenant needing a
-  non-headless Edge. It now fails once with the hint that actually fixes it:
-  visit the app once in the sidecar via `owa-piggy edge --profile <alias>`.
+
+### Added
+- **The capture takes the app's own start-up token exchange when it makes
+  one.** Plenty of SPAs mint everything they need while booting - Teams fires
+  seven `/token` calls between 0.8s and 2.3s after load, and the Azure DevOps
+  redirect chain redeems its auth code at ~3s - and one of those responses is
+  as good a rotated refresh token as any the reload could force. It is now
+  taken before the wipe-and-reload, which is both faster (OWA and ADO usually
+  finish here now) and safer, since the reload is what frees the response
+  bodies of anything still in flight.
+
+  This is the only exchange Teams offers. It keeps no `accesstoken` entries in
+  localStorage, so the wipe has nothing to remove and the reload gives it no
+  reason to re-acquire - it serves what it already has. Teams rotation is
+  therefore opportunistic: it lands whenever Teams' own tokens are close
+  enough to expiry that it refreshes during the capture, which on the hourly
+  schedule is often enough to stay well inside the 24h SPA cap.
+- **Nothing loads before the capture is listening.** The offscreen modes now
+  launch Edge blank and navigate over CDP once `Network.enable` is up. A page
+  handed to Edge on the command line starts loading immediately, so an app
+  that authenticates while booting could finish the whole exchange before the
+  Network domain was enabled - unobservable, and indistinguishable from an app
+  that never refreshed.
 
 ### Changed
 - **`token --json` is served from the access-token cache.** `--json` was the
