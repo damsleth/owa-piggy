@@ -268,3 +268,49 @@ def test_run_dashboard_falls_back_to_plain_when_not_a_tty(monkeypatch):
     rc = profile_tui.run_dashboard(audience="graph")
     assert rc == 0
     assert calls == [{"audience": "graph", "scope": None, "sharepoint_tenant": None}]
+
+
+# --- capture-mode column + 'h' pin -------------------------------------
+
+
+def test_headless_cell_marks_unpinned_with_a_tilde():
+    auto, _ = profile_tui._headless_cell({})
+    pinned, _ = profile_tui._headless_cell(
+        {"OWA_CAPTURE_HEADLESS": "1", "OWA_CAPTURE_HEADLESS_AT": ""}
+    )
+    visible, color = profile_tui._headless_cell(
+        {"OWA_CAPTURE_HEADLESS": "0", "OWA_CAPTURE_HEADLESS_AT": ""}
+    )
+    assert auto == "~headless"
+    assert pinned == "headless"
+    assert (visible, color) == ("visible", profile_tui.YELLOW)
+
+
+def test_toggle_headless_pins_the_opposite_mode(tmp_path, monkeypatch):
+    """'h' flips the mode and writes an empty stamp, which is how reseed
+    tells a deliberate choice from its own 24h preference."""
+    from owa_piggy import config as config_mod
+
+    monkeypatch.setattr(config_mod, "ROOT_DIR", tmp_path)
+    monkeypatch.delenv("OWA_CAPTURE_HEADLESS", raising=False)
+    path = config_mod.profile_config_path("work")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('OWA_REFRESH_TOKEN="fake-rt-for-tests"\n')
+
+    msg = profile_tui._action_toggle_headless("work")
+    assert "visible" in msg
+    cfg = profile_tui._profile_config("work")
+    assert cfg["OWA_CAPTURE_HEADLESS"] == "0"
+    assert cfg["OWA_CAPTURE_HEADLESS_AT"] == ""
+    # Unrelated keys survive the in-place update.
+    assert cfg["OWA_REFRESH_TOKEN"] == "fake-rt-for-tests"
+
+    msg = profile_tui._action_toggle_headless("work")
+    assert "headless" in msg
+    assert profile_tui._profile_config("work")["OWA_CAPTURE_HEADLESS"] == "1"
+
+
+def test_toggle_headless_refuses_when_env_overrides(monkeypatch):
+    monkeypatch.setenv("OWA_CAPTURE_HEADLESS", "0")
+    msg = profile_tui._action_toggle_headless("work")
+    assert "environment" in msg
