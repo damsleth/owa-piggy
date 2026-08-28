@@ -9,6 +9,7 @@ token response into the profile-config KV dict.
 """
 
 import json
+import os
 
 import pytest
 
@@ -283,13 +284,22 @@ def test_park_window_survives_cdp_failure():
     assert logged and "could not park window" in logged[0]
 
 
+class _FakeProc:
+    """Stand-in for Popen: launch_edge registers its Edge profile lock by pid."""
+
+    pid = 9001
+
+
 def test_offscreen_launch_keeps_renderer_hot(monkeypatch, tmp_path):
     """The offscreen window gets minimized, so the renderer must be kept at
     full priority or the /token round-trip stalls in an occluded window."""
     seen = {}
     monkeypatch.setattr(capture, "find_edge", lambda: "/usr/bin/edge")
-    monkeypatch.setattr(capture.subprocess, "Popen", lambda args, **kw: seen.update(args=args))
+    monkeypatch.setattr(
+        capture.subprocess, "Popen", lambda args, **kw: seen.update(args=args) or _FakeProc()
+    )
     capture.launch_edge(tmp_path, 9999, headless=False, url="https://x", offscreen=True)
+    capture._release_edge_lock(_FakeProc.pid)
     assert "--disable-backgrounding-occluded-windows" in seen["args"]
     assert "--disable-renderer-backgrounding" in seen["args"]
 
@@ -300,19 +310,26 @@ def test_offscreen_launch_starts_windowless(monkeypatch, tmp_path):
     --no-startup-window, and no URL argument that would undo it."""
     seen = {}
     monkeypatch.setattr(capture, "find_edge", lambda: "/usr/bin/edge")
-    monkeypatch.setattr(capture.subprocess, "Popen", lambda args, **kw: seen.update(args=args))
-    capture.launch_edge(
-        tmp_path, 9999, headless=False, url="https://outlook.cloud.microsoft", offscreen=True
+    monkeypatch.setattr(
+        capture.subprocess, "Popen", lambda args, **kw: seen.update(args=args) or _FakeProc()
     )
+
+    def launch(**kw):
+        # Real callers pair every launch with _terminate, which is what frees
+        # the profile lock; these argv-only launches have to free it by hand.
+        capture.launch_edge(tmp_path, 9999, **kw)
+        capture._release_edge_lock(_FakeProc.pid)
+
+    launch(headless=False, url="https://outlook.cloud.microsoft", offscreen=True)
     assert "--no-startup-window" in seen["args"]
     assert "https://outlook.cloud.microsoft" not in seen["args"]
     # Headless is offscreen too, and skips the URL for a second reason: a
     # page already loading before Network.enable arrives can finish its
     # start-up token exchange unwatched.
-    capture.launch_edge(tmp_path, 9999, headless=True, url="https://x", offscreen=True)
+    launch(headless=True, url="https://x", offscreen=True)
     assert "https://x" not in seen["args"]
     # Only the visible sign-in window still navigates from the command line.
-    capture.launch_edge(tmp_path, 9999, headless=False, url="https://y")
+    launch(headless=False, url="https://y")
     assert "https://y" in seen["args"]
 
 
@@ -475,3 +492,28 @@ def test_silent_takes_the_startup_exchange_without_reloading(monkeypatch, tmp_pa
     assert status == "ok"
     assert captured["OWA_REFRESH_TOKEN"] == "fake-rt-for-tests"
     assert "Page.reload" not in session.methods
+
+
+def test_edge_lock_is_exclusive_and_released(monkeypatch, tmp_path):
+    """Two callers must not hold one Edge profile dir at once. Without this,
+    Chromium silently hands the second launch's command line to the first
+    browser over SingletonSocket and exits without binding the requested
+    --remote-debugging-port, which surfaces as a phantom "CDP not ready:
+    Connection refused" and sends the reseed down its whole retry ladder
+    chasing a fault that is not there."""
+    first = capture._acquire_edge_lock(tmp_path)
+    assert (tmp_path / ".owa-lock").exists()
+
+    # Contended: give up with a message that names the real cause.
+    monkeypatch.setattr(capture, "_EDGE_LOCK_WAIT", 0.0)
+    with pytest.raises(RuntimeError, match="another process is using"):
+        capture._acquire_edge_lock(tmp_path)
+
+    # A None proc must not disturb the lock table.
+    capture._EDGE_LOCKS[4242] = first
+    capture._terminate(None)
+    assert 4242 in capture._EDGE_LOCKS
+
+    # Released, so the next caller gets its turn.
+    capture._release_edge_lock(4242)
+    os.close(capture._acquire_edge_lock(tmp_path))

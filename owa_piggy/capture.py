@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import base64
 import contextlib
+import fcntl
 import json
 import os
 import shutil
@@ -89,6 +90,69 @@ def find_free_port() -> int:
         s.bind(("127.0.0.1", 0))
         port: int = s.getsockname()[1]
         return port
+
+
+# How long to wait for another owa-piggy to let go of an Edge profile dir.
+# Generous because the holder may be mid-capture: a cold start plus a
+# redirect chain plus the start-up burst window is comfortably 30s.
+_EDGE_LOCK_WAIT = 60.0
+
+# pid -> lock fd. A dict rather than an attribute stashed on the Popen so
+# mypy stays happy without a cast.
+_EDGE_LOCKS: dict[int, int] = {}
+
+
+def _acquire_edge_lock(edge_dir: Path) -> int:
+    """Take an exclusive flock on `<edge_dir>/.owa-lock`, waiting up to
+    `_EDGE_LOCK_WAIT` for whoever holds it. Returns the fd to close on
+    release.
+
+    Chromium refuses to run two browsers against one --user-data-dir: the
+    second process finds `SingletonLock`, hands its command line to the
+    first over `SingletonSocket`, and exits - *without* honouring its own
+    --remote-debugging-port. The port then never binds and we report a
+    phantom "CDP not ready: Connection refused", which is indistinguishable
+    from Edge being broken and sent past reseeds down the whole retry ladder
+    (twice headless, then a pointless non-headless fallback) hunting a fault
+    that was never there. Observed in the wild with a `yaams ingest` loop
+    calling `owa-piggy token --profile nc` back to back, which kept that
+    profile's dir occupied for 20+ minutes.
+
+    So serialize on our own lock first. Waiting for a turn is the correct
+    behaviour anyway - the second caller wants the same browser profile, and
+    once the first is done it is free.
+    """
+    fd = os.open(edge_dir / ".owa-lock", os.O_CREAT | os.O_RDWR, 0o600)
+    deadline = time.monotonic() + _EDGE_LOCK_WAIT
+    waited = False
+    while True:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return fd
+        except OSError:
+            if time.monotonic() >= deadline:
+                os.close(fd)
+                raise RuntimeError(
+                    f"another process is using the Edge profile at {edge_dir} "
+                    f"(waited {_EDGE_LOCK_WAIT:.0f}s). Check for a stray "
+                    f"'owa-piggy token' or a leftover headless Edge on that dir."
+                ) from None
+            if not waited:
+                # Surface the wait: silence here looks like a hang.
+                print(
+                    f"waiting for another process to release {edge_dir.name}...",
+                    file=sys.stderr,
+                )
+                waited = True
+            time.sleep(0.25)
+
+
+def _release_edge_lock(pid: int) -> None:
+    fd = _EDGE_LOCKS.pop(pid, None)
+    if fd is not None:
+        # Closing the fd drops the flock; no explicit LOCK_UN needed.
+        with contextlib.suppress(OSError):
+            os.close(fd)
 
 
 def launch_edge(
@@ -177,13 +241,24 @@ def launch_edge(
         args.append(f"--user-agent={user_agent}")
     if launch_url:
         args.append(launch_url)
+    # Held until `_terminate`, so a concurrent owa-piggy waits for a real
+    # turn instead of being silently singleton-forwarded into a browser it
+    # cannot reach. Raises if the holder never lets go.
+    lock_fd = _acquire_edge_lock(edge_dir)
     # Detach stdout/stderr so a slow CDP consumer can't backpressure
     # Edge into a hang; Edge's own crash logs land in the userdata dir.
-    return subprocess.Popen(
-        args,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    try:
+        proc = subprocess.Popen(
+            args,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.close(lock_fd)
+        raise
+    _EDGE_LOCKS[proc.pid] = lock_fd
+    return proc
 
 
 def open_edge(alias: str, *, url: str | None = None) -> tuple[subprocess.Popen[bytes], Path]:
@@ -237,17 +312,22 @@ def open_edge(alias: str, *, url: str | None = None) -> tuple[subprocess.Popen[b
 def _terminate(proc: subprocess.Popen[bytes] | None) -> None:
     if proc is None:
         return
-    if proc.poll() is not None:
-        return
     try:
-        proc.terminate()
-    except OSError:
-        return
-    try:
-        proc.wait(timeout=3)
-    except subprocess.TimeoutExpired:
-        with contextlib.suppress(OSError):
-            proc.kill()
+        if proc.poll() is not None:
+            return
+        try:
+            proc.terminate()
+        except OSError:
+            return
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            with contextlib.suppress(OSError):
+                proc.kill()
+    finally:
+        # Only after Edge is actually down: releasing while it still holds
+        # the profile dir hands the next caller the same forwarding trap.
+        _release_edge_lock(proc.pid)
 
 
 # --- Pure helpers (unit-tested) --------------------------------------------
