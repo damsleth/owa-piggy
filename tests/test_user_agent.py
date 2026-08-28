@@ -10,7 +10,7 @@ def test_launch_edge_appends_user_agent_flag(monkeypatch, tmp_path):
     seen = {}
 
     class _FakeProc:
-        pass
+        pid = 9001  # launch_edge registers the profile lock by pid
 
     def _fake_popen(args, **kwargs):
         seen["args"] = args
@@ -19,6 +19,7 @@ def test_launch_edge_appends_user_agent_flag(monkeypatch, tmp_path):
     monkeypatch.setattr(capture, "find_edge", lambda: "/usr/bin/edge")
     monkeypatch.setattr(capture.subprocess, "Popen", _fake_popen)
     launch_edge(tmp_path, 9999, headless=False, url="https://x", user_agent="UA/Spoof-1.0")
+    capture._release_edge_lock(9001)
     ua_flag = "--user-agent=UA/Spoof-1.0"
     assert ua_flag in seen["args"]
     # UA flag must come before the URL positional so Edge sees it on first nav.
@@ -32,13 +33,14 @@ def test_launch_edge_omits_ua_flag_when_unset(monkeypatch, tmp_path):
         seen["args"] = args
 
         class _P:
-            pass
+            pid = 9001  # launch_edge registers the profile lock by pid
 
         return _P()
 
     monkeypatch.setattr(capture, "find_edge", lambda: "/usr/bin/edge")
     monkeypatch.setattr(capture.subprocess, "Popen", _fake_popen)
     launch_edge(tmp_path, 9999, headless=True, url="https://x")
+    capture._release_edge_lock(9001)
     assert not any(a.startswith("--user-agent=") for a in seen["args"])
 
 
@@ -111,7 +113,7 @@ def test_launch_edge_binds_debugging_to_loopback(monkeypatch, tmp_path):
     seen = {}
 
     class _P:
-        pass
+        pid = 9001  # launch_edge registers the profile lock by pid
 
     def _fake_popen(args, **kwargs):
         seen["args"] = args
@@ -121,5 +123,6 @@ def test_launch_edge_binds_debugging_to_loopback(monkeypatch, tmp_path):
     monkeypatch.setattr(capture.subprocess, "Popen", _fake_popen)
 
     launch_edge(tmp_path, 9999, headless=True, url="https://x")
+    capture._release_edge_lock(9001)
 
     assert "--remote-debugging-address=127.0.0.1" in seen["args"]
