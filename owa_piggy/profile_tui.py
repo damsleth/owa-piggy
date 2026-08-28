@@ -13,14 +13,19 @@ borrowed.
 
 from __future__ import annotations
 
+import os
+import subprocess
 import sys
 from typing import Any, Callable, TypeVar
 
 from .cache import clear_cache
 from .config import (
     list_profiles,
+    load_config,
     load_profiles_conf,
+    profile_config_path,
     profile_dir,
+    save_config,
     validate_alias,
 )
 from .launchd import (
@@ -39,7 +44,7 @@ from .profiles import (
     enable_profile,
     set_default_profile,
 )
-from .reseed import do_reseed, do_reseed_all
+from .reseed import _headless_pinned, _headless_pref, do_reseed, do_reseed_all
 
 # --- ANSI escapes ------------------------------------------------------
 # Named for readability; otherwise the picker is mostly punctuation.
@@ -327,6 +332,78 @@ def _action_open_edge(current: str) -> str:
     return f"opened Edge for {current!r}; sign in, CLOSE Edge, then reseed (r)."
 
 
+def _profile_config(alias: str) -> dict[str, str]:
+    """This profile's config file as a dict, for the settings the dashboard
+    shows and edits.
+
+    load_config rather than parse_kv_stream: the latter allowlists the
+    token-path keys only and drops empty values, both of which would hide
+    the capture-mode keys (OWA_CAPTURE_HEADLESS_AT is deliberately empty
+    when the mode is pinned). Nothing here writes the dict back, so the
+    four env overrides load_config merges in are harmless.
+    """
+    config, _ = load_config(profile_config_path(alias))
+    return config
+
+
+def _headless_cell(config: dict[str, str]) -> tuple[str, str]:
+    """(text, color) for the capture-mode column.
+
+    'visible' is yellow because it is the mode that puts an Edge window on
+    the user's screen, which is the thing they come to this column to
+    find. A leading '~' means nobody pinned it: the mode is the default or
+    the fallback's 24h auto-preference, so it can change on its own.
+    """
+    mode = "headless" if _headless_pref(config) else "visible"
+    text = mode if _headless_pinned(config) else f"~{mode}"
+    return text, DIM if mode == "headless" else YELLOW
+
+
+def _action_toggle_headless(current: str) -> str:
+    """Pin <current>'s capture mode to the opposite of what it is now.
+
+    Writes OWA_CAPTURE_HEADLESS with an empty OWA_CAPTURE_HEADLESS_AT,
+    which is how `reseed._headless_pinned` tells a deliberate choice from
+    the fallback's self-expiring preference. save_config updates the two
+    keys in place, so nothing else in the file is touched.
+    """
+    config = _profile_config(current)
+    if os.environ.get("OWA_CAPTURE_HEADLESS", "").strip():
+        return "OWA_CAPTURE_HEADLESS is set in the environment; unset it to pin per profile."
+    headless = not _headless_pref(config)
+    save_config(
+        {
+            "OWA_CAPTURE_HEADLESS": "1" if headless else "0",
+            "OWA_CAPTURE_HEADLESS_AT": "",
+        },
+        profile_config_path(current),
+    )
+    mode = "headless (no window)" if headless else "visible (offscreen window)"
+    return f"{current!r} capture pinned to {mode}."
+
+
+def _action_edit_config(state: PickerState, current: str) -> str:
+    """Open <current>'s config file in $EDITOR for anything the dashboard
+    has no key for. No validation: the file is `KEY="value"` lines and the
+    consumers already tolerate junk - a typo shows up as a failed probe
+    on the next redraw."""
+    path = profile_config_path(current)
+
+    def do() -> int:
+        sys.stdout.write(CLEAR_SCREEN)
+        sys.stdout.flush()
+        editor = os.environ.get("EDITOR") or os.environ.get("VISUAL") or "vi"
+        try:
+            return subprocess.call([editor, str(path)])
+        except OSError as e:
+            print(f"ERROR: could not run {editor!r}: {e}", file=sys.stderr)
+            input("press enter to continue...")
+            return 1
+
+    rc = state.cooked_action(do)
+    return f"edited {current!r} config." if rc == 0 else f"editor exited {rc}."
+
+
 def _action_reseed_all(state: PickerState) -> str:
     """Shift-r: reseed every configured profile sequentially.
 
@@ -440,7 +517,8 @@ def print_plain_status(
     for alias in profiles:
         marker = "*" if alias == default else " "
         text, _color = _freshness_cell(reports.get(alias))
-        print(f" {marker} {alias.ljust(width)}  {text}")
+        mode, _mode_color = _headless_cell(_profile_config(alias))
+        print(f" {marker} {alias.ljust(width)}  {mode.ljust(9)}  {text}")
     return 0
 
 
@@ -465,6 +543,8 @@ def run_dashboard(
       r                reseed highlighted profile        (re-probes)
       R                reseed every profile               (re-probes)
       e                open Edge for highlighted profile's sidecar session
+      h                pin capture mode: headless <-> visible (offscreen)
+      c                edit the highlighted profile's config in $EDITOR
       g                refresh token health (re-probe)
       q / esc          quit
 
@@ -525,7 +605,8 @@ def run_dashboard(
         sys.stdout.write(
             f"  {DIM}"
             "up/down  navigate  ·  space toggle  ·  enter set default  ·  g refresh\r\n"
-            "  a add  ·  d delete  ·  l schedule  ·  u unschedule  ·  r reseed  ·  R reseed all  ·  e edge  ·  q quit"  # noqa: E501  (single-line key legend)
+            "  a add  ·  d delete  ·  l schedule  ·  u unschedule  ·  r reseed  ·  R reseed all\r\n"
+            "  e edge  ·  h headless/visible  ·  c edit config  ·  q quit"
             f"{RESET}\r\n\r\n"
         )
         if not profiles:
@@ -542,9 +623,11 @@ def run_dashboard(
                 launchd_marker = f" {CYAN}(S){RESET}" if launchd_state[alias] else ""
                 text, color = _freshness_cell(state.reports.get(alias))
                 cell = f"{color}{text}{RESET}"
+                mode_text, mode_color = _headless_cell(_profile_config(alias))
+                mode_cell = f"{mode_color}{mode_text.ljust(9)}{RESET}"
                 sys.stdout.write(
                     f" {cursor} [{state_marker}] {alias.ljust(width)}{launchd_marker}"
-                    f"  {cell}{CLEAR_EOL}\r\n"
+                    f"  {mode_cell}  {cell}{CLEAR_EOL}\r\n"
                 )
         sys.stdout.write("\r\n")
         if state.message:
@@ -659,6 +742,16 @@ def run_dashboard(
                 draw()
                 continue
 
+            if ch == "h":
+                state.message = _action_toggle_headless(current) or ""
+                draw()
+                continue
+
+            if ch == "c":
+                state.message = _action_edit_config(state, current) or ""
+                reprobe()
+                continue
+
             # Unknown key - just clear any stale message.
             state.message = ""
             draw()
@@ -669,5 +762,4 @@ def run_dashboard(
     # Move cursor to the bottom on exit so the next shell prompt does not
     # overwrite the last frame.
     print()
-    return 0
     return 0
