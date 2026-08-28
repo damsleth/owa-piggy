@@ -438,3 +438,42 @@ def test_env_headless_override_leaves_persisted_preference_alone(
     assert rc == 0
     assert calls == [True]
     assert saved["OWA_CAPTURE_HEADLESS"] == "0"
+
+
+def test_pinned_headless_pref_never_expires(monkeypatch):
+    """A mode pinned from the dashboard writes an empty stamp, which means
+    'deliberate' - unlike the fallback's stamped preference it must not
+    expire back to headless after a day."""
+    pinned_off = {"OWA_CAPTURE_HEADLESS": "0", "OWA_CAPTURE_HEADLESS_AT": ""}
+    pinned_on = {"OWA_CAPTURE_HEADLESS": "1", "OWA_CAPTURE_HEADLESS_AT": ""}
+    assert _pref(pinned_off, monkeypatch=monkeypatch) is False
+    assert _pref(pinned_on, monkeypatch=monkeypatch) is True
+    # Env still wins over a pin.
+    assert _pref(pinned_off, env="1", monkeypatch=monkeypatch) is True
+
+
+def test_fallback_does_not_overwrite_a_pinned_mode(monkeypatch, tmp_config, clean_env):
+    """The user pinned headless; a fallback that had to use a window anyway
+    must not persist 'visible' and put one onscreen for the next 24h."""
+    calls, saved = _mock_capture_reseed(
+        monkeypatch,
+        [
+            ("error", None),
+            ("error", None),
+            ("ok", {"OWA_REFRESH_TOKEN": "rt", "OWA_TENANT_ID": "tid"}),
+        ],
+    )
+
+    rc = reseed_mod._do_reseed_capture(
+        "brkh",
+        {
+            "OWA_AUTH_MODE": "capture",
+            "OWA_CAPTURE_HEADLESS": "1",
+            "OWA_CAPTURE_HEADLESS_AT": "",
+        },
+    )
+
+    assert rc == 0
+    assert calls == [True, True, False]
+    assert saved["OWA_CAPTURE_HEADLESS"] == "1"
+    assert saved["OWA_CAPTURE_HEADLESS_AT"] == ""

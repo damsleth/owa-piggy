@@ -60,16 +60,33 @@ def _profile_cdp_port(alias: str) -> int:
 _HEADLESS_PREF_TTL_HOURS = 24
 
 
+def _headless_pinned(config: dict[str, str]) -> bool:
+    """Was this profile's capture mode chosen deliberately (dashboard 'h')
+    rather than learned by the fallback below?
+
+    A deliberate choice writes the value with an *empty*
+    OWA_CAPTURE_HEADLESS_AT; the auto-preference always stamps a real
+    time. So an empty stamp means "pinned, never expires", a missing one
+    means the pre-stamp legacy write (treated as expired, as before).
+    """
+    at = config.get("OWA_CAPTURE_HEADLESS_AT")
+    if not (config.get("OWA_CAPTURE_HEADLESS") or "").strip():
+        return False
+    return at is not None and not at.strip()
+
+
 def _headless_pref(config: dict[str, str]) -> bool:
     """Should this profile's capture run headless?
 
     Precedence: OWA_CAPTURE_HEADLESS in the environment (ad-hoc override),
-    then the per-profile persisted value, then headless.
+    then a pinned per-profile value, then the auto-learned one, then
+    headless.
 
-    Nothing but this module writes the config key: it is set whenever the
-    non-headless fallback is what succeeded, including when headless
-    failed for reasons that have nothing to do with the tenant (a cold
-    Edge start that blew the navigation budget, a slow /token round-trip).
+    The dashboard's 'h' key writes a pinned value; this module writes the
+    auto-learned one, whenever the non-headless fallback is what succeeded -
+    including when headless failed for reasons that have nothing to do with
+    the tenant (a cold Edge start that blew the navigation budget, a slow
+    /token round-trip).
     Left permanent, one bad hour taxes every future reseed with a browser
     window on the user's screen - which is exactly what happened. So it
     expires: OWA_CAPTURE_HEADLESS_AT stamps when it was written, and once
@@ -80,6 +97,8 @@ def _headless_pref(config: dict[str, str]) -> bool:
     env = os.environ.get("OWA_CAPTURE_HEADLESS", "").strip()
     if env:
         return env != "0"
+    if _headless_pinned(config):
+        return (config.get("OWA_CAPTURE_HEADLESS") or "").strip() != "0"
     if (config.get("OWA_CAPTURE_HEADLESS") or "").strip() != "0":
         return True
     stamp = parse_iso_utc((config.get("OWA_CAPTURE_HEADLESS_AT") or "").strip())
@@ -247,7 +266,7 @@ def _do_reseed_capture(alias: str, config: dict[str, str]) -> int:
     # OWA_CLIENT_ID overrides, etc.) and stamp issuance time so `status`
     # can compute the 24h SPA hard-cap remaining.
     config.update(captured)
-    if fell_back:
+    if fell_back and not _headless_pinned(config):
         # The non-headless fallback is what worked - remember that per
         # profile so the next reseeds go straight to offscreen mode, but
         # stamp it so the preference expires (see _headless_pref).
