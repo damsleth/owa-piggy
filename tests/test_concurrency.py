@@ -111,25 +111,51 @@ def test_parallel_shell_loop_keeps_config_and_cache_intact(tmp_config, clean_env
     assert leftovers == [], f"stray temp files remain: {leftovers}"
 
 
-def test_orphan_edge_pids_picks_only_parentless_headless_browsers(tmp_path):
-    """Only ppid==1 headless browsers on *our* dir are reapable garbage."""
+def test_orphan_edge_pids_picks_only_parentless_capture_browsers(tmp_path):
+    """Reapable garbage is a parentless browser *we* launched: ppid==1 plus the
+    --remote-debugging-port flag that only `launch_edge` sets. A user's own
+    window is ppid==1 too (open_edge detaches and the CLI exits), so the debug
+    port - not --headless - is what keeps us from killing a live sign-in."""
     from owa_piggy.capture import orphan_edge_pids
 
     edge_dir = tmp_path / "edge-profile"
-    other = tmp_path / "other-profile"
+    dd = f"--user-data-dir={edge_dir}"
+    other = f"--user-data-dir={tmp_path / 'other-profile'}"
+    dbg = "--remote-debugging-port=9"
     ps = "\n".join(
         [
-            f"  501     1 /Edge --headless=new --user-data-dir={edge_dir} --foo",
-            f"  502   501 /Edge Helper --type=renderer --user-data-dir={edge_dir}",
-            f"  599     1 /Edge Helper --type=renderer --headless=new --user-data-dir={edge_dir}",
-            f"  503  9999 /Edge --headless=new --user-data-dir={edge_dir}",
-            f"  504     1 /Edge --user-data-dir={edge_dir}",
-            f"  505     1 /Edge --headless=new --user-data-dir={other}",
+            # reapable: abandoned headless capture browser
+            f"  501     1 /Edge --headless=new {dbg} {dd}",
+            # reapable: abandoned *windowless* offscreen capture browser. Not
+            # headless, invisible, and the class that hangs a profile forever.
+            f"  502     1 /Edge --no-startup-window {dbg} {dd}",
+            # spared: the user's own interactive window. ppid==1 by construction
+            # (start_new_session=True), so only the missing debug port saves it.
+            f"  504     1 /Edge {dd}",
+            # spared: helpers inherit both flags but are not the browser
+            f"  505   501 /Edge Helper --type=renderer {dbg} {dd}",
+            f"  506     1 /Edge Helper --type=gpu-process {dbg} {dd}",
+            # spared: still owned by a live owa-piggy
+            f"  507  9999 /Edge --headless=new {dbg} {dd}",
+            # spared: someone else's profile dir
+            f"  508     1 /Edge --headless=new {dbg} {other}",
             "garbage",
         ]
     )
-    assert orphan_edge_pids(ps, edge_dir) == [501]
-    # 504 is a parentless *non-headless* Edge on our dir - a leftover
-    # `open_edge` window. The interactive launch reaps those too so the fresh
-    # window isn't singleton-forwarded into the stale one.
-    assert orphan_edge_pids(ps, edge_dir, include_non_headless=True) == [501, 504]
+    assert orphan_edge_pids(ps, edge_dir) == [501, 502]
+
+
+def test_orphan_edge_pids_never_reaps_a_live_user_window(tmp_path):
+    """The invariant that must survive any future refactor: no `owa-piggy` path,
+    interactive or background, may kill the window the user is signed into.
+    `owa-piggy token` runs on a cron loop, so a regression here would kill a
+    live sign-in from a background job."""
+    from owa_piggy.capture import orphan_edge_pids
+
+    edge_dir = tmp_path / "edge-profile"
+    # Exactly the argv `open_edge` builds, reparented to init as it always is.
+    window = (
+        f"  601     1 /Edge --no-first-run --no-default-browser-check "
+        f"--user-data-dir={edge_dir} https://outlook.cloud.microsoft"
+    )
+    assert orphan_edge_pids(window, edge_dir) == []
