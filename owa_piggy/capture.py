@@ -156,33 +156,48 @@ def _release_edge_lock(pid: int) -> None:
             os.close(fd)
 
 
-def orphan_edge_pids(
-    ps_output: str, edge_dir: Path, *, include_non_headless: bool = False
-) -> list[int]:
-    """PIDs of headless Edge *browser* processes bound to `edge_dir` that have
+# The flag that marks an Edge as one *we* launched for capture. `launch_edge`
+# sets it in every mode; `open_edge` never does. See `orphan_edge_pids`.
+_CDP_FLAG = "--remote-debugging-port="
+
+
+def orphan_edge_pids(ps_output: str, edge_dir: Path) -> list[int]:
+    """PIDs of *capture* Edge browser processes bound to `edge_dir` that have
     been reparented to init - meaning the owa-piggy that launched them is gone.
 
     An orphan like this is pure poison: it keeps `SingletonLock` on the profile
-    dir, so every later capture gets singleton-forwarded, never binds its debug
+    dir, so every later launch gets singleton-forwarded, never binds its debug
     port, and burns the whole retry ladder before failing. Meanwhile it holds no
     flock (that dies with its parent), so the serialization added for concurrent
     runs doesn't see it - the waiters queue behind a live sibling that is itself
-    doomed by the orphan.
+    doomed by the orphan. The worst of them is windowless: an `offscreen=True`
+    non-headless capture browser carries `--no-startup-window`, so an abandoned
+    one squats the dir forever with nothing onscreen to reveal it.
 
-    ppid==1 is the whole test. We terminate our own Edge in `_terminate`, so a
-    browser we still own is never reparented; renderer/GPU helpers are children
-    of the browser, not init. Interactive `open_edge` browsers are deliberately
-    session-detached and would show ppid==1, hence the `--headless` requirement -
-    those are the user's own windows and must never be killed - except on a
-    profile sidecar dir via `include_non_headless=True`, where even a
-    non-headless orphan is just an abandoned `open_edge` window and reaping it
-    is what lets a fresh interactive launch actually surface.
+    Two tests, and the second one is the load-bearing one:
 
-    Helper processes (`--type=renderer`, `--type=gpu-process`, ...) also carry
-    `--headless` and `--user-data-dir`, and a reparented one could match here;
-    they are excluded so only the main browser process is ever a candidate.
-    `_reap_orphan_edge` already narrows to the SingletonLock pid (always the
-    browser), so this only matters if the function is reused on a full `ps` dump.
+    `ppid==1` says nothing live owns it. We terminate our own Edge in
+    `_terminate`, so a browser we still own is never reparented, and
+    renderer/GPU helpers are children of the browser rather than init.
+
+    `--remote-debugging-port=` says it is *ours to kill*. `launch_edge` puts
+    that flag in its base args before any mode branching, so every capture
+    browser carries it in all three modes (headless, offscreen, visible
+    sign-in); `open_edge` never passes it. That makes it an exact signature for
+    "capture browser" and, more importantly, for "not a window the user is
+    using". Do not substitute `--headless` here: it misses the windowless
+    offscreen orphan that most needs reaping, and it is not what separates a
+    user window from ours - `open_edge` detaches with `start_new_session=True`
+    and the CLI exits, so a perfectly healthy interactive window is `ppid==1`
+    within a second of opening. Matching those would SIGTERM a browser the user
+    is signed into. A live user window needs no reaping anyway: Chromium
+    forwards the new launch into it, which raises it and opens the URL as a tab.
+
+    Helper processes (`--type=renderer`, `--type=gpu-process`, ...) inherit both
+    flags, and a reparented one could match here; they are excluded so only the
+    main browser process is ever a candidate. `_reap_orphan_edge` already
+    narrows to the SingletonLock pid (always the browser), so this only matters
+    if the function is reused on a full `ps` dump.
     """
     needle = f"--user-data-dir={edge_dir}"
     pids: list[int] = []
@@ -193,7 +208,7 @@ def orphan_edge_pids(
         pid, ppid, cmd = parts
         if ppid != "1" or needle not in cmd:
             continue
-        if not include_non_headless and "--headless" not in cmd:
+        if _CDP_FLAG not in cmd:  # a browser we launched, never a user window
             continue
         if "--type=" in cmd:  # a renderer/GPU/utility helper, not the browser
             continue
@@ -218,8 +233,8 @@ def _singleton_pid(edge_dir: Path) -> int | None:
     return pid if pid > 0 and _pid_alive(pid) else None
 
 
-def _reap_orphan_edge(edge_dir: Path, *, include_non_headless: bool = False) -> None:
-    """Kill an orphaned headless Edge browser squatting on `edge_dir`.
+def _reap_orphan_edge(edge_dir: Path) -> None:
+    """Kill an orphaned capture Edge browser squatting on `edge_dir`.
 
     Called under the profile lock, so only one owa-piggy reaps at a time and
     any browser found here belongs to no live owa-piggy. SIGTERM lets Chromium
@@ -241,11 +256,10 @@ def _reap_orphan_edge(edge_dir: Path, *, include_non_headless: bool = False) -> 
         ).stdout
     except (OSError, subprocess.SubprocessError):
         return
-    if not orphan_edge_pids(out, edge_dir, include_non_headless=include_non_headless):
+    if not orphan_edge_pids(out, edge_dir):
         return
-    kind = "Edge" if include_non_headless else "headless Edge"
     print(
-        f"killing orphaned {kind} (pid {pid}) on {edge_dir.name}",
+        f"killing orphaned capture Edge (pid {pid}) on {edge_dir.name}",
         file=sys.stderr,
     )
     with contextlib.suppress(OSError):
@@ -401,14 +415,14 @@ def open_edge(alias: str, *, url: str | None = None) -> tuple[subprocess.Popen[b
     """
     edge_dir = _config.profile_edge_dir(alias)
     edge_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-    # A leftover orphan on this dir would singleton-forward this interactive
-    # launch into itself: the "new" window silently never opens - the exact
-    # "owa-piggy edge does nothing" symptom. Reap it first, and here also kill
-    # a parentless *non-headless* Edge: the sidecar dir is owa-piggy's alone,
-    # so a ppid==1 browser on it is a window we launched and abandoned, never a
-    # real browsing session - and re-running this command means the user wants a
-    # fresh one regardless of what stale thing is squatting the dir.
-    _reap_orphan_edge(edge_dir, include_non_headless=True)
+    # An abandoned *capture* browser on this dir would singleton-forward this
+    # launch into itself and exit: the window silently never opens - the
+    # "owa-piggy edge does nothing" symptom. The windowless offscreen orphan
+    # (--no-startup-window) is the usual culprit, since nothing onscreen hints
+    # at it. Reap it first. A *live user window* on this dir is deliberately
+    # left alone: forwarding into it raises it and opens the URL as a tab,
+    # which is what the user wants anyway.
+    _reap_orphan_edge(edge_dir)
     binary = find_edge()
     if not binary:
         raise RuntimeError(
