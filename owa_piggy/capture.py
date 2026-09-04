@@ -35,6 +35,7 @@ import fcntl
 import json
 import os
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -155,6 +156,108 @@ def _release_edge_lock(pid: int) -> None:
             os.close(fd)
 
 
+def orphan_edge_pids(ps_output: str, edge_dir: Path) -> list[int]:
+    """PIDs of headless Edge *browser* processes bound to `edge_dir` that have
+    been reparented to init - meaning the owa-piggy that launched them is gone.
+
+    An orphan like this is pure poison: it keeps `SingletonLock` on the profile
+    dir, so every later capture gets singleton-forwarded, never binds its debug
+    port, and burns the whole retry ladder before failing. Meanwhile it holds no
+    flock (that dies with its parent), so the serialization added for concurrent
+    runs doesn't see it - the waiters queue behind a live sibling that is itself
+    doomed by the orphan.
+
+    ppid==1 is the whole test. We terminate our own Edge in `_terminate`, so a
+    browser we still own is never reparented; renderer/GPU helpers are children
+    of the browser, not init. Interactive `open_edge` browsers are deliberately
+    session-detached and would show ppid==1, hence the `--headless` requirement -
+    those are the user's own windows and must never be killed.
+
+    Helper processes (`--type=renderer`, `--type=gpu-process`, ...) also carry
+    `--headless` and `--user-data-dir`, and a reparented one could match here;
+    they are excluded so only the main browser process is ever a candidate.
+    `_reap_orphan_edge` already narrows to the SingletonLock pid (always the
+    browser), so this only matters if the function is reused on a full `ps` dump.
+    """
+    needle = f"--user-data-dir={edge_dir}"
+    pids: list[int] = []
+    for line in ps_output.splitlines():
+        parts = line.split(None, 2)
+        if len(parts) < 3:
+            continue
+        pid, ppid, cmd = parts
+        if ppid != "1" or needle not in cmd or "--headless" not in cmd:
+            continue
+        if "--type=" in cmd:  # a renderer/GPU/utility helper, not the browser
+            continue
+        with contextlib.suppress(ValueError):
+            pids.append(int(pid))
+    return pids
+
+
+def _singleton_pid(edge_dir: Path) -> int | None:
+    """The pid recorded in Chromium's `SingletonLock`, a symlink whose target
+    is `<hostname>-<pid>`. None if absent/unparseable, or if that pid is dead
+    (a stale lock left by SIGKILL - Chromium recovers from those on its own).
+    """
+    try:
+        target = os.readlink(edge_dir / "SingletonLock")
+    except OSError:
+        return None
+    try:
+        pid = int(target.rsplit("-", 1)[-1])
+    except ValueError:
+        return None
+    return pid if pid > 0 and _pid_alive(pid) else None
+
+
+def _reap_orphan_edge(edge_dir: Path) -> None:
+    """Kill an orphaned headless Edge browser squatting on `edge_dir`.
+
+    Called under the profile lock, so only one owa-piggy reaps at a time and
+    any browser found here belongs to no live owa-piggy. SIGTERM lets Chromium
+    clear its singleton on the way out; a survivor gets SIGKILL a moment later.
+
+    Starts from SingletonLock rather than a full process scan: no lock file
+    means nothing is squatting, which is the common case and costs one
+    readlink. `ps` only ever runs for the one suspect pid.
+    """
+    pid = _singleton_pid(edge_dir)
+    if pid is None:
+        return
+    try:
+        out = subprocess.run(
+            ["ps", "-o", "pid=,ppid=,command=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return
+    if not orphan_edge_pids(out, edge_dir):
+        return
+    print(
+        f"killing orphaned headless Edge (pid {pid}) on {edge_dir.name}",
+        file=sys.stderr,
+    )
+    with contextlib.suppress(OSError):
+        os.kill(pid, signal.SIGTERM)
+    deadline = time.monotonic() + 3.0
+    while _pid_alive(pid) and time.monotonic() < deadline:
+        time.sleep(0.1)
+    if _pid_alive(pid):
+        with contextlib.suppress(OSError):
+            os.kill(pid, signal.SIGKILL)
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
 def launch_edge(
     edge_dir: Path,
     port: int,
@@ -245,6 +348,10 @@ def launch_edge(
     # turn instead of being silently singleton-forwarded into a browser it
     # cannot reach. Raises if the holder never lets go.
     lock_fd = _acquire_edge_lock(edge_dir)
+    # Under the lock: whatever headless Edge is still on this dir with no
+    # parent is garbage from a killed run, and would silently steal this
+    # launch via the singleton socket.
+    _reap_orphan_edge(edge_dir)
     # Detach stdout/stderr so a slow CDP consumer can't backpressure
     # Edge into a hang; Edge's own crash logs land in the userdata dir.
     try:
@@ -286,6 +393,10 @@ def open_edge(alias: str, *, url: str | None = None) -> tuple[subprocess.Popen[b
     """
     edge_dir = _config.profile_edge_dir(alias)
     edge_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    # A leftover headless orphan on this dir would singleton-forward this
+    # interactive launch into itself: the user's window silently never opens.
+    # Reap it first (only ever kills parentless headless Edge, never a window).
+    _reap_orphan_edge(edge_dir)
     binary = find_edge()
     if not binary:
         raise RuntimeError(
