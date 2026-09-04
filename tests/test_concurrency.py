@@ -129,3 +129,7 @@ def test_orphan_edge_pids_picks_only_parentless_headless_browsers(tmp_path):
         ]
     )
     assert orphan_edge_pids(ps, edge_dir) == [501]
+    # 504 is a parentless *non-headless* Edge on our dir - a leftover
+    # `open_edge` window. The interactive launch reaps those too so the fresh
+    # window isn't singleton-forwarded into the stale one.
+    assert orphan_edge_pids(ps, edge_dir, include_non_headless=True) == [501, 504]
