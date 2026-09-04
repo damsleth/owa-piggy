@@ -109,3 +109,23 @@ def test_parallel_shell_loop_keeps_config_and_cache_intact(tmp_config, clean_env
     # --- No atomic-write shrapnel left behind -----------------------------
     leftovers = [p.name for p in tmp_config.parent.iterdir() if p.name.endswith(".tmp")]
     assert leftovers == [], f"stray temp files remain: {leftovers}"
+
+
+def test_orphan_edge_pids_picks_only_parentless_headless_browsers(tmp_path):
+    """Only ppid==1 headless browsers on *our* dir are reapable garbage."""
+    from owa_piggy.capture import orphan_edge_pids
+
+    edge_dir = tmp_path / "edge-profile"
+    other = tmp_path / "other-profile"
+    ps = "\n".join(
+        [
+            f"  501     1 /Edge --headless=new --user-data-dir={edge_dir} --foo",
+            f"  502   501 /Edge Helper --type=renderer --user-data-dir={edge_dir}",
+            f"  599     1 /Edge Helper --type=renderer --headless=new --user-data-dir={edge_dir}",
+            f"  503  9999 /Edge --headless=new --user-data-dir={edge_dir}",
+            f"  504     1 /Edge --user-data-dir={edge_dir}",
+            f"  505     1 /Edge --headless=new --user-data-dir={other}",
+            "garbage",
+        ]
+    )
+    assert orphan_edge_pids(ps, edge_dir) == [501]
