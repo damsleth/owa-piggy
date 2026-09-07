@@ -233,6 +233,34 @@ def _singleton_pid(edge_dir: Path) -> int | None:
     return pid if pid > 0 and _pid_alive(pid) else None
 
 
+def _clear_stale_singleton(edge_dir: Path) -> None:
+    """Delete Chromium's Singleton files when the pid they name is dead.
+
+    Chromium is supposed to break a stale lock itself, and usually does. It did
+    not here on 2026-09-07: `SingletonLock -> KMBP-10413` with 10413 long gone
+    left every launch singleton-forwarded, so the debug port never bound and
+    `owa-piggy token --profile nc` looped on the 20s CDP timeout until the three
+    files were removed by hand. Removing them ourselves makes that self-healing
+    instead of a debugging session.
+
+    Only ever called under the profile flock, and only when the recorded pid is
+    dead, so a live browser's lock is never touched.
+    """
+    try:
+        target = os.readlink(edge_dir / "SingletonLock")
+    except OSError:
+        return  # no lock file: nothing to clear, the common case
+    try:
+        pid = int(target.rsplit("-", 1)[-1])
+    except ValueError:
+        pid = -1  # unparseable target, so nothing can be holding it
+    if pid > 0 and _pid_alive(pid):
+        return
+    for name in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
+        with contextlib.suppress(OSError):
+            (edge_dir / name).unlink()
+
+
 def _reap_orphan_edge(edge_dir: Path) -> None:
     """Kill an orphaned capture Edge browser squatting on `edge_dir`.
 
@@ -244,6 +272,7 @@ def _reap_orphan_edge(edge_dir: Path) -> None:
     means nothing is squatting, which is the common case and costs one
     readlink. `ps` only ever runs for the one suspect pid.
     """
+    _clear_stale_singleton(edge_dir)
     pid = _singleton_pid(edge_dir)
     if pid is None:
         return
