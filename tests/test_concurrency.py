@@ -24,7 +24,9 @@ network, no real tokens, all writes under tmp_path.
 """
 
 import json
+import os
 import time
+from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 
 from owa_piggy import cache as cache_mod
@@ -159,3 +161,37 @@ def test_orphan_edge_pids_never_reaps_a_live_user_window(tmp_path):
         f"--user-data-dir={edge_dir} https://outlook.cloud.microsoft"
     )
     assert orphan_edge_pids(window, edge_dir) == []
+
+
+def test_clear_stale_singleton_frees_a_dead_lock_but_spares_a_live_one(tmp_path):
+    """A SingletonLock naming a dead pid gets removed; one naming a live pid
+    stays put.
+
+    The dead-lock half is the 2026-09-07 hang: Chromium did not break the stale
+    lock itself, so every launch was singleton-forwarded and the CDP port never
+    bound. The live half is the guard that matters more - clearing a lock a real
+    browser still holds would let two Edges race one profile dir.
+    """
+    from owa_piggy.capture import _clear_stale_singleton
+
+    def make_lock(edge_dir: Path, pid: int) -> None:
+        edge_dir.mkdir(parents=True, exist_ok=True)
+        (edge_dir / "SingletonLock").symlink_to(f"KMBP-{pid}")
+        (edge_dir / "SingletonCookie").symlink_to("123456789")
+        (edge_dir / "SingletonSocket").symlink_to("/tmp/whatever/SingletonSocket")
+
+    # A pid that cannot be alive: reap it.
+    dead = tmp_path / "dead"
+    make_lock(dead, 2**22)  # above PID_MAX everywhere we run
+    _clear_stale_singleton(dead)
+    for name in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
+        assert not (dead / name).is_symlink(), f"{name} survived a dead lock"
+
+    # Our own pid is alive by definition: leave it alone.
+    live = tmp_path / "live"
+    make_lock(live, os.getpid())
+    _clear_stale_singleton(live)
+    assert (live / "SingletonLock").is_symlink(), "clobbered a live browser's lock"
+
+    # No lock file at all is the common case and must be a silent no-op.
+    _clear_stale_singleton(tmp_path / "empty")
