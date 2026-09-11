@@ -122,10 +122,10 @@ exist with acceptance criteria.
 
 ## Verification before claiming done
 
-- `python -m compileall -q owa_piggy` passes.
-- `python -m owa_piggy --help` and `python -m owa_piggy audiences` run
+- `.venv/bin/python -m compileall -q owa_piggy` passes.
+- `.venv/bin/python -m owa_piggy --help` and `.venv/bin/python -m owa_piggy audiences` run
   without traceback on a machine with no config.
-- `pytest -q` is green.
+- `.venv/bin/python -m pytest -q` is green.
 - If you touched token logic: `owa-piggy decode` and `owa-piggy status`
   still produce sane output against a real configured profile. If
   you cannot run against a real token, say so explicitly rather than
@@ -226,6 +226,23 @@ rejected, the release workflow's PyPI publish erroring on an
 already-published file), stop and surface the error - do not try to
 "fix" a published tag by force-pushing, and never bump the patch
 version a second time to work around an already-published file.
+
+## Learned Patterns
+
+### Large files - prefer grep over full read
+- `owa_piggy/cli.py` (~40 kB), `owa_piggy/capture.py` (~28 kB), `owa_piggy/status.py` (~24 kB), and `owa_piggy/profile_tui.py` (~19 kB) are large; use grep/search to locate specific symbols rather than reading the entire file.
+
+### Python environment
+- Always use `.venv/bin/python` (not `python` or `python3`) - bare `python` exits 127 in this project. Same for `pytest`: `.venv/bin/python -m pytest`.
+
+### Editing files
+- Read a file with the Read tool before using Edit, even for files already seen this session - Edit fails with "File has not been read yet" otherwise. Applies especially to `pyproject.toml`.
+
+### Release workflow
+- PyPI publishing is a MANUAL local `uv publish` (token in `UV_PUBLISH_TOKEN` from `./.env`). The `release.yml` workflow does NOT touch PyPI - it only re-runs CI, rebuilds the wheel+sdist, and creates the GitHub Release at the tag. The auto-mode classifier blocks `uv publish` (and even reading `./.env`), so the user must run that final step themselves via the `!` prefix. Full sequence: see "Cutting a release" above.
+
+### Shell script verification gate
+- Run `shellcheck scripts/setup-refresh.sh` before every commit touching that file - CI enforces it and failures block the build.
 
 ## What NOT to do
 
