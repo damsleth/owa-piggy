@@ -161,7 +161,7 @@ jobs:
         with:
           path: artifacts
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@da05d552573ad5aba039eaac05058a918a7bf631 # v2.2.2
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           name: owa-piggy v${{ needs.build.outputs.version }}
           generate_release_notes: true
