@@ -23,6 +23,7 @@ from typing import Any
 
 CLIENT_ID = "9199bf20-a13f-4107-85dc-02114787ef48"
 ORIGIN = "https://outlook.cloud.microsoft"
+PIM_CLIENT_ID = "14d82eec-204b-4c2f-b7e8-296a70dab67e"
 
 # Hard cap on the AAD token exchange, used both as the per-connection-attempt
 # timeout in the Happy Eyeballs connector and as the read timeout afterwards.
@@ -192,14 +193,15 @@ def exchange_token(
             "scope": scope,
         }
     ).encode("utf-8")
+    headers = {"Content-Type": "application/x-www-form-urlencoded"}
+    # The PIM client is native. SPA Origin headers invalidate its credentials;
+    # the existing SPA clients keep their exact path.
+    if client_id != PIM_CLIENT_ID:
+        headers["Origin"] = origin_for_client(client_id, origin)
     req = urllib.request.Request(
         url,
         data=data,
-        headers={
-            "Content-Type": "application/x-www-form-urlencoded",
-            # SPA clients require Origin to satisfy AAD's cross-origin check (AADSTS9002327)
-            "Origin": origin_for_client(client_id, origin),
-        },
+        headers=headers,
         method="POST",
     )
     try:

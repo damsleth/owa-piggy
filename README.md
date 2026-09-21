@@ -468,3 +468,36 @@ There is a single shared launchd agent (`com.damsleth.owa-piggy.scheduled`) that
 This is a personal CLI tool for people who understand OAuth tokens and their risks.
 If you don't know why storing a refresh token on disk might be a bad idea you should not use this.
 ```
+
+## PIM audience (unreleased)
+
+The `pim` audience uses a separate Microsoft Graph Command Line Tools native-client sign-in for delegated
+`RoleManagement.ReadWrite.Directory`. Set it up explicitly for one existing
+Microsoft profile:
+
+```bash
+owa-piggy clients add pim --profile work --browser
+owa-piggy status --audience pim --profile work --json
+owa-piggy token --audience pim --profile work --json
+```
+
+Complete the interactive browser sign-in with that profile's account. The
+loopback callback is protected with PKCE, state, and nonce checks. Omit `--browser`
+for device-code sign-in. The broker checks the returned tenant, identity, client, and permission
+before saving the native refresh token in the profile's `clients.json` (0600).
+Ordinary Graph and Outlook tokens retain their existing routing. PIM has no
+fallback to the OWA credential, and browser reseeding excludes this native client.
+If native authentication expires, repeat `clients add pim`.
+
+`token --no-cache` bypasses the access-token cache and performs a fresh exchange.
+Token output contains credentials; `status --json` reports health without tokens.
+Native refresh tokens do not have the OWA SPA's fixed 24-hour expiry, so their
+expiry is reported as unknown. Tenant revocation and sign-in policies still apply.
+
+Conditional Access can block device-code sign-in even for a PIM-eligible account.
+Error 53003 means Conditional Access denied the request; the Entra sign-in log
+identifies the policy. An unregistered device in the error details alone does
+not identify that policy. See [Microsoft's troubleshooting guide](https://learn.microsoft.com/en-us/entra/identity/conditional-access/troubleshoot-conditional-access).
+The browser flow can also require device enrollment under tenant policy.
+This flow has offline test coverage; live token issuance and PIM API access remain
+unverified in the target tenants.

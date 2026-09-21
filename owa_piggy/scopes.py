@@ -17,6 +17,8 @@ import sys
 # or `--scope`, or persistently via OWA_DEFAULT_AUDIENCE which accepts
 # either a KNOWN_AUDIENCES short name or a full https URL.
 DEFAULT_AUDIENCE = "https://graph.microsoft.com"
+PIM_PERMISSION = "https://graph.microsoft.com/RoleManagement.ReadWrite.Directory"
+PIM_SCOPE = f"{PIM_PERMISSION} openid profile offline_access"
 
 # Well-known FOCI-accessible audiences (same refresh token works for all).
 # Short names map to audience URLs; `{audience}/.default` is the scope we
@@ -24,6 +26,7 @@ DEFAULT_AUDIENCE = "https://graph.microsoft.com"
 KNOWN_AUDIENCES = {
     "outlook": ("https://outlook.office.com", "Outlook REST"),
     "graph": ("https://graph.microsoft.com", "Microsoft Graph (default)"),
+    "pim": ("https://graph.microsoft.com", "PIM (explicit native-client sign-in required)"),
     "teams": (
         "https://api.spaces.skype.com",
         "Microsoft Teams middle-tier (mt/part, Skype audience)",
@@ -153,7 +156,13 @@ def resolve_audience(
     treated the same way - warn and fall through to graph.
     """
     if scope:
+        if audience == "pim" and PIM_PERMISSION not in scope.split():
+            return "", "audience pim requires the PIM permission scope"
         return scope, ""
+
+    selected = audience or os.environ.get("OWA_DEFAULT_AUDIENCE", "").strip() or profile_default
+    if selected == "pim":
+        return PIM_SCOPE, ""
 
     sp_tenant = _resolve_sharepoint_tenant(sharepoint_tenant, profile_sharepoint_tenant)
 

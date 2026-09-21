@@ -23,15 +23,15 @@ _owa_piggy() {
     return
   fi
   case ${words[2]} in
-    token) compadd -- -h --help --profile --audience --scope --sharepoint-tenant --json --env ;;
-    status) compadd -- -h --help --profile --audience --scope --sharepoint-tenant --json --verbose -v ;;
-    debug) compadd -- -h --help --profile --audience --scope --sharepoint-tenant ;;
-    decode) compadd -- -h --help --profile --audience --scope --sharepoint-tenant ;;
-    remaining) compadd -- -h --help --profile --audience --scope --sharepoint-tenant ;;
+    token) compadd -- -h --help --profile --no-cache --audience --scope --sharepoint-tenant --json --env ;;
+    status) compadd -- -h --help --profile --no-cache --audience --scope --sharepoint-tenant --json --verbose -v ;;
+    debug) compadd -- -h --help --profile --no-cache --audience --scope --sharepoint-tenant ;;
+    decode) compadd -- -h --help --profile --no-cache --audience --scope --sharepoint-tenant ;;
+    remaining) compadd -- -h --help --profile --no-cache --audience --scope --sharepoint-tenant ;;
     setup) compadd -- -h --help --profile --email --from-trough --trough-tenant --trough-sub --user-agent --sharepoint-tenant --with-client --google --google-client-id --google-client-secret --json ;;
     reseed) compadd -- -h --help --profile --all --scheduled --json ;;
     edge) compadd -- -h --help --profile ;;
-    tui) compadd -- -h --help --profile --audience --scope --sharepoint-tenant ;;
+    tui) compadd -- -h --help --profile --no-cache --audience --scope --sharepoint-tenant ;;
     audiences) compadd -- -h --help ;;
     install-owa-tools) compadd -- -h --help ;;
     version) compadd -- -h --help --json ;;

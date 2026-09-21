@@ -18,6 +18,7 @@ complete -c owa-piggy -n 'not __fish_seen_subcommand_from token status debug dec
 complete -c owa-piggy -n '__fish_seen_subcommand_from token' -o h
 complete -c owa-piggy -n '__fish_seen_subcommand_from token' -l help
 complete -c owa-piggy -n '__fish_seen_subcommand_from token' -l profile
+complete -c owa-piggy -n '__fish_seen_subcommand_from token' -l no-cache
 complete -c owa-piggy -n '__fish_seen_subcommand_from token' -l audience
 complete -c owa-piggy -n '__fish_seen_subcommand_from token' -l scope
 complete -c owa-piggy -n '__fish_seen_subcommand_from token' -l sharepoint-tenant
@@ -26,6 +27,7 @@ complete -c owa-piggy -n '__fish_seen_subcommand_from token' -l env
 complete -c owa-piggy -n '__fish_seen_subcommand_from status' -o h
 complete -c owa-piggy -n '__fish_seen_subcommand_from status' -l help
 complete -c owa-piggy -n '__fish_seen_subcommand_from status' -l profile
+complete -c owa-piggy -n '__fish_seen_subcommand_from status' -l no-cache
 complete -c owa-piggy -n '__fish_seen_subcommand_from status' -l audience
 complete -c owa-piggy -n '__fish_seen_subcommand_from status' -l scope
 complete -c owa-piggy -n '__fish_seen_subcommand_from status' -l sharepoint-tenant
@@ -35,18 +37,21 @@ complete -c owa-piggy -n '__fish_seen_subcommand_from status' -o v
 complete -c owa-piggy -n '__fish_seen_subcommand_from debug' -o h
 complete -c owa-piggy -n '__fish_seen_subcommand_from debug' -l help
 complete -c owa-piggy -n '__fish_seen_subcommand_from debug' -l profile
+complete -c owa-piggy -n '__fish_seen_subcommand_from debug' -l no-cache
 complete -c owa-piggy -n '__fish_seen_subcommand_from debug' -l audience
 complete -c owa-piggy -n '__fish_seen_subcommand_from debug' -l scope
 complete -c owa-piggy -n '__fish_seen_subcommand_from debug' -l sharepoint-tenant
 complete -c owa-piggy -n '__fish_seen_subcommand_from decode' -o h
 complete -c owa-piggy -n '__fish_seen_subcommand_from decode' -l help
 complete -c owa-piggy -n '__fish_seen_subcommand_from decode' -l profile
+complete -c owa-piggy -n '__fish_seen_subcommand_from decode' -l no-cache
 complete -c owa-piggy -n '__fish_seen_subcommand_from decode' -l audience
 complete -c owa-piggy -n '__fish_seen_subcommand_from decode' -l scope
 complete -c owa-piggy -n '__fish_seen_subcommand_from decode' -l sharepoint-tenant
 complete -c owa-piggy -n '__fish_seen_subcommand_from remaining' -o h
 complete -c owa-piggy -n '__fish_seen_subcommand_from remaining' -l help
 complete -c owa-piggy -n '__fish_seen_subcommand_from remaining' -l profile
+complete -c owa-piggy -n '__fish_seen_subcommand_from remaining' -l no-cache
 complete -c owa-piggy -n '__fish_seen_subcommand_from remaining' -l audience
 complete -c owa-piggy -n '__fish_seen_subcommand_from remaining' -l scope
 complete -c owa-piggy -n '__fish_seen_subcommand_from remaining' -l sharepoint-tenant
@@ -76,6 +81,7 @@ complete -c owa-piggy -n '__fish_seen_subcommand_from edge' -l profile
 complete -c owa-piggy -n '__fish_seen_subcommand_from tui' -o h
 complete -c owa-piggy -n '__fish_seen_subcommand_from tui' -l help
 complete -c owa-piggy -n '__fish_seen_subcommand_from tui' -l profile
+complete -c owa-piggy -n '__fish_seen_subcommand_from tui' -l no-cache
 complete -c owa-piggy -n '__fish_seen_subcommand_from tui' -l audience
 complete -c owa-piggy -n '__fish_seen_subcommand_from tui' -l scope
 complete -c owa-piggy -n '__fish_seen_subcommand_from tui' -l sharepoint-tenant
