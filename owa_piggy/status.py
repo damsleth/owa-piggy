@@ -29,7 +29,9 @@ from .config import (
     load_profiles_conf,
     parse_iso_utc,
     profile_edge_dir,
-    profiles_conf_path,
+)
+from .config import (
+    profile_is_disabled as _profile_is_disabled,
 )
 from .jwt import decode_jwt_segment
 from .launchd import (
@@ -84,19 +86,6 @@ def _state(token_ok: bool, minutes_remaining: int | None) -> str:
     if minutes_remaining is not None and minutes_remaining < 10:
         return "warn"
     return "ok"
-
-
-def _profile_is_disabled(alias: str) -> bool:
-    """Return True when profiles.conf exists and omits `alias`.
-
-    Missing profiles.conf means a legacy/test layout that predates the
-    registry, so all on-disk profiles remain active for compatibility.
-    A present-but-empty registry means the user disabled every profile.
-    """
-    if not profiles_conf_path().exists():
-        return False
-    registered = load_profiles_conf().get("OWA_PROFILES", [])
-    return alias not in registered
 
 
 def _probe_profile(

@@ -241,6 +241,17 @@ version a second time to work around an already-published file.
 ### Release workflow
 - PyPI publishing is a MANUAL local `uv publish` (token in `UV_PUBLISH_TOKEN` from `./.env`). The `release.yml` workflow does NOT touch PyPI - it only re-runs CI, rebuilds the wheel+sdist, and creates the GitHub Release at the tag. The auto-mode classifier blocks `uv publish` (and even reading `./.env`), so the user must run that final step themselves via the `!` prefix. Full sequence: see "Cutting a release" above.
 
+### Disabled profiles are inert
+
+A profile is "disabled" when it exists on disk but is absent from
+`OWA_PROFILES` in `profiles.conf`. Disabled means *no command may use it*:
+`config.resolve_profile` refuses it (callers that are about a disabled
+profile - `status`, `setup`, the picker - pass `allow_disabled=True`), and
+`reseed.do_reseed` / `capture.open_edge` refuse it again because the TUI
+calls those directly. Any new code path that mints a token or launches the
+Edge sidecar must go through one of those gates, or a switched-off profile
+starts popping browser windows again.
+
 ### Shell script verification gate
 - Run `shellcheck scripts/setup-refresh.sh` before every commit touching that file - CI enforces it and failures block the build.
 
