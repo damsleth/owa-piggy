@@ -214,3 +214,13 @@ def test_explicit_selections_beat_the_client_default(monkeypatch, clean_env):
 
     scope, _ = resolve_audience(scope="custom", client_id=TEAMS_WEB_CLIENT)
     assert scope == "custom"
+
+
+def test_graph_wins_the_shared_audience_reverse_lookup():
+    """`pim` deliberately shares Graph's audience URL. status.py maps an
+    `aud` claim back to a short name by first match, so `graph` must come
+    first or every ordinary Graph token gets relabelled `pim`."""
+    from owa_piggy.scopes import KNOWN_AUDIENCES
+
+    names = [n for n, (url, _) in KNOWN_AUDIENCES.items() if url == "https://graph.microsoft.com"]
+    assert names[0] == "graph"

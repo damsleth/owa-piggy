@@ -26,8 +26,8 @@ network, no real tokens, all writes under tmp_path.
 import json
 import os
 import time
-from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 from owa_piggy import cache as cache_mod
 from owa_piggy.config import load_config, save_config

@@ -10,7 +10,24 @@ Releases before v0.12.0 are recorded only in the annotated git tags
 
 ## [Unreleased]
 
+### Added
+- Opt-in `pim` audience and `clients add pim` device sign-in, with an isolated
+  Microsoft Graph Command Line Tools native credential per profile. Token refresh and diagnostics use
+  that credential without changing ordinary Graph or Outlook routing.
+- `token --no-cache` forces a fresh exchange. Native PIM expiry is reported as
+  unknown instead of inheriting the OWA SPA expiry.
+
 ### Fixed
+- **Scheduled reseed now backs off after three consecutive sign-in failures.**
+  A capture profile whose sidecar session has expired parks on `login.*` on
+  every attempt, which for a remembered account fires an Authenticator
+  number-match push - unanswerable, because the Edge window is offscreen. The
+  hourly agent repeated that indefinitely. It now counts consecutive
+  unattended `reauth` failures per profile and stops launching Edge once it
+  hits three, pointing at `owa-piggy setup --profile <alias>` instead. The
+  count is stamped against the refresh token it was seen on, so any fresh
+  credential clears it; a TTY run is exempt and still signs in interactively.
+
 - **Redirect-based apps (Azure DevOps) can be reseeded headlessly again.**
   `capture_silent` treated any `login.*` hostname as proof the sidecar session
   had expired and returned `reauth` on the first sample that saw one. That
