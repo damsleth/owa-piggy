@@ -422,7 +422,25 @@ def is_scheduled(alias: str) -> bool:
     return alias in load_profiles_conf().get("OWA_SCHEDULED", [])
 
 
-def resolve_profile(cli_profile: str | None = None, allow_missing: bool = False) -> tuple[str, str]:
+def profile_is_disabled(alias: str) -> bool:
+    """True when profiles.conf exists and omits `alias`.
+
+    Disabled means "on disk but not in OWA_PROFILES": the profile keeps its
+    config and Edge sidecar dir, but no command may use it. Missing
+    profiles.conf means a legacy layout that predates the registry, so every
+    on-disk profile stays active; a present-but-empty registry means the user
+    disabled all of them.
+    """
+    if not profiles_conf_path().exists():
+        return False
+    return alias not in load_profiles_conf().get("OWA_PROFILES", [])
+
+
+def resolve_profile(
+    cli_profile: str | None = None,
+    allow_missing: bool = False,
+    allow_disabled: bool = False,
+) -> tuple[str, str]:
     """Pick which profile this invocation should target.
 
     Precedence (highest wins):
@@ -441,7 +459,27 @@ def resolve_profile(cli_profile: str | None = None, allow_missing: bool = False)
 
     `allow_missing=True` skips the "profile must already exist" validation
     for step 1 (used by `setup`, which is the path that creates it).
+
+    `allow_disabled=True` lets the caller target a profile that exists on
+    disk but is not registered in OWA_PROFILES. Only the commands that are
+    *about* a disabled profile (status, setup, the profile picker) set it;
+    every ordinary command refuses, so a disabled profile can never mint a
+    token or launch the Edge sidecar.
     """
+    alias, err = _resolve_profile_unchecked(cli_profile, allow_missing)
+    if err or allow_disabled or allow_missing:
+        return alias, err
+    if profile_is_disabled(alias):
+        return "", (
+            f"profile {alias!r} is disabled. Enable it in `owa-piggy profiles` "
+            f"(space toggles the highlighted profile), or re-run setup: "
+            f"owa-piggy setup --profile {alias}"
+        )
+    return alias, ""
+
+
+def _resolve_profile_unchecked(cli_profile: str | None, allow_missing: bool) -> tuple[str, str]:
+    """resolve_profile's precedence ladder, without the disabled gate."""
     available = list_profiles()
 
     # 1. Explicit CLI flag.
