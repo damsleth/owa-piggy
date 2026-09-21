@@ -117,3 +117,25 @@ affects that user (local privilege escalation via the config file,
 token exfiltration through an error path, etc.), open a GitHub
 issue or email the address in the commit log. There is no embargoed
 disclosure process because there is no deployed service to embargo.
+
+## Native PIM authentication
+
+The opt-in `pim` audience uses a separate Microsoft Graph Command Line Tools native credential,
+obtained through explicit device-code or browser sign-in.
+It requests delegated `RoleManagement.ReadWrite.Directory` plus identity and
+refresh scopes. It does not reuse the OWA family refresh token. Native refresh
+exchanges omit the SPA Origin header; existing SPA client headers are unchanged.
+The broker stores the verified native refresh token in the selected profile's
+`clients.json`, mode 0600, and routes rotations back to that client entry.
+
+Device challenges are shown only during explicit setup. OAuth credentials and
+raw error responses are not logged by that flow. A failed or mismatched sign-in
+preserves existing credentials. Tenant consent, MFA, Conditional Access, role
+eligibility, and activation policies remain enforced by Microsoft; this feature
+does not change those policies or grant eligibility. Scheduled browser reseeding
+never starts a device challenge.
+
+Browser sign-in uses a listener bound only to 127.0.0.1 on an ephemeral port for
+at most five minutes. PKCE S256, random state, and ID-token nonce validation bind
+the callback to the attempt. Callback URLs and authorization codes are not logged.
+The listener closes before the authorization code is exchanged.

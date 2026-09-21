@@ -477,3 +477,68 @@ def test_fallback_does_not_overwrite_a_pinned_mode(monkeypatch, tmp_config, clea
     assert calls == [True, True, False]
     assert saved["OWA_CAPTURE_HEADLESS"] == "1"
     assert saved["OWA_CAPTURE_HEADLESS_AT"] == ""
+
+
+def test_capture_reseed_counts_unattended_reauth_failures(
+    monkeypatch, tmp_config, clean_env, capsys
+):
+    """Each unattended 'reauth' bumps a counter stamped against the current
+    RT, so the hourly agent can tell one dead session from a fresh one."""
+    _, saved = _mock_capture_reseed(monkeypatch, [("reauth", None)])
+    config = {
+        "OWA_AUTH_MODE": "capture",
+        "OWA_EMAIL": "me@example.com",
+        "OWA_RT_ISSUED_AT": "2026-08-18T00:00:00Z",
+        "OWA_REAUTH_FAILS": "1",
+        "OWA_REAUTH_FAILS_AT": "2026-08-18T00:00:00Z",
+    }
+
+    rc = reseed_mod._do_reseed_capture("une", config)
+
+    assert rc == 1
+    assert saved["OWA_REAUTH_FAILS"] == "2"
+    assert saved["OWA_REAUTH_FAILS_AT"] == "2026-08-18T00:00:00Z"
+    assert "(2/3 before unattended reseed backs off)" in capsys.readouterr().err
+
+
+def test_capture_reseed_backs_off_after_max_reauth_failures(
+    monkeypatch, tmp_config, clean_env, capsys
+):
+    """Past the limit, Edge must not launch at all - launching it is what
+    fires the Authenticator push nobody can answer."""
+    calls, _ = _mock_capture_reseed(monkeypatch, [])
+
+    rc = reseed_mod._do_reseed_capture(
+        "une",
+        {
+            "OWA_AUTH_MODE": "capture",
+            "OWA_EMAIL": "me@example.com",
+            "OWA_RT_ISSUED_AT": "2026-08-18T00:00:00Z",
+            "OWA_REAUTH_FAILS": str(reseed_mod._MAX_REAUTH_FAILS),
+            "OWA_REAUTH_FAILS_AT": "2026-08-18T00:00:00Z",
+        },
+    )
+
+    assert rc == 1
+    assert calls == []
+    err = capsys.readouterr().err
+    assert "consecutive sign-in failures" in err
+    assert "owa-piggy setup --profile une --email me@example.com" in err
+
+
+def test_reauth_counter_is_orphaned_by_a_fresh_refresh_token(monkeypatch, tmp_config, clean_env):
+    """A successful reseed or setup restamps OWA_RT_ISSUED_AT; that alone
+    resets the counter, so a recovered profile is never locked out."""
+    stale = {
+        "OWA_REAUTH_FAILS": "9",
+        "OWA_REAUTH_FAILS_AT": "2026-08-18T00:00:00Z",
+        "OWA_RT_ISSUED_AT": "2026-08-19T00:00:00Z",
+    }
+    assert reseed_mod._reauth_fails(stale) == 0
+
+    calls, saved = _mock_capture_reseed(monkeypatch, [("ok", {"OWA_REFRESH_TOKEN": "rt"})])
+    rc = reseed_mod._do_reseed_capture("une", {"OWA_AUTH_MODE": "capture", **stale})
+
+    assert rc == 0
+    assert calls == [True]
+    assert saved["OWA_RT_ISSUED_AT"] == "2026-08-19T00:00:00Z"

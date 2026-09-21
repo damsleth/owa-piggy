@@ -157,6 +157,7 @@ def _add_common_options(p: argparse.ArgumentParser, *, audience_scope: bool = Tr
         help="target a specific profile (also honored via OWA_PROFILE)",
     )
     if audience_scope:
+        p.add_argument("--no-cache", action="store_true", help="force a fresh token exchange")
         p.add_argument(
             "--audience",
             metavar="<name>",
@@ -381,10 +382,13 @@ def _build_parser() -> argparse.ArgumentParser:
     p_cl_add.add_argument(
         "name",
         metavar="<name[=org-or-url]>",
-        help="teams, or devops=<org name or full URL>",
+        help="pim, teams, or devops=<org name or full URL>",
     )
     p_cl_add.add_argument(
         "--profile", metavar="<alias>", default=None, help="target a specific profile"
+    )
+    p_cl_add.add_argument(
+        "--browser", action="store_true", help="PIM: interactive browser sign-in with PKCE"
     )
 
     p_cl_rm = clients_sub.add_parser("remove", help="forget a service and its token")
@@ -621,6 +625,12 @@ def _mint_and_emit(args: argparse.Namespace, *, mode: str) -> int:
     # audience belongs to a client the profile has, mint under that client:
     # same user, same sidecar session, different minting app.
     bound_id, bound_entry = clients.select_for_scope(alias, scope)
+    if bound_id == clients.PIM_CLIENT_ID and not (bound_entry or {}).get("refresh_token"):
+        print(
+            f"ERROR: PIM needs its own sign-in: owa-piggy clients add pim --profile {alias}",
+            file=sys.stderr,
+        )
+        return 1
     token_sink: Callable[[str], None] | None = None
     if bound_id and bound_entry is not None:
         entry = bound_entry
@@ -657,7 +667,7 @@ def _mint_and_emit(args: argparse.Namespace, *, mode: str) -> int:
     # Cache key is (tenant, client, scope) AND scoped per-profile via
     # a separate cache.json under each profile dir, so switching profiles
     # or tenants naturally misses the old entries.
-    if tenant_id:
+    if tenant_id and not getattr(args, "no_cache", False):
         cached_at = get_cached_token(tenant_id, client_id, scope)
         if cached_at:
             return _emit(
@@ -720,7 +730,9 @@ def _mint_and_emit(args: argparse.Namespace, *, mode: str) -> int:
     # raw AAD error and the original ~instant failure path, or for
     # debugging the reseed plumbing itself.
     auto_reseed = os.environ.get("OWA_AUTO_RESEED", "1").strip() != "0"
-    if not result and info["aad_error"] and auto_reseed:
+    if not result and bound_id == clients.PIM_CLIENT_ID:
+        print(f"hint: sign in again: owa-piggy clients add pim --profile {alias}", file=sys.stderr)
+    if not result and info["aad_error"] and auto_reseed and bound_id != clients.PIM_CLIENT_ID:
         print(
             f"[{alias}] {info['aad_error']}: refresh token expired; auto-reseeding...",
             file=sys.stderr,
@@ -1128,6 +1140,17 @@ def _cmd_clients(args: argparse.Namespace) -> int:
         client_id, url, err = clients.parse_spec(args.name)
         if err or client_id is None:
             print(f"ERROR: {err}", file=sys.stderr)
+            return 1
+        if client_id == clients.PIM_CLIENT_ID:
+            if getattr(args, "browser", False):
+                from .pim_browser import sign_in
+            else:
+                from .pim_setup import sign_in
+
+            config, _ = load_config()
+            return sign_in(alias, config)
+        if getattr(args, "browser", False):
+            print("ERROR: --browser applies only to clients add pim", file=sys.stderr)
             return 1
         entry, derr = clients.declare_client(alias, client_id, capture_url=url)
         if derr or entry is None:
