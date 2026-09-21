@@ -513,14 +513,16 @@ def _inject_default_command(argv: list[str]) -> list[str]:
 
 
 def _resolve_and_activate(
-    args: argparse.Namespace, *, allow_missing: bool = False
+    args: argparse.Namespace, *, allow_missing: bool = False, allow_disabled: bool = False
 ) -> tuple[str, int]:
     """Resolve args.profile into a concrete alias and activate it.
 
     Returns (alias, exit_code). exit_code is 0 on success, non-zero on
     failure (the caller should return it; the error is already printed).
     """
-    alias, err = resolve_profile(args.profile, allow_missing=allow_missing)
+    alias, err = resolve_profile(
+        args.profile, allow_missing=allow_missing, allow_disabled=allow_disabled
+    )
     if err:
         print(f"ERROR: {err}", file=sys.stderr)
         return "", 1
@@ -1051,7 +1053,9 @@ def _cmd_status(args: argparse.Namespace) -> int:
         )
         return all_rc
 
-    alias, rc = _resolve_and_activate(args)
+    # status is the command that *reports* a profile is disabled, so it is
+    # the one path allowed to resolve one.
+    alias, rc = _resolve_and_activate(args, allow_disabled=True)
     if rc:
         return rc
     if getattr(args, "json", False):

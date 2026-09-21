@@ -33,6 +33,7 @@ from .config import (
     load_config,
     load_profiles_conf,
     parse_iso_utc,
+    profile_is_disabled,
     profiles_conf_path,
     save_config,
     set_active_profile,
@@ -160,7 +161,19 @@ def do_reseed(alias: str) -> int:
         what every profile that worked before this change still uses.
 
     Returns 0 on success, non-zero on failure (script exit code or 1).
+
+    A disabled profile (on disk, absent from OWA_PROFILES) is refused here
+    rather than only in `resolve_profile`, because the TUI's reseed action
+    calls this directly - and a reseed is exactly what pops an Edge sidecar
+    window for a profile the user thought was switched off.
     """
+    if profile_is_disabled(alias):
+        print(
+            f"[{alias}] profile is disabled; not reseeding. Enable it in "
+            f"`owa-piggy profiles` (space toggles the highlighted profile).",
+            file=sys.stderr,
+        )
+        return 1
     set_active_profile(alias)
     config, _ = load_config()
     provider = (config.get("OWA_PROVIDER", "") or "msal").strip() or "msal"
@@ -443,7 +456,17 @@ def do_reseed_scheduled() -> int:
     returns 0 - the agent fires hourly and a no-op run is not a failure.
     """
     on_disk = set(list_profiles())
-    scheduled = load_profiles_conf().get("OWA_SCHEDULED", [])
+    reg = load_profiles_conf()
+    scheduled = reg.get("OWA_SCHEDULED", [])
+    # Belt and braces: OWA_SCHEDULED is meant to be a subset of OWA_PROFILES,
+    # but a registry edited by hand (or written by an older build that left a
+    # disabled profile scheduled) must not make the agent wake a disabled
+    # profile's Edge sidecar every hour.
+    if profiles_conf_path().exists():
+        registered = set(reg.get("OWA_PROFILES", []))
+        for alias in [a for a in scheduled if a not in registered]:
+            print(f"skipping disabled profile: {alias}", file=sys.stderr)
+        scheduled = [a for a in scheduled if a in registered]
     aliases = []
     for alias in scheduled:
         if alias in on_disk:

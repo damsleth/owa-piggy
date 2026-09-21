@@ -542,3 +542,17 @@ def test_reauth_counter_is_orphaned_by_a_fresh_refresh_token(monkeypatch, tmp_co
     assert rc == 0
     assert calls == [True]
     assert saved["OWA_RT_ISSUED_AT"] == "2026-08-19T00:00:00Z"
+
+
+def test_do_reseed_refuses_disabled_profile(tmp_config, clean_env, capsys):
+    """The TUI's reseed action calls do_reseed directly, so the disabled
+    gate has to live here too - otherwise a disabled profile still pops an
+    Edge sidecar."""
+    from owa_piggy.config import ensure_profile_registered, profile_dir, save_config
+    from owa_piggy.reseed import do_reseed
+
+    ensure_profile_registered("work")
+    profile_dir("retired").mkdir(parents=True, exist_ok=True)
+    save_config({"OWA_REFRESH_TOKEN": "fake-rt-for-tests"}, profile_dir("retired") / "config")
+    assert do_reseed("retired") == 1
+    assert "disabled" in capsys.readouterr().err

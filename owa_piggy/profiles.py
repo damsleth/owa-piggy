@@ -227,12 +227,18 @@ def disable_profile(alias: str, *, promote_replacement: bool = True) -> tuple[bo
     promote the first remaining enabled profile as the new default so
     ``resolve_profile`` keeps working without an explicit --profile.
 
+    Also drops `alias` from OWA_SCHEDULED, the same invariant
+    ``unregister_profile`` keeps: a disabled profile that stayed scheduled
+    kept getting reseeded hourly by the shared launchd agent, which is what
+    made a disabled profile pop up an Edge sidecar.
+
     Pure registry op - does not touch disk or launchd. Returns
     ``(True, '')`` (always succeeds for a missing alias - removing
     something that isn't there is idempotent).
     """
     reg = load_profiles_conf()
     reg["OWA_PROFILES"] = [p for p in reg["OWA_PROFILES"] if p != alias]
+    reg["OWA_SCHEDULED"] = [p for p in reg.get("OWA_SCHEDULED", []) if p != alias]
     if reg["OWA_DEFAULT_PROFILE"] == alias:
         if promote_replacement and reg["OWA_PROFILES"]:
             reg["OWA_DEFAULT_PROFILE"] = reg["OWA_PROFILES"][0]
