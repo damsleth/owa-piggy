@@ -35,9 +35,12 @@ Storage (mode 0600, atomically written, same as the config):
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 from .config import DEVOPS_CLIENT_ID, atomic_write, iso_utc_now, profile_dir
+from .oauth import PIM_CLIENT_ID
+from .scopes import PIM_PERMISSION
 
 CLIENTS_FILENAME = "clients.json"
 
@@ -55,6 +58,11 @@ TEAMS_WEB_CLIENT_ID = "5e3ce6c0-2b1f-4285-8d4b-75ee78787346"
 
 
 KNOWN_CLIENTS: dict[str, ClientMeta] = {
+    PIM_CLIENT_ID: {
+        "name": "pim",
+        "origin": None,
+        "capture_url": None,
+    },
     TEAMS_WEB_CLIENT_ID: {
         "name": "teams",
         "origin": "https://teams.microsoft.com",
@@ -141,6 +149,8 @@ def declare_client(
     declaration with no refresh_token never routes (see
     `select_for_scope`) - it only tells reseed where to go.
     """
+    if client_id == PIM_CLIENT_ID:
+        return None, f"PIM requires device sign-in: owa-piggy clients add pim --profile {alias}"
     meta = KNOWN_CLIENTS.get(client_id, {})
     clients = load_clients(alias)
     entry = dict(clients.get(client_id, {}))
@@ -213,6 +223,8 @@ def parse_spec(spec: str | None) -> tuple[str | None, str | None, str]:
             None,
             (f"unknown client {name!r}; known names: {known} (or pass a client id with =<url>)"),
         )
+    if client_id == PIM_CLIENT_ID and url:
+        return None, None, "PIM uses device sign-in and does not accept a capture URL"
     if client_id not in KNOWN_CLIENTS and not url:
         return None, None, f"client {name!r} needs an explicit =<url>"
     return client_id, normalize_capture_url(client_id, url), ""
@@ -225,7 +237,9 @@ def capture_targets(alias: str) -> list[tuple[str, ClientEntry]]:
     were declared - deterministic, and the FOCI/OWA token is always done
     first by the caller.
     """
-    return list(load_clients(alias).items())
+    # Native PIM credentials refresh on demand. Scheduled SPA reseeds must
+    # never start an interactive device-code sign-in.
+    return [(cid, entry) for cid, entry in load_clients(alias).items() if cid != PIM_CLIENT_ID]
 
 
 def save_client(
@@ -284,6 +298,9 @@ def select_for_scope(alias: str, scope: str) -> tuple[str | None, ClientEntry | 
     useless at authsvc, so falling back to it silently would reintroduce
     the exact failure this store exists to fix.
     """
+    if PIM_PERMISSION in scope.split():
+        # An empty entry deliberately prevents fallback to the OWA family RT.
+        return PIM_CLIENT_ID, load_clients(alias).get(PIM_CLIENT_ID, {})
     audience = audience_from_scope(scope)
     if not audience:
         return None, None
@@ -306,10 +323,32 @@ def overlay_config(config: dict[str, str], client_id: str, entry: ClientEntry) -
     overlaid = dict(config)
     overlaid["OWA_CLIENT_ID"] = client_id
     overlaid["OWA_REFRESH_TOKEN"] = entry.get("refresh_token", "")
+    if client_id == PIM_CLIENT_ID:
+        overlaid.pop("OWA_ORIGIN", None)
+        overlaid["OWA_RT_ISSUED_AT"] = entry.get("rt_issued_at", "")
+        return overlaid
     origin = entry.get("origin") or KNOWN_CLIENTS.get(client_id, {}).get("origin")
     if origin:
         overlaid["OWA_ORIGIN"] = origin
     return overlaid
+
+
+def pim_exchange_config(
+    alias: str,
+    config: dict[str, str],
+    scope: str,
+) -> tuple[dict[str, str], Callable[[str], None] | None]:
+    """Apply PIM isolation to diagnostic exchanges as well as token minting."""
+    if PIM_PERMISSION not in scope.split():
+        return config, None
+    entry = load_clients(alias).get(PIM_CLIENT_ID, {})
+    if not entry.get("refresh_token"):
+        raise ValueError(f"PIM needs sign-in: owa-piggy clients add pim --profile {alias}")
+
+    def sink(refresh_token: str) -> None:
+        save_client(alias, PIM_CLIENT_ID, refresh_token=refresh_token)
+
+    return overlay_config(config, PIM_CLIENT_ID, entry), sink
 
 
 # --- folding a client-bound profile into its identity's profile --------

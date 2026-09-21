@@ -10,15 +10,15 @@ _owa_piggy() {
     return
   fi
   case "$cmd" in
-    token) COMPREPLY=( $(compgen -W "-h --help --profile --audience --scope --sharepoint-tenant --json --env" -- "$cur") ) ;;
-    status) COMPREPLY=( $(compgen -W "-h --help --profile --audience --scope --sharepoint-tenant --json --verbose -v" -- "$cur") ) ;;
-    debug) COMPREPLY=( $(compgen -W "-h --help --profile --audience --scope --sharepoint-tenant" -- "$cur") ) ;;
-    decode) COMPREPLY=( $(compgen -W "-h --help --profile --audience --scope --sharepoint-tenant" -- "$cur") ) ;;
-    remaining) COMPREPLY=( $(compgen -W "-h --help --profile --audience --scope --sharepoint-tenant" -- "$cur") ) ;;
+    token) COMPREPLY=( $(compgen -W "-h --help --profile --no-cache --audience --scope --sharepoint-tenant --json --env" -- "$cur") ) ;;
+    status) COMPREPLY=( $(compgen -W "-h --help --profile --no-cache --audience --scope --sharepoint-tenant --json --verbose -v" -- "$cur") ) ;;
+    debug) COMPREPLY=( $(compgen -W "-h --help --profile --no-cache --audience --scope --sharepoint-tenant" -- "$cur") ) ;;
+    decode) COMPREPLY=( $(compgen -W "-h --help --profile --no-cache --audience --scope --sharepoint-tenant" -- "$cur") ) ;;
+    remaining) COMPREPLY=( $(compgen -W "-h --help --profile --no-cache --audience --scope --sharepoint-tenant" -- "$cur") ) ;;
     setup) COMPREPLY=( $(compgen -W "-h --help --profile --email --from-trough --trough-tenant --trough-sub --user-agent --sharepoint-tenant --with-client --google --google-client-id --google-client-secret --json" -- "$cur") ) ;;
     reseed) COMPREPLY=( $(compgen -W "-h --help --profile --all --scheduled --json" -- "$cur") ) ;;
     edge) COMPREPLY=( $(compgen -W "-h --help --profile" -- "$cur") ) ;;
-    tui) COMPREPLY=( $(compgen -W "-h --help --profile --audience --scope --sharepoint-tenant" -- "$cur") ) ;;
+    tui) COMPREPLY=( $(compgen -W "-h --help --profile --no-cache --audience --scope --sharepoint-tenant" -- "$cur") ) ;;
     audiences) COMPREPLY=( $(compgen -W "-h --help" -- "$cur") ) ;;
     install-owa-tools) COMPREPLY=( $(compgen -W "-h --help" -- "$cur") ) ;;
     version) COMPREPLY=( $(compgen -W "-h --help --json" -- "$cur") ) ;;

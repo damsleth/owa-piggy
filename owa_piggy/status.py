@@ -39,7 +39,7 @@ from .launchd import (
 from .launchd import (
     is_scheduled as launchd_is_scheduled,
 )
-from .oauth import CLIENT_ID
+from .oauth import CLIENT_ID, PIM_CLIENT_ID
 from .scopes import KNOWN_AUDIENCES, resolve_audience
 from .scripts import find_reseed_script
 from .token_flow import exchange_fresh
@@ -149,11 +149,32 @@ def _probe_profile(
         probe["resolve_error"] = err
         return probe
 
+    # A native credential has no known SPA 24-hour expiry. Clear the OWA
+    # metadata even when PIM setup is missing, so the report cannot imply
+    # that the unrelated browser credential authenticates this audience.
+    if clients.PIM_PERMISSION in probe_scope.split():
+        probe.update(rt_present_cfg=False, rt_expires_at=None, rt_issued_at="")
+    try:
+        config, pim_sink = clients.pim_exchange_config(alias, config, probe_scope)
+    except ValueError as exc:
+        probe["resolve_error"] = str(exc)
+        return probe
+    if config.get("OWA_CLIENT_ID") == PIM_CLIENT_ID:
+        probe.update(
+            rt_present_cfg=bool(config.get("OWA_REFRESH_TOKEN")),
+            rt_issued_at=config.get("OWA_RT_ISSUED_AT", ""),
+        )
+
     # exchange_fresh handles config field extraction, FOCI shape check,
     # thread-local stderr capture (so we can surface the AAD error instead
     # of leaking it to stdout), and rotated-RT persistence to config_path.
     result, info = exchange_fresh(
-        config, probe_scope, persist=persist, capture_stderr=True, config_path=config_path
+        config,
+        probe_scope,
+        persist=persist,
+        capture_stderr=True,
+        config_path=config_path,
+        **({"token_sink": pim_sink} if pim_sink else {}),
     )
     probe["result"] = result
     probe["info"] = info
@@ -485,6 +506,13 @@ def do_debug(
         print(f"ERROR: {scope_err}", file=sys.stderr)
         return 1
 
+    try:
+        config, pim_sink = clients.pim_exchange_config(alias, config, debug_scope)
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+    pim_options: dict[str, Any] = {"token_sink": pim_sink} if pim_sink else {}
+
     def row(status: str, label: str, detail: str = "") -> None:
         print(f"  [{status}] {label}" + (f": {detail}" if detail else ""))
 
@@ -563,7 +591,9 @@ def do_debug(
         # `1.`/`0.` shape check is an AAD-specific concept and doesn't apply.
         row("ok", f"google opaque RT ({rt[:4]}...)")
         print("  probing live exchange against Google...")
-        result, _info = exchange_fresh(config, debug_scope, persist=persist, capture_stderr=False)
+        result, _info = exchange_fresh(
+            config, debug_scope, persist=persist, capture_stderr=False, **pim_options
+        )
         if result and result.get("access_token"):
             row("ok", "exchange succeeded")
             # Google's access tokens are opaque bearer strings, not JWTs -
@@ -599,7 +629,11 @@ def do_debug(
             # so AAD error text reaches the user via the same path the
             # `exchange failed - see error above` row points at.
             result, _info = exchange_fresh(
-                config, debug_scope, persist=persist, capture_stderr=False
+                config,
+                debug_scope,
+                persist=persist,
+                capture_stderr=False,
+                **pim_options,
             )
             if result and result.get("access_token"):
                 row("ok", "exchange succeeded")
