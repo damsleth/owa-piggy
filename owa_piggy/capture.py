@@ -442,6 +442,10 @@ def open_edge(alias: str, *, url: str | None = None) -> tuple[subprocess.Popen[b
     The userdata dir is created if absent (mode 0o700) so this also works
     as a first-time "open Edge for a brand-new profile" step.
     """
+    if _config.profile_is_disabled(alias):
+        raise RuntimeError(
+            f"profile {alias!r} is disabled; enable it in `owa-piggy profiles` first"
+        )
     edge_dir = _config.profile_edge_dir(alias)
     edge_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     # An abandoned *capture* browser on this dir would singleton-forward this

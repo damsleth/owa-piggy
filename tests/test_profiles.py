@@ -446,3 +446,51 @@ def test_migration_skips_when_profiles_dir_present(tmp_config, clean_env):
     # Legacy path exists AND profiles/ exists. Migration is a no-op.
     assert migration.migrate_if_needed() is None
     assert tmp_config.exists()  # legacy untouched
+
+
+# --- disabled profiles are unusable -----------------------------------
+
+
+def test_resolve_disabled_profile_refuses(tmp_config, clean_env):
+    """A profile on disk but absent from OWA_PROFILES must not resolve:
+    that is what kept a disabled profile minting tokens and launching the
+    Edge sidecar."""
+    ensure_profile_registered("work")
+    profile_dir("work").mkdir(parents=True, exist_ok=True)
+    profile_dir("retired").mkdir(parents=True, exist_ok=True)
+    alias, err = resolve_profile("retired")
+    assert alias == ""
+    assert "disabled" in err
+    # ...but status/setup can still target it explicitly.
+    assert resolve_profile("retired", allow_disabled=True) == ("retired", "")
+    assert resolve_profile("retired", allow_missing=True) == ("retired", "")
+
+
+def test_resolve_disabled_via_env_and_single_profile_refuses(tmp_config, clean_env, monkeypatch):
+    ensure_profile_registered("work")
+    profile_dir("work").mkdir(parents=True, exist_ok=True)
+    profile_dir("retired").mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("OWA_PROFILE", "retired")
+    assert resolve_profile(None)[0] == ""
+    monkeypatch.delenv("OWA_PROFILE")
+    # Sole on-disk profile, but the registry says it is disabled.
+    save_profiles_conf({"OWA_DEFAULT_PROFILE": "", "OWA_PROFILES": [], "OWA_SCHEDULED": []})
+    import shutil
+
+    shutil.rmtree(profile_dir("work"))
+    assert resolve_profile(None)[0] == ""
+
+
+def test_disable_profile_also_unschedules(tmp_config, clean_env):
+    """Disabling must drop the alias from OWA_SCHEDULED, or the hourly
+    launchd agent keeps reseeding it."""
+    from owa_piggy.config import schedule_profile
+    from owa_piggy.profiles import disable_profile
+
+    ensure_profile_registered("work")
+    ensure_profile_registered("retired")
+    schedule_profile("retired")
+    disable_profile("retired")
+    reg = load_profiles_conf()
+    assert "retired" not in reg["OWA_PROFILES"]
+    assert "retired" not in reg["OWA_SCHEDULED"]
