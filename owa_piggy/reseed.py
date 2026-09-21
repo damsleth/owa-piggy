@@ -59,6 +59,44 @@ def _profile_cdp_port(alias: str) -> int:
 # preference is trusted before headless gets another chance.
 _HEADLESS_PREF_TTL_HOURS = 24
 
+# How many consecutive unattended sign-in failures a capture profile may
+# rack up before scheduled reseed stops launching Edge for it. Every
+# attempt against an expired sidecar session parks on login.* - which,
+# for an account with a remembered identity, fires an Authenticator
+# number-match push the user cannot answer, because the window is
+# offscreen. Left unbounded that is one unanswerable push per hour until
+# someone notices. Three keeps the self-healing retries (a session that
+# comes back on its own) and cuts the nagging.
+_MAX_REAUTH_FAILS = 3
+
+
+def _reauth_fails(config: dict[str, str]) -> int:
+    """Consecutive unattended 'reauth' failures recorded for this profile.
+
+    The count is tied to the refresh token it was observed against:
+    OWA_REAUTH_FAILS_AT holds the OWA_RT_ISSUED_AT that was current when
+    it was last bumped. Every path that persists a fresh RT restamps
+    OWA_RT_ISSUED_AT (a successful reseed, every `setup` variant), which
+    orphans the counter and resets it to zero - so none of those call
+    sites needs to know this counter exists.
+    """
+    at = (config.get("OWA_REAUTH_FAILS_AT") or "").strip()
+    if at != (config.get("OWA_RT_ISSUED_AT") or "").strip():
+        return 0
+    try:
+        return int((config.get("OWA_REAUTH_FAILS") or "0").strip() or 0)
+    except ValueError:
+        return 0
+
+
+def _record_reauth_fail(config: dict[str, str]) -> int:
+    """Bump the counter and persist it. Returns the new total."""
+    total = _reauth_fails(config) + 1
+    config["OWA_REAUTH_FAILS"] = str(total)
+    config["OWA_REAUTH_FAILS_AT"] = (config.get("OWA_RT_ISSUED_AT") or "").strip()
+    save_config(config)
+    return total
+
 
 def _headless_pinned(config: dict[str, str]) -> bool:
     """Was this profile's capture mode chosen deliberately (dashboard 'h')
@@ -144,6 +182,22 @@ def _do_reseed_capture(alias: str, config: dict[str, str]) -> int:
     the rotated refresh token. No window appears under any condition;
     if the sidecar session has expired we exit non-zero and ask the
     user to re-run `setup --email` interactively."""
+    is_tty = sys.stdin.isatty()
+    fails = _reauth_fails(config)
+    if not is_tty and fails >= _MAX_REAUTH_FAILS:
+        # Backing off before Edge starts: launching it is what fires the
+        # push. A TTY run is exempt - there a human can answer it, and
+        # the reauth branch below signs in interactively instead.
+        email = config.get("OWA_EMAIL", "")
+        hint = f" --email {email}" if email else " --email <addr>"
+        print(
+            f"ERROR: [{alias}] skipped: {fails} consecutive sign-in failures; "
+            f"not prompting again unattended.",
+            file=sys.stderr,
+        )
+        print(f"       Run: owa-piggy setup --profile {alias}{hint}", file=sys.stderr)
+        return 1
+
     # Capture-mode reseed can be reached either through the single-profile
     # CLI path (which already cleared the cache) or via do_reseed_all(),
     # which calls us directly per profile. Clear again here so both call
@@ -155,7 +209,6 @@ def _do_reseed_capture(alias: str, config: dict[str, str]) -> int:
     from . import capture
 
     print(f"[{alias}] reseed via network capture (OWA_AUTH_MODE=capture)", file=sys.stderr)
-    is_tty = sys.stdin.isatty()
     # Env override wins so an operator can experiment with a UA without
     # rewriting the profile config; otherwise the persisted per-profile
     # UA (set at `setup --user-agent ...`) is what keeps silent reseed
@@ -245,8 +298,10 @@ def _do_reseed_capture(alias: str, config: dict[str, str]) -> int:
                 return 1
         else:
             hint = f" --email {email}" if email else " --email <addr>"
+            total = _record_reauth_fail(config)
             print(
-                f"ERROR: [{alias}] sidecar session expired; interactive sign-in needed.",
+                f"ERROR: [{alias}] sidecar session expired; interactive sign-in needed. "
+                f"({total}/{_MAX_REAUTH_FAILS} before unattended reseed backs off)",
                 file=sys.stderr,
             )
             print(f"       Run: owa-piggy setup --profile {alias}{hint}", file=sys.stderr)
