@@ -984,7 +984,10 @@ def _stub_dashboard_probe(monkeypatch, profiles):
     )
 
 
-def test_interactive_profile_dashboard_ctrl_c_restores_terminal(monkeypatch):
+@pytest.mark.parametrize("sigint", [False, True])
+def test_interactive_profile_dashboard_ctrl_c_restores_terminal(monkeypatch, sigint):
+    # Ctrl+C arrives as a raw "\x03" byte in raw mode, or as SIGINT
+    # (KeyboardInterrupt) while an action runs cooked. Both quit cleanly.
     import termios
     import tty
 
@@ -996,6 +999,8 @@ def test_interactive_profile_dashboard_ctrl_c_restores_terminal(monkeypatch):
             return True
 
         def read(self, _n):
+            if sigint:
+                raise KeyboardInterrupt
             return "\x03"
 
     from owa_piggy import profile_tui
@@ -1021,9 +1026,7 @@ def test_interactive_profile_dashboard_ctrl_c_restores_terminal(monkeypatch):
         lambda fd, when, state: restored.append((fd, when, state)),
     )
 
-    with pytest.raises(KeyboardInterrupt):
-        profile_tui.run_dashboard()
-
+    assert profile_tui.run_dashboard() == 0
     assert restored == [(0, termios.TCSADRAIN, ["old-state"])]
 
 
