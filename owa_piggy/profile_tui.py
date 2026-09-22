@@ -658,9 +658,7 @@ def run_dashboard(
             clamp_cursor(profiles)
             current = profiles[state.idx] if profiles else None
 
-            if ch == "\x03":
-                raise KeyboardInterrupt
-            if ch in ("q", "Q"):
+            if ch in ("q", "Q", "\x03"):
                 break
             if ch == "\x1b":
                 seq = sys.stdin.read(1)
@@ -755,6 +753,10 @@ def run_dashboard(
             # Unknown key - just clear any stale message.
             state.message = ""
             draw()
+    except KeyboardInterrupt:
+        # SIGINT mid-probe or mid-action (cooked mode) quits like q: the
+        # finally below restores the terminal, no traceback.
+        pass
     finally:
         sys.stdout.write(SHOW_CURSOR)
         sys.stdout.flush()
