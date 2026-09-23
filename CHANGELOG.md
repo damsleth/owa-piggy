@@ -8,7 +8,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 Releases before v0.12.0 are recorded only in the annotated git tags
 (`git tag -n99`).
 
-## [Unreleased]
+## [1.2.0] - 2026-09-23
 
 ### Added
 - Opt-in `pim` audience and `clients add pim` device sign-in, with an isolated
