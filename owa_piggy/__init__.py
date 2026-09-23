@@ -41,7 +41,7 @@ def _read_version() -> str:
         return "unknown"
 
 
-__version__ = _read_version()
+__version__: str = _read_version()
 
 # Defined after __version__ so cli.py can safely `from . import __version__`.
 from .cli import main  # noqa: E402
