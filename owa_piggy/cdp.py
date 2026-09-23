@@ -248,6 +248,10 @@ class CdpSession:
             # timeout could fire between a frame's header and its payload,
             # and callers loop on short windows reusing this session - the
             # next read would parse payload bytes as a header.
+            # ponytail: a peer that sends a header and then stalls blocks
+            # here instead of timing out; Edge writes frames whole, and a
+            # SIGTERM from the caller still unwinds. Per-frame deadline if
+            # that ever bites.
             if not select.select([self._sock], [], [], remaining)[0]:
                 break
             event: dict[str, Any] = json.loads(_recv_frame(self._sock))
