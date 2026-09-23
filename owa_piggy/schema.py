@@ -36,55 +36,62 @@ MACHINE_COMMANDS = frozenset({"token", "status", "version", "profiles", "clients
 _TRUTHY = {"1", "true", "yes", "on"}
 
 
-# --- schema builders (mirror owa_core.schema) ---------------------------
+# --- schema, read off the live argparse parser ---------------------------
+
+# What argparse cannot say about a command. Everything else - names,
+# summaries, flags - is read from cli._build_parser() so the schema cannot
+# drift from the CLI (scripts/gen-completions.py does the same for shells).
+_META: dict[str, dict[str, Any]] = {
+    "setup": {"mutates": True},
+    "reseed": {"mutates": True},
+    "tui": {"output": "text", "mutates": True},
+    "decode": {"output": "text"},
+    "remaining": {"output": "text"},
+    "audiences": {"output": "text"},
+    "profiles": {"mutates": True},
+    "clients": {"mutates": True},
+    "install-owa-tools": {"mutates": True},
+}
 
 
-def flag(
-    name: str,
-    *,
-    value: str | None = None,
-    summary: str = "",
-    required: bool = False,
-    repeatable: bool = False,
-) -> dict[str, Any]:
-    row: dict[str, Any] = {"name": name}
-    if value is not None:
-        row["value"] = value
-    if summary:
-        row["summary"] = summary
-    if required:
-        row["required"] = True
-    if repeatable:
-        row["repeatable"] = True
-    return row
+def _first_line(text: str | None) -> str:
+    return (text or "").strip().splitlines()[0] if (text or "").strip() else ""
 
 
-def command(
-    name: str,
-    summary: str = "",
-    *,
-    output: str = "json",
-    flags: list[dict[str, Any]] | None = None,
-    mutates: bool = False,
-    destructive: bool = False,
-    confirmation: bool = False,
-    idempotent: bool | None = None,
-) -> dict[str, Any]:
-    row: dict[str, Any] = {
-        "name": name,
-        "summary": summary,
-        "output": {"type": output},
-        "flags": list(flags or []),
-    }
-    if mutates:
-        row["mutates"] = True
-    if destructive:
-        row["destructive"] = True
-    if confirmation:
-        row["confirmation"] = {"flag": "--yes"}
-    if idempotent is not None:
-        row["idempotent"] = bool(idempotent)
-    return row
+def command_schema() -> list[dict[str, Any]]:
+    import argparse
+
+    from .cli import _build_parser
+
+    sub = next(a for a in _build_parser()._actions if isinstance(a, argparse._SubParsersAction))
+    helps = {a.dest: _first_line(a.help) for a in sub._choices_actions}
+    out = []
+    for name, cmd_parser in sub.choices.items():
+        flags = []
+        for action in cmd_parser._actions:
+            if not action.option_strings or action.help == argparse.SUPPRESS:
+                continue
+            if isinstance(action, argparse._HelpAction):
+                continue
+            row: dict[str, Any] = {"name": max(action.option_strings, key=len)}
+            if action.nargs != 0:
+                row["value"] = str(action.metavar or f"<{action.dest}>")
+            if action.help:
+                row["summary"] = _first_line(action.help)
+            if isinstance(action, argparse._AppendAction):
+                row["repeatable"] = True
+            flags.append(row)
+        meta = _META.get(name, {})
+        cmd: dict[str, Any] = {
+            "name": name,
+            "summary": helps.get(name, ""),
+            "output": {"type": meta.get("output", "json")},
+            "flags": flags,
+        }
+        if meta.get("mutates"):
+            cmd["mutates"] = True
+        out.append(cmd)
+    return out
 
 
 def schema_for(commands: list[dict[str, Any]]) -> dict[str, Any]:
@@ -103,16 +110,16 @@ def _emit_json(payload: dict[str, Any]) -> int:
     return 0
 
 
-def maybe_emit_schema(argv: list[str], *, commands: list[dict[str, Any]]) -> int | None:
+def maybe_emit_schema(argv: list[str]) -> int | None:
     """Handle ``schema``, ``schema <command>`` and ``--help --json``.
 
     Returns an exit code when handled, otherwise None.
     """
     if argv in (["--help", "--json"], ["help", "--json"]):
-        return _emit_json(schema_for(commands))
+        return _emit_json(schema_for(command_schema()))
     if not argv or argv[0] != "schema":
         return None
-    payload = schema_for(commands)
+    payload = schema_for(command_schema())
     if len(argv) > 2:
         print("schema accepts at most one command name", file=sys.stderr)
         return 2
@@ -169,102 +176,3 @@ def envelope(command: str, data: Any) -> dict[str, Any]:
     if profile:
         meta["profile"] = profile
     return {"_owa": meta, "data": data}
-
-
-_PROFILE = flag(
-    "--profile", value="<alias>", summary="Target a specific profile (also via OWA_PROFILE)"
-)
-_AUDIENCE = flag(
-    "--audience", value="<name>", summary="Named FOCI audience (see `owa-piggy audiences`)"
-)
-_SCOPE = flag("--scope", value="<scope>", summary="Override scope explicitly")
-_JSON = flag("--json", summary="Emit JSON")
-
-COMMAND_SCHEMA = [
-    command(
-        "token",
-        "Print an access token (default command)",
-        flags=[
-            _PROFILE,
-            _AUDIENCE,
-            _SCOPE,
-            flag("--json", summary="Print the full token response as JSON"),
-            flag("--env", summary="Print ACCESS_TOKEN= / EXPIRES_IN= lines"),
-        ],
-    ),
-    command(
-        "status",
-        "Compact health summary for one or all profiles",
-        flags=[
-            _PROFILE,
-            _AUDIENCE,
-            _SCOPE,
-            flag("--json", summary="Print health as JSON without token values"),
-        ],
-    ),
-    command(
-        "debug", "Dump full setup diagnostics for one profile", flags=[_PROFILE, _AUDIENCE, _SCOPE]
-    ),
-    command(
-        "decode",
-        "Print the JWT header and payload of the current token",
-        output="text",
-        flags=[_PROFILE, _AUDIENCE, _SCOPE],
-    ),
-    command(
-        "remaining",
-        "Print minutes remaining on the current token",
-        output="text",
-        flags=[_PROFILE, _AUDIENCE, _SCOPE],
-    ),
-    command(
-        "setup",
-        "Interactive first-time setup; creates the profile if new",
-        mutates=True,
-        flags=[
-            _PROFILE,
-            flag(
-                "--email",
-                value="<addr>",
-                summary="Use the Edge network-capture flow (encrypted-MSAL/Okta tenants)",
-            ),
-        ],
-    ),
-    command(
-        "reseed",
-        "Fetch a fresh refresh token headlessly via the Edge sidecar",
-        mutates=True,
-        flags=[
-            _PROFILE,
-            flag("--all", summary="Reseed every configured profile"),
-            flag("--json", summary="Emit an action envelope on stdout"),
-        ],
-    ),
-    command(
-        "edge", "Open a normal Edge window using a profile's sidecar session", flags=[_PROFILE]
-    ),
-    command(
-        "tui",
-        "Interactive token-health dashboard (profiles + freshness)",
-        output="text",
-        mutates=True,
-        flags=[_PROFILE, _AUDIENCE, _SCOPE],
-    ),
-    command("audiences", "List all known FOCI-accessible audiences", output="text"),
-    command("version", "Print version information", flags=[_JSON]),
-    command(
-        "profiles",
-        "List / manage profiles (subcommands: list, new, set-default, delete)",
-        mutates=True,
-        flags=[_JSON],
-    ),
-    command(
-        "clients",
-        "List / add / remove the other services a profile signs in to (subcommands: add, remove)",
-        mutates=True,
-        flags=[_PROFILE, _JSON],
-    ),
-    command(
-        "install-owa-tools", "Install the companion owa-tools suite via Homebrew", mutates=True
-    ),
-]

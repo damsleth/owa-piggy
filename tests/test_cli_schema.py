@@ -88,3 +88,15 @@ def test_err_json_emits_structured_error_on_stderr():
     assert payload["error"]["tool"] == "owa-piggy"
     assert payload["error"]["command"] == "token"
     assert payload["error"]["exit_code"] == 2
+
+
+def test_schema_flags_track_the_parser():
+    """The schema is read off argparse, so a flag added to the CLI shows up
+    without a second hand-kept list (reseed --scheduled used to be missing)."""
+    from owa_piggy import schema
+
+    by_name = {c["name"]: c for c in schema.command_schema()}
+    reseed = {f["name"] for f in by_name["reseed"]["flags"]}
+    assert {"--profile", "--all", "--scheduled", "--json"} <= reseed
+    assert "--help" not in reseed
+    assert by_name["decode"]["output"] == {"type": "text"}
