@@ -32,6 +32,7 @@ from .cache import (
     get_cached_token,
     store_token,
 )
+from .conventions import EXIT_AUTH
 from .config import (
     classify_profile_type,
     list_profiles,
@@ -741,6 +742,11 @@ def _mint_and_emit(args: argparse.Namespace, *, mode: str) -> int:
             file=sys.stderr,
         )
         rc = do_reseed(alias)
+        if rc == EXIT_AUTH:
+            # Only a human signing in fixes this. A distinct code lets a
+            # caller (yaams) drop the profile for the run instead of
+            # retrying every endpoint into another Edge launch each.
+            return EXIT_AUTH
         if rc == 0:
             config, persist = load_config()
             # Reload dropped the bound-client overlay; reapply it (reseed

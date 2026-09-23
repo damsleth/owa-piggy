@@ -495,7 +495,7 @@ def test_capture_reseed_counts_unattended_reauth_failures(
 
     rc = reseed_mod._do_reseed_capture("une", config)
 
-    assert rc == 1
+    assert rc == reseed_mod.EXIT_AUTH
     assert saved["OWA_REAUTH_FAILS"] == "2"
     assert saved["OWA_REAUTH_FAILS_AT"] == "2026-08-18T00:00:00Z"
     assert "(2/3 before unattended reseed backs off)" in capsys.readouterr().err
@@ -519,7 +519,7 @@ def test_capture_reseed_backs_off_after_max_reauth_failures(
         },
     )
 
-    assert rc == 1
+    assert rc == reseed_mod.EXIT_AUTH
     assert calls == []
     err = capsys.readouterr().err
     assert "consecutive sign-in failures" in err
