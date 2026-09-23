@@ -45,8 +45,9 @@ def _never_touch_real_config(tmp_path, monkeypatch):
     from owa_piggy import setup as setup_mod
 
     monkeypatch.setattr(config_mod, "ROOT_DIR", sandbox)
-    monkeypatch.setattr(config_mod, "CONFIG_PATH", sandbox / "config")
-    monkeypatch.setattr(setup_mod, "CONFIG_PATH", sandbox / "config", raising=False)
+    guard_path = sandbox / "profiles" / "default" / "config"
+    monkeypatch.setattr(config_mod, "CONFIG_PATH", guard_path)
+    monkeypatch.setattr(setup_mod, "CONFIG_PATH", guard_path, raising=False)
 
 
 @pytest.fixture
