@@ -1239,7 +1239,13 @@ def capture_silent(
             session.close()
         _terminate(proc)
 
-    return "ok", _build_config(token_response, email=None, mode="capture")
+    try:
+        return "ok", _build_config(token_response, email=None, mode="capture")
+    except RuntimeError as e:
+        # Same unusable-response case as the start-up burst above. Unhandled,
+        # it aborted `reseed --scheduled` for every profile after this one.
+        log(f"captured token unusable: {e}")
+        return "error", None
 
 
 def capture_bound_clients(
