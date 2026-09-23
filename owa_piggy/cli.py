@@ -42,7 +42,7 @@ from .config import (
     set_active_profile,
     validate_alias,
 )
-from .conventions import EXIT_AUTH
+from .conventions import EXIT_AUTH, EXIT_USER_ERROR, action_envelope, emit_action
 from .jwt import decode_jwt, decode_jwt_segment, token_minutes_remaining
 from .migration import fold_bound_clients_if_needed, migrate_if_needed
 from .oauth import CLIENT_ID
@@ -867,6 +867,11 @@ def _cmd_setup(args: argparse.Namespace) -> int:
     return setup_rc
 
 
+def _act(t0: float, **fields: Any) -> None:
+    """Emit one --json action envelope (reseed, profiles), timed from t0."""
+    emit_action(action_envelope(duration_ms=(time.monotonic() - t0) * 1000.0, **fields))
+
+
 def _cmd_reseed(args: argparse.Namespace) -> int:
     as_json = bool(getattr(args, "json", False))
     t0 = time.monotonic()
@@ -875,19 +880,11 @@ def _cmd_reseed(args: argparse.Namespace) -> int:
 
     def _usage_error(message: str) -> int:
         if as_json:
-            from owa_piggy.conventions import (
-                EXIT_USER_ERROR,
-                action_envelope,
-                emit_action,
-            )
-
-            emit_action(
-                action_envelope(
-                    command="reseed",
-                    ok=False,
-                    error={"code": "usage", "message": message},
-                    duration_ms=(time.monotonic() - t0) * 1000.0,
-                )
+            _act(
+                t0,
+                command="reseed",
+                ok=False,
+                error={"code": "usage", "message": message},
             )
             return EXIT_USER_ERROR
         print(f"ERROR: {message}", file=sys.stderr)
@@ -907,39 +904,31 @@ def _cmd_reseed(args: argparse.Namespace) -> int:
         scope = "all" if all_profiles else "scheduled"
         rc = do_reseed_all() if all_profiles else do_reseed_scheduled()
         if as_json:
-            from owa_piggy.conventions import action_envelope, emit_action
-
-            emit_action(
-                action_envelope(
-                    command="reseed",
-                    ok=(rc == 0),
-                    stats={"scope": scope, "exit_code": int(rc or 0)},
-                    error=None
-                    if rc == 0
-                    else {
-                        "code": "reseed_failed",
-                        "message": f"reseed --{scope} returned nonzero",
-                    },
-                    duration_ms=(time.monotonic() - t0) * 1000.0,
-                )
+            _act(
+                t0,
+                command="reseed",
+                ok=(rc == 0),
+                stats={"scope": scope, "exit_code": int(rc or 0)},
+                error=None
+                if rc == 0
+                else {
+                    "code": "reseed_failed",
+                    "message": f"reseed --{scope} returned nonzero",
+                },
             )
         return rc
 
     alias, rc = _resolve_and_activate(args)
     if rc:
         if as_json:
-            from owa_piggy.conventions import action_envelope, emit_action
-
-            emit_action(
-                action_envelope(
-                    command="reseed",
-                    ok=False,
-                    error={
-                        "code": "profile_resolve_failed",
-                        "message": "could not resolve profile",
-                    },
-                    duration_ms=(time.monotonic() - t0) * 1000.0,
-                )
+            _act(
+                t0,
+                command="reseed",
+                ok=False,
+                error={
+                    "code": "profile_resolve_failed",
+                    "message": "could not resolve profile",
+                },
             )
         return rc
     # Clear the AT cache first so we never serve a token minted for the
@@ -948,21 +937,17 @@ def _cmd_reseed(args: argparse.Namespace) -> int:
     clear_cache()
     rc = do_reseed(alias)
     if as_json:
-        from owa_piggy.conventions import action_envelope, emit_action
-
-        emit_action(
-            action_envelope(
-                command="reseed",
-                ok=(rc == 0),
-                stats={"profile": alias, "exit_code": int(rc or 0)},
-                error=None
-                if rc == 0
-                else {
-                    "code": "reseed_failed",
-                    "message": f"do_reseed({alias!r}) returned nonzero",
-                },
-                duration_ms=(time.monotonic() - t0) * 1000.0,
-            )
+        _act(
+            t0,
+            command="reseed",
+            ok=(rc == 0),
+            stats={"profile": alias, "exit_code": int(rc or 0)},
+            error=None
+            if rc == 0
+            else {
+                "code": "reseed_failed",
+                "message": f"do_reseed({alias!r}) returned nonzero",
+            },
         )
     return rc
 
@@ -1316,16 +1301,12 @@ def _do_profiles_set_default(alias: str, as_json: bool = False) -> int:
     t0 = time.monotonic()
     ok, err = set_default_profile(alias)
     if as_json:
-        from owa_piggy.conventions import action_envelope, emit_action
-
-        emit_action(
-            action_envelope(
-                command="profiles set-default",
-                ok=ok,
-                stats={"alias": alias} if ok else {},
-                error=None if ok else {"code": "set_default_failed", "message": err},
-                duration_ms=(time.monotonic() - t0) * 1000.0,
-            )
+        _act(
+            t0,
+            command="profiles set-default",
+            ok=ok,
+            stats={"alias": alias} if ok else {},
+            error=None if ok else {"code": "set_default_failed", "message": err},
         )
         return 0 if ok else 1
     if not ok:
@@ -1348,15 +1329,11 @@ def _do_profiles_delete(
 
     def _fail(code: str, message: str, exit_code: int = 1) -> int:
         if as_json:
-            from owa_piggy.conventions import action_envelope, emit_action
-
-            emit_action(
-                action_envelope(
-                    command="profiles delete",
-                    ok=False,
-                    error={"code": code, "message": message},
-                    duration_ms=(time.monotonic() - t0) * 1000.0,
-                )
+            _act(
+                t0,
+                command="profiles delete",
+                ok=False,
+                error={"code": code, "message": message},
             )
         else:
             print(f"ERROR: {message}", file=sys.stderr)
@@ -1394,19 +1371,15 @@ def _do_profiles_delete(
     if not ok:
         return _fail("delete_failed", f"profile {alias!r}: {err}")
     if as_json:
-        from owa_piggy.conventions import action_envelope, emit_action
-
-        emit_action(
-            action_envelope(
-                command="profiles delete",
-                ok=True,
-                stats={"alias": alias, "removed": True},
-                warnings=[
-                    "Refresh tokens cached in keychain are not auto-purged; "
-                    "remove them manually if needed."
-                ],
-                duration_ms=(time.monotonic() - t0) * 1000.0,
-            )
+        _act(
+            t0,
+            command="profiles delete",
+            ok=True,
+            stats={"alias": alias, "removed": True},
+            warnings=[
+                "Refresh tokens cached in keychain are not auto-purged; "
+                "remove them manually if needed."
+            ],
         )
         return 0
     print(f"removed profile {alias!r}.")
@@ -1429,15 +1402,11 @@ def _do_profiles_schedule(alias: str, schedule: bool, as_json: bool = False) -> 
 
     def _fail(code: str, message: str) -> int:
         if as_json:
-            from owa_piggy.conventions import action_envelope, emit_action
-
-            emit_action(
-                action_envelope(
-                    command=verb,
-                    ok=False,
-                    error={"code": code, "message": message},
-                    duration_ms=(time.monotonic() - t0) * 1000.0,
-                )
+            _act(
+                t0,
+                command=verb,
+                ok=False,
+                error={"code": code, "message": message},
             )
         else:
             print(f"ERROR: {message}", file=sys.stderr)
@@ -1453,15 +1422,11 @@ def _do_profiles_schedule(alias: str, schedule: bool, as_json: bool = False) -> 
     if rc != 0:
         return _fail("launchd_failed", f"{verb} for {alias!r} failed (launchd error)")
     if as_json:
-        from owa_piggy.conventions import action_envelope, emit_action
-
-        emit_action(
-            action_envelope(
-                command=verb,
-                ok=True,
-                stats={"alias": alias, "scheduled": schedule},
-                duration_ms=(time.monotonic() - t0) * 1000.0,
-            )
+        _act(
+            t0,
+            command=verb,
+            ok=True,
+            stats={"alias": alias, "scheduled": schedule},
         )
         return 0
     if schedule:
