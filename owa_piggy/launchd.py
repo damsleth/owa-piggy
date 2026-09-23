@@ -72,7 +72,18 @@ def schedule(alias: str) -> int:
     Edits OWA_SCHEDULED (a pure config write - never touches launchd) and,
     only if the shared plist is not already present, installs it via
     setup-refresh.sh. Returns 0 on success, non-zero on failure.
+
+    A disabled profile is refused: schedule_profile() registers the alias
+    to keep OWA_SCHEDULED a subset of OWA_PROFILES, which would quietly
+    re-enable it and have the hourly agent pop its Edge sidecar again.
     """
+    if _config.profile_is_disabled(alias):
+        print(
+            f"[{alias}] profile is disabled; not scheduling. Enable it in "
+            f"`owa-piggy profiles` (space toggles the highlighted profile).",
+            file=sys.stderr,
+        )
+        return 1
     _config.schedule_profile(alias)
     if shared_agent_installed():
         # Already installed - the static plist reads OWA_SCHEDULED at run
