@@ -44,7 +44,6 @@ from .config import (
 )
 from .conventions import EXIT_AUTH, EXIT_USER_ERROR, action_envelope, emit_action
 from .jwt import decode_jwt, decode_jwt_segment, token_minutes_remaining
-from .migration import fold_bound_clients_if_needed
 from .oauth import CLIENT_ID
 from .profiles import create_profile, delete_profile, set_default_profile
 from .reseed import do_reseed, do_reseed_all, do_reseed_scheduled
@@ -509,7 +508,7 @@ def _resolve_and_activate(
         return "", 1
     set_active_profile(alias)
     # A folded alias is a pointer, not a profile: its token now lives in the
-    # parent's clients.json (see migration.fold_bound_clients_if_needed), so
+    # parent's clients.json (profiles folded by an earlier release), so
     # `--profile nc-ado` has to land on `nc` and let audience routing pick
     # the ADO client from there.
     config, _ = load_config()
@@ -1458,12 +1457,10 @@ _DISPATCH: dict[str, Callable[[argparse.Namespace], int]] = {
 
 
 def _dispatch(raw: list[str]) -> int:
-    """Inject the default command, parse, fold, and run a handler."""
+    """Inject the default command, parse, and run a handler."""
     argv = _inject_default_command(raw)
     parser = _build_parser()
     args = parser.parse_args(argv)
-
-    fold_bound_clients_if_needed()
 
     command = args.command or "token"
     handler = _DISPATCH.get(command)
