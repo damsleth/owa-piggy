@@ -603,13 +603,19 @@ def do_debug(
         else:
             row("no", "exchange failed - see error above")
     else:
-        shape_ok = rt.startswith("1.") or rt.startswith("0.")
-        row(
-            "ok" if shape_ok else "no",
-            f"FOCI shape ({rt[:2]}...)"
-            if shape_ok
-            else f"NOT FOCI (starts {rt[:4]!r}); AAD will reject as malformed",
-        )
+        if cid != CLIENT_ID:
+            # Same rule as token_flow: only the default client's RT has a
+            # FOCI shape to check. DevOps/Teams-client RTs are opaque.
+            shape_ok = True
+            row("..", "RT shape", "not checked (non-FOCI client)")
+        else:
+            shape_ok = rt.startswith("1.") or rt.startswith("0.")
+            row(
+                "ok" if shape_ok else "no",
+                f"FOCI shape ({rt[:2]}...)"
+                if shape_ok
+                else f"NOT FOCI (starts {rt[:4]!r}); AAD will reject as malformed",
+            )
 
         if shape_ok and tid:
             print("  probing live exchange against AAD...")
