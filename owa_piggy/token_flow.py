@@ -84,10 +84,11 @@ def exchange_fresh(
             ``config`` (and to disk when ``persist`` is True)
 
     ``token_sink`` redirects rotation persistence: when set, the rotated
-    refresh token is handed to it instead of being written to the profile
-    config. Callers minting under a bound client (see ``clients``) pass one
-    so that client's token lands in ``clients.json`` and the profile's FOCI
-    token in ``config`` is left alone.
+    refresh token is handed to it (regardless of ``persist``) instead of
+    being written to the profile config. Callers minting under a bound
+    client (see ``clients``) pass one so that client's token lands in
+    ``clients.json`` and the profile's FOCI token in ``config`` is left
+    alone.
 
     Side effect: when the response carries a rotated refresh token and
     ``persist`` is True, ``config['OWA_REFRESH_TOKEN']`` is updated and
@@ -171,9 +172,10 @@ def exchange_fresh(
     if new_rt and new_rt != rt:
         config["OWA_REFRESH_TOKEN"] = new_rt
         info["rotated"] = True
-        if persist:
-            if token_sink is not None:
-                token_sink(new_rt)
-            else:
-                save_config(config, config_path)
+        # A sink's token came from clients.json, never the environment, so
+        # it always persists; `persist` only describes the profile's own RT.
+        if token_sink is not None:
+            token_sink(new_rt)
+        elif persist:
+            save_config(config, config_path)
     return result, info
