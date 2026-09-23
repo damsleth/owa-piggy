@@ -6,7 +6,6 @@ import pytest
 
 from owa_piggy import clients
 from owa_piggy.config import DEVOPS_CLIENT_ID
-from owa_piggy.oauth import CLIENT_ID as FOCI_CLIENT_ID
 
 TEAMS = clients.TEAMS_WEB_CLIENT_ID
 SPACES_SCOPE = "https://api.spaces.skype.com/.default openid profile offline_access"
@@ -203,116 +202,6 @@ def test_overlay_swaps_client_token_and_origin_without_mutating_config(profile):
     # The caller's config still describes the profile's own FOCI token.
     assert config["OWA_REFRESH_TOKEN"] == "rt-foci"
     assert "OWA_CLIENT_ID" not in config
-
-
-# --- folding legacy client-bound profiles ------------------------------
-
-
-def _write_profile(root, alias, **kv):
-    d = root / "profiles" / alias
-    d.mkdir(parents=True, exist_ok=True)
-    (d / "config").write_text("".join(f'{k}="{v}"\n' for k, v in kv.items()))
-
-
-@pytest.fixture
-def two_profiles(tmp_path, monkeypatch):
-    """A FOCI profile and a client-bound profile for the same identity."""
-    from owa_piggy import config as config_mod
-
-    root = tmp_path / "owa-piggy"
-    monkeypatch.setattr(config_mod, "ROOT_DIR", root)
-    monkeypatch.setattr(config_mod, "CONFIG_PATH", root / "profiles" / "me" / "config")
-    _write_profile(
-        root, "me", OWA_REFRESH_TOKEN="1.foci", OWA_TENANT_ID="tid-1", OWA_EMAIL="me@corp.example"
-    )
-    _write_profile(
-        root,
-        "me-teams",
-        OWA_REFRESH_TOKEN="1.teams",
-        OWA_CLIENT_ID=TEAMS,
-        OWA_TENANT_ID="tid-1",
-        OWA_EMAIL="ME@corp.example",
-        OWA_ORIGIN="https://teams.microsoft.com",
-        OWA_CAPTURE_URL="https://teams.microsoft.com/",
-    )
-    (root / "profiles.conf").write_text('OWA_PROFILES="me me-teams"\n')
-    return root
-
-
-def test_fold_candidates_pairs_bound_profile_with_its_identity(two_profiles):
-    assert clients.fold_candidates() == [("me-teams", "me", TEAMS)]
-
-
-def test_fold_moves_the_token_and_leaves_a_pointer(two_profiles):
-    assert clients.fold_into_parent("me-teams", "me", TEAMS) is True
-    assert clients.load_clients("me")[TEAMS]["refresh_token"] == "1.teams"
-    folded = (two_profiles / "profiles" / "me-teams" / "config").read_text()
-    assert 'OWA_FOLDED_INTO="me"' in folded
-    # Moved, not copied: two profiles rotating one RT independently is how
-    # one of them ends up superseded by AAD.
-    assert 'OWA_REFRESH_TOKEN=""' in folded
-    # Idempotent - a folded profile is no longer a candidate.
-    assert clients.fold_candidates() == []
-
-
-def test_fold_ignores_profiles_of_a_different_identity(tmp_path, monkeypatch):
-    from owa_piggy import config as config_mod
-
-    root = tmp_path / "owa-piggy"
-    monkeypatch.setattr(config_mod, "ROOT_DIR", root)
-    monkeypatch.setattr(config_mod, "CONFIG_PATH", root / "profiles" / "a" / "config")
-    _write_profile(
-        root, "a", OWA_REFRESH_TOKEN="1.a", OWA_TENANT_ID="tid-a", OWA_EMAIL="a@corp.example"
-    )
-    _write_profile(
-        root,
-        "b-teams",
-        OWA_REFRESH_TOKEN="1.b",
-        OWA_CLIENT_ID=TEAMS,
-        OWA_TENANT_ID="tid-b",
-        OWA_EMAIL="b@corp.example",
-    )
-    (root / "profiles.conf").write_text('OWA_PROFILES="a b-teams"\n')
-    assert clients.fold_candidates() == []
-
-
-def test_a_plain_foci_profile_is_never_a_fold_candidate(tmp_path, monkeypatch):
-    from owa_piggy import config as config_mod
-
-    root = tmp_path / "owa-piggy"
-    monkeypatch.setattr(config_mod, "ROOT_DIR", root)
-    monkeypatch.setattr(config_mod, "CONFIG_PATH", root / "profiles" / "a" / "config")
-    _write_profile(
-        root,
-        "a",
-        OWA_REFRESH_TOKEN="1.a",
-        OWA_CLIENT_ID=FOCI_CLIENT_ID,
-        OWA_TENANT_ID="tid",
-        OWA_EMAIL="a@corp.example",
-    )
-    _write_profile(
-        root, "b", OWA_REFRESH_TOKEN="1.b", OWA_TENANT_ID="tid", OWA_EMAIL="a@corp.example"
-    )
-    (root / "profiles.conf").write_text('OWA_PROFILES="a b"\n')
-    assert clients.fold_candidates() == []
-
-
-def test_fold_stamp_makes_the_scan_run_once(two_profiles):
-    from owa_piggy.migration import fold_bound_clients_if_needed
-
-    assert fold_bound_clients_if_needed() == [("me-teams", "me")]
-    assert (two_profiles / "fold-bound-clients.done").exists()
-    # Second run does not even scan, so a hand-made bound profile added
-    # later is not silently swallowed.
-    _write_profile(
-        two_profiles,
-        "me-ado",
-        OWA_REFRESH_TOKEN="1.ado",
-        OWA_CLIENT_ID=DEVOPS_CLIENT_ID,
-        OWA_TENANT_ID="tid-1",
-        OWA_EMAIL="me@corp.example",
-    )
-    assert fold_bound_clients_if_needed() == []
 
 
 def test_store_is_valid_json_on_disk(profile):

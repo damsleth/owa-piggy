@@ -47,7 +47,6 @@ owa_piggy/
   jwt.py             # decode_jwt_segment, decode_jwt, token_minutes_remaining
   config.py          # ROOT_DIR, CONFIG_PATH, profile path helpers,
                      # resolve_profile, profiles.conf I/O, load/save_config
-  migration.py       # one-shot fold of client-bound profiles into clients.json
   cache.py           # access-token cache keyed by (tenant, client, scope),
                      # scoped per-profile via CONFIG_PATH.parent
   oauth.py           # CLIENT_ID, per-client Origin (origin_for_client /
