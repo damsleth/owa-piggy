@@ -111,28 +111,6 @@ bootout_label() {
   fi
 }
 
-# Remove the suffix-less legacy plist from pre-profile installs, if any, and
-# any pre-consolidation per-profile plists (com.damsleth.owa-piggy.<alias>),
-# but never the shared agent itself.
-uninstall_old_plists() {
-  bootout_label "$LABEL_PREFIX"
-  rm -f "$AGENTS_DIR/$LABEL_PREFIX.plist"
-  if [ -d "$AGENTS_DIR" ]; then
-    for plist in "$AGENTS_DIR/$LABEL_PREFIX".*.plist; do
-      [ -e "$plist" ] || continue
-      case "$plist" in
-        "$AGENTS_DIR/$SHARED_LABEL.plist") continue ;;
-      esac
-      local base label
-      base="$(basename "$plist")"
-      label="${base%.plist}"
-      echo "Removing pre-consolidation agent: $label"
-      bootout_label "$label"
-      rm -f "$plist"
-    done
-  fi
-}
-
 uninstall_shared() {
   bootout_label "$SHARED_LABEL"
   if [ -f "$AGENTS_DIR/$SHARED_LABEL.plist" ]; then
@@ -384,16 +362,9 @@ EOF
 
 # --- Dispatch ---
 
-# Remove any legacy cron entry from the old setup script (applies to all modes).
-if crontab -l 2>/dev/null | grep -q "owa-piggy"; then
-  echo "Removing legacy cron entry..."
-  crontab -l 2>/dev/null | grep -v "owa-piggy" | crontab -
-fi
-
 case "$MODE" in
   install)
     resolve_program_args
-    uninstall_old_plists
     install_shared
     ;;
   uninstall)

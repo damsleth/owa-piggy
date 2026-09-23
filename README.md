@@ -303,7 +303,7 @@ Without `--profile`, `status` probes every configured profile concurrently and r
 owa-piggy debug
 ```
 
-Full triage dump: config file state, RT shape, live exchange probe, access-token claims (aud/scp/exp/iat), launchd agent status (`gui/<uid>/<label>` bootstrap, runs, last exit code), PATH install, Edge sidecar profile presence, reseed script discoverability. Also warns about leftover legacy cron entries.
+Full triage dump: config file state, RT shape, live exchange probe, access-token claims (aud/scp/exp/iat), launchd agent status (`gui/<uid>/<label>` bootstrap, runs, last exit code), PATH install, Edge sidecar profile presence, reseed script discoverability.
 
 ---
 
@@ -450,7 +450,7 @@ person — are folded in on the next run: the token moves into the parent's
 `clients.json` and the old alias becomes a pointer (`OWA_FOLDED_INTO`), so
 `--profile nc-ado` still works and routes to the ADO client from `nc`.
 
-There is a single shared launchd agent (`com.damsleth.owa-piggy.scheduled`) that reseeds the `OWA_SCHEDULED` set, so macOS's Login Items & Extensions shows one row regardless of profile count. Add profiles to the schedule with `owa-piggy profiles schedule <alias>` (or the `profiles` TUI). Installing the agent boots out any older per-profile plists (`com.damsleth.owa-piggy.<alias>`) and the pre-profile single plist.
+There is a single shared launchd agent (`com.damsleth.owa-piggy.scheduled`) that reseeds the `OWA_SCHEDULED` set, so macOS's Login Items & Extensions shows one row regardless of profile count. Add profiles to the schedule with `owa-piggy profiles schedule <alias>` (or the `profiles` TUI).
 
 ---
 
