@@ -242,8 +242,16 @@ def _do_reseed_capture(alias: str, config: dict[str, str]) -> int:
     )
     headless = _headless_pref(config)
     fell_back = False
+    # Filter the capture to the profile's own client: the SPA's start-up
+    # burst can carry other clients' tokens, and a DevOps/Teams profile
+    # must not end up persisting one of those as its refresh token.
+    client_id = (config.get("OWA_CLIENT_ID") or "").strip() or None
     status, captured = capture.capture_silent(
-        alias, headless=headless, user_agent=user_agent, capture_url=capture_url
+        alias,
+        headless=headless,
+        user_agent=user_agent,
+        capture_url=capture_url,
+        expected_client_id=client_id,
     )
     # Transient 'error' on the first attempt (CDP hiccup, slow /token
     # round-trip past the timeout, etc.) is the most common cause of
@@ -254,7 +262,11 @@ def _do_reseed_capture(alias: str, config: dict[str, str]) -> int:
     if status == "error":
         print(f"[{alias}] capture returned transient error; retrying once...", file=sys.stderr)
         status, captured = capture.capture_silent(
-            alias, headless=headless, user_agent=user_agent, capture_url=capture_url
+            alias,
+            headless=headless,
+            user_agent=user_agent,
+            capture_url=capture_url,
+            expected_client_id=client_id,
         )
     # Whether *headless* is what produced the token, decided here and not at
     # the bottom: everything below can reach 'ok' by another route (offscreen
@@ -275,7 +287,11 @@ def _do_reseed_capture(alias: str, config: dict[str, str]) -> int:
             file=sys.stderr,
         )
         status, captured = capture.capture_silent(
-            alias, headless=False, user_agent=user_agent, capture_url=capture_url
+            alias,
+            headless=False,
+            user_agent=user_agent,
+            capture_url=capture_url,
+            expected_client_id=client_id,
         )
         fell_back = True
     if status == "headless_blocked" and not is_tty:
@@ -288,7 +304,11 @@ def _do_reseed_capture(alias: str, config: dict[str, str]) -> int:
             file=sys.stderr,
         )
         status, captured = capture.capture_silent(
-            alias, headless=False, user_agent=user_agent, capture_url=capture_url
+            alias,
+            headless=False,
+            user_agent=user_agent,
+            capture_url=capture_url,
+            expected_client_id=client_id,
         )
         fell_back = True
     if status == "reauth" or (status == "headless_blocked" and is_tty):
@@ -305,7 +325,12 @@ def _do_reseed_capture(alias: str, config: dict[str, str]) -> int:
             )
             try:
                 captured = capture.capture_signin(
-                    alias, email, timeout=300, user_agent=user_agent, capture_url=capture_url
+                    alias,
+                    email,
+                    timeout=300,
+                    user_agent=user_agent,
+                    capture_url=capture_url,
+                    expected_client_id=client_id,
                 )
                 status = "ok"
             except (RuntimeError, TimeoutError, ConnectionError, KeyboardInterrupt) as e:
