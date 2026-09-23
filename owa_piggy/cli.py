@@ -536,7 +536,12 @@ def _resolve_and_activate(
     config, _ = load_config()
     parent = (config.get("OWA_FOLDED_INTO", "") or "").strip()
     if parent and parent != alias:
-        alias = parent
+        # Gate the parent too: the pointer must not reach a profile the
+        # user switched off (see "Disabled profiles are inert").
+        alias, err = resolve_profile(parent, allow_disabled=allow_disabled)
+        if err:
+            print(f"ERROR: {err}", file=sys.stderr)
+            return "", 1
         set_active_profile(alias)
     return alias, 0
 
