@@ -444,8 +444,8 @@ the next reseed and keeps its existing token; `owa-piggy edge --profile <alias>`
 plus one visit to the site fixes every later rotation.
 
 Profiles that predate this — a separate `nc-ado` or Teams profile for the same
-person — are folded in on the next run: the token moves into the parent's
-`clients.json` and the old alias becomes a pointer (`OWA_FOLDED_INTO`), so
+person — were folded in by earlier releases: the token moved into the parent's
+`clients.json` and the old alias became a pointer (`OWA_FOLDED_INTO`), so
 `--profile nc-ado` still works and routes to the ADO client from `nc`.
 
 There is a single shared launchd agent (`com.damsleth.owa-piggy.scheduled`) that reseeds the `OWA_SCHEDULED` set, so macOS's Login Items & Extensions shows one row regardless of profile count. Add profiles to the schedule with `owa-piggy profiles schedule <alias>` (or the `profiles` TUI).
