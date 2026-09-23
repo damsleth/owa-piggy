@@ -242,9 +242,12 @@ A profile is "disabled" when it exists on disk but is absent from
 `config.resolve_profile` refuses it (callers that are about a disabled
 profile - `status`, `setup`, the picker - pass `allow_disabled=True`), and
 `reseed.do_reseed` / `capture.open_edge` refuse it again because the TUI
-calls those directly. Any new code path that mints a token or launches the
-Edge sidecar must go through one of those gates, or a switched-off profile
-starts popping browser windows again.
+calls those directly. `launchd.schedule` refuses it too (scheduling would
+otherwise re-register the alias), and `cli._resolve_and_activate` re-runs
+`resolve_profile` on an `OWA_FOLDED_INTO` parent so a pointer alias cannot
+reach a disabled profile. Any new code path that mints a token, schedules,
+or launches the Edge sidecar must go through one of those gates, or a
+switched-off profile starts popping browser windows again.
 
 ### Shell script verification gate
 - Run `shellcheck scripts/setup-refresh.sh` before every commit touching that file - CI enforces it and failures block the build.
