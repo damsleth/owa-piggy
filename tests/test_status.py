@@ -185,6 +185,37 @@ def test_debug_honors_profile_default_audience(
     assert "access token aud: https://outlook.office.com" in capsys.readouterr().out
 
 
+def test_debug_skips_foci_shape_check_for_a_non_default_client(
+    monkeypatch, tmp_config, clean_env, make_jwt, capsys
+):
+    """A DevOps/Teams-client profile's RT is opaque; `debug` must still run
+    the live probe (as `token` does) instead of calling it malformed."""
+    from owa_piggy.config import save_config, set_active_profile
+
+    set_active_profile("ado")
+    save_config(
+        {
+            "OWA_REFRESH_TOKEN": "opaque-non-foci-rt",
+            "OWA_TENANT_ID": "tid",
+            "OWA_CLIENT_ID": "fake-devops-client",
+        }
+    )
+    at = make_jwt({"exp": 9_999_999_999, "iat": 9_999_990_000, "aud": "x", "scp": "y"})
+    monkeypatch.setattr("owa_piggy.token_flow.exchange_token", lambda *a, **k: {"access_token": at})
+    monkeypatch.setattr(
+        status_mod.subprocess,
+        "run",
+        lambda *a, **k: SimpleNamespace(returncode=1, stdout="", stderr=""),
+    )
+    monkeypatch.setattr(status_mod, "find_reseed_script", lambda: None)
+
+    status_mod.do_debug("ado")
+
+    out = capsys.readouterr().out
+    assert "NOT FOCI" not in out
+    assert "exchange succeeded" in out
+
+
 def test_debug_google_profile_with_opaque_token(monkeypatch, tmp_config, clean_env, capsys):
     """`debug`'s refresh-token-shape display is a second, independent copy
     of the FOCI check in token_flow - it must also skip AAD-only checks for
