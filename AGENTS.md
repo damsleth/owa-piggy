@@ -232,9 +232,6 @@ version a second time to work around an already-published file.
 ### Editing files
 - Read a file with the Read tool before using Edit, even for files already seen this session - Edit fails with "File has not been read yet" otherwise. Applies especially to `pyproject.toml`.
 
-### Release workflow
-- PyPI publishing is a MANUAL local `uv publish` (token in `UV_PUBLISH_TOKEN` from `./.env`). The `release.yml` workflow does NOT touch PyPI - it only re-runs CI, rebuilds the wheel+sdist, and creates the GitHub Release at the tag. The auto-mode classifier blocks `uv publish` (and even reading `./.env`), so the user must run that final step themselves via the `!` prefix. Full sequence: see "Cutting a release" above.
-
 ### Disabled profiles are inert
 
 A profile is "disabled" when it exists on disk but is absent from
