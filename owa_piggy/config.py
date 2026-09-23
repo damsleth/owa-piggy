@@ -632,9 +632,7 @@ def save_config(config: dict[str, str], path: Path | None = None) -> None:
     """
     cfg_path = path or CONFIG_PATH
     env_keys = getattr(config, "env_keys", ())
-    config = {
-        k: v for k, v in config.items() if not (k in env_keys and v == os.environ.get(k))
-    }
+    config = {k: v for k, v in config.items() if not (k in env_keys and v == os.environ.get(k))}
     lines = []
     if cfg_path.exists():
         # Preserve existing lines, update known keys in place
