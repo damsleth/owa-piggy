@@ -498,6 +498,28 @@ def test_silent_takes_the_startup_exchange_without_reloading(monkeypatch, tmp_pa
     assert "Page.reload" not in session.methods
 
 
+def test_silent_unusable_refresh_response_is_an_error_not_a_crash(monkeypatch, tmp_path):
+    """A /token response with a refresh_token but no id_token names no
+    tenant. Seen on the forced refresh (not just the start-up burst) it
+    must come back as 'error', or `reseed --scheduled` dies mid-run."""
+
+    class _Replaying(_BurstSession):
+        def wait_event(self, method_name, predicate=None, *, timeout=60.0):
+            self.delivered.discard(method_name)
+            return super().wait_event(method_name, predicate, timeout=timeout)
+
+    edge_dir = tmp_path / "edge-profile"
+    edge_dir.mkdir()
+    session = _Replaying(json.dumps({"refresh_token": "fake-rt-for-tests"}))
+    monkeypatch.setattr(capture._config, "profile_edge_dir", lambda a: edge_dir)
+    monkeypatch.setattr(capture, "launch_edge", lambda *a, **kw: None)
+    monkeypatch.setattr(capture, "_terminate", lambda proc: None)
+    monkeypatch.setattr(capture, "_open_session", lambda port: session)
+    monkeypatch.setattr(capture, "_settle_host", lambda *a, **kw: "teams.microsoft.com")
+
+    assert capture.capture_silent("nc", headless=True) == ("error", None)
+
+
 def test_edge_lock_is_exclusive_and_released(monkeypatch, tmp_path):
     """Two callers must not hold one Edge profile dir at once. Without this,
     Chromium silently hands the second launch's command line to the first
