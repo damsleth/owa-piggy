@@ -1048,15 +1048,13 @@ def _cmd_status(args: argparse.Namespace) -> int:
     sp_tenant = getattr(args, "sharepoint_tenant", None)
     if not args.profile and not os.environ.get("OWA_PROFILE", "").strip():
         if getattr(args, "json", False):
-            print(
-                json.dumps(
-                    status_all_report(
-                        audience=args.audience, scope=args.scope, sharepoint_tenant=sp_tenant
-                    ),
-                    indent=2,
-                )
+            all_report = status_all_report(
+                audience=args.audience, scope=args.scope, sharepoint_tenant=sp_tenant
             )
-            return 0
+            print(json.dumps(all_report, indent=2))
+            # Same contract as the text form and single-profile --json: any
+            # failing profile makes the exit code non-zero.
+            return 1 if all_report["summary"].get("fail") else 0
         all_rc: int = do_status_all(
             audience=args.audience,
             scope=args.scope,
