@@ -281,9 +281,7 @@ def test_load_config_env_only_does_not_persist(tmp_config, monkeypatch, clean_en
     assert persist is False
 
 
-def test_save_after_load_keeps_env_overrides_out_of_the_file(
-    tmp_config, monkeypatch, clean_env
-):
+def test_save_after_load_keeps_env_overrides_out_of_the_file(tmp_config, monkeypatch, clean_env):
     # A save after a load (reauth counter, SharePoint tenant) must not
     # write exported overrides into the profile; a value the caller
     # changed since the load (a reseed's captured token) is written.
