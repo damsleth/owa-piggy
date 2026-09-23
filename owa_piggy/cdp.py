@@ -23,6 +23,7 @@ import base64
 import contextlib
 import json
 import secrets
+import select
 import socket
 import struct
 import time
@@ -242,15 +243,14 @@ class CdpSession:
                 return buffered_params
 
         deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            remaining = deadline - time.monotonic()
-            self._sock.settimeout(max(0.1, remaining))
-            try:
-                event: dict[str, Any] = json.loads(_recv_frame(self._sock))
-            except socket.timeout:
-                continue
-            finally:
-                self._sock.settimeout(None)
+        while (remaining := deadline - time.monotonic()) > 0:
+            # Wait for a frame to *start*, then read it whole. A socket
+            # timeout could fire between a frame's header and its payload,
+            # and callers loop on short windows reusing this session - the
+            # next read would parse payload bytes as a header.
+            if not select.select([self._sock], [], [], remaining)[0]:
+                break
+            event: dict[str, Any] = json.loads(_recv_frame(self._sock))
             if "id" in event:
                 continue
             if event.get("method") == method_name and predicate(event.get("params", {})):
