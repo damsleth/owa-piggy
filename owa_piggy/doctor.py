@@ -44,12 +44,9 @@ def run_doctor(*, fix: bool = False) -> DoctorPayload:
         )
 
     # --- Config home --------------------------------------------------------
-    try:
-        import os
+    from owa_piggy.config import ROOT_DIR
 
-        payload.config_path = os.path.expanduser("~/.config/owa-piggy")
-    except Exception:
-        pass
+    payload.config_path = str(ROOT_DIR)
 
     try:
         from owa_piggy.config import (

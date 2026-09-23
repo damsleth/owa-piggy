@@ -62,27 +62,19 @@ def _humanize_minutes(m: int) -> str:
     return f"{d}d{h}h"
 
 
-def _parse_iso(s: str) -> datetime | None:
-    """Parse an `%Y-%m-%dT%H:%M:%SZ` UTC string, or None if malformed."""
-    parsed: datetime | None = parse_iso_utc(s)
-    return parsed
-
-
 def _minutes_until(dt: datetime) -> int:
     """Whole minutes from now until `dt`, floored at 0."""
     return max(0, int((dt - datetime.now(timezone.utc)).total_seconds() / 60))
 
 
 def _rt_expires_at(config: dict[str, str]) -> str | None:
-    dt = _parse_iso(config.get("OWA_RT_ISSUED_AT", "").strip())
+    dt = parse_iso_utc(config.get("OWA_RT_ISSUED_AT", "").strip())
     if dt is None:
         return None
     return (dt + timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _state(token_ok: bool, minutes_remaining: int | None) -> str:
-    if not token_ok:
-        return "fail"
+def _state(minutes_remaining: int | None) -> str:
     if minutes_remaining is not None and minutes_remaining < 10:
         return "warn"
     return "ok"
@@ -234,7 +226,7 @@ def _status_json(probe: dict[str, Any]) -> dict[str, Any]:
         report["state"] = "disabled"
         report["hints"].append("profile is disabled")
         return report
-    exp_dt = _parse_iso(report["refresh_token"]["expires_at"])
+    exp_dt = parse_iso_utc(report["refresh_token"]["expires_at"])
     if exp_dt is not None:
         report["refresh_token"]["minutes_remaining"] = _minutes_until(exp_dt)
 
@@ -274,7 +266,7 @@ def _status_json(probe: dict[str, Any]) -> dict[str, Any]:
         "expires_at": _iso(exp_ts) if exp_ts else None,
         "minutes_remaining": minutes,
     }
-    report["state"] = _state(True, minutes)
+    report["state"] = _state(minutes)
     return report
 
 
@@ -378,7 +370,7 @@ def _status_human(probe: dict[str, Any], multi: bool = False, verbose: bool = Fa
         rt_expires = "does not expire (Google refresh tokens are long-lived)"
     else:
         rt_expires = "unknown (run `owa-piggy reseed` to establish)"
-        dt = _parse_iso(probe["rt_issued_at"])
+        dt = parse_iso_utc(probe["rt_issued_at"])
         if dt is not None:
             exp_dt = dt + timedelta(hours=24)
             rt_expires = (
