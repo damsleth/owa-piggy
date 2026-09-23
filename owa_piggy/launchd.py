@@ -39,12 +39,9 @@ def shared_agent_installed() -> bool:
     return shared_plist_path().exists()
 
 
-def is_scheduled(alias: str) -> bool:
-    """True when `alias` is in OWA_SCHEDULED - i.e. the shared agent will
-    reseed it. This is the consolidated replacement for the old
-    "is a per-profile plist installed" check.
-    """
-    return _config.is_scheduled(alias)
+# True when `alias` is in OWA_SCHEDULED (the shared agent will reseed it).
+# Re-exported so callers keep importing scheduling state from one place.
+is_scheduled = _config.is_scheduled
 
 
 def _run_setup_refresh_script(*script_args: str) -> int:
