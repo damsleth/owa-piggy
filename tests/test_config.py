@@ -281,6 +281,38 @@ def test_load_config_env_only_does_not_persist(tmp_config, monkeypatch, clean_en
     assert persist is False
 
 
+def test_save_after_load_keeps_env_overrides_out_of_the_file(
+    tmp_config, monkeypatch, clean_env
+):
+    # A save after a load (reauth counter, SharePoint tenant) must not
+    # write exported overrides into the profile; a value the caller
+    # changed since the load (a reseed's captured token) is written.
+    save_config({"OWA_REFRESH_TOKEN": "1.FAKE-rt-file", "OWA_CLIENT_ID": "file-client"})
+    monkeypatch.setenv("OWA_REFRESH_TOKEN", "1.FAKE-rt-env")
+    monkeypatch.setenv("OWA_CLIENT_ID", "env-client")
+    monkeypatch.setenv("OWA_ORIGIN", "https://env.example")
+    cfg, _ = load_config()
+    cfg["OWA_REAUTH_FAILS"] = "1"
+    save_config(cfg)
+    text = tmp_config.read_text()
+    assert "1.FAKE-rt-file" in text and "file-client" in text
+    assert "env" not in text
+    assert 'OWA_REAUTH_FAILS="1"' in text
+
+    cfg, _ = load_config()
+    cfg["OWA_REFRESH_TOKEN"] = "1.FAKE-rt-captured"
+    save_config(cfg)
+    assert "1.FAKE-rt-captured" in tmp_config.read_text()
+
+
+def test_save_config_plain_dict_persists_env_matching_values(tmp_config, monkeypatch, clean_env):
+    # setup builds its config from scratch: a captured client id that
+    # happens to equal an exported override is still the profile's own.
+    monkeypatch.setenv("OWA_CLIENT_ID", "env-client")
+    save_config({"OWA_REFRESH_TOKEN": "1.FAKE-rt", "OWA_CLIENT_ID": "env-client"})
+    assert 'OWA_CLIENT_ID="env-client"' in tmp_config.read_text()
+
+
 def test_load_config_both_set_env_wins_no_persist(tmp_config, monkeypatch, clean_env):
     save_config({"OWA_REFRESH_TOKEN": "1.FAKE-rt-file", "OWA_TENANT_ID": "fake-tenant"})
     monkeypatch.setenv("OWA_REFRESH_TOKEN", "1.FAKE-rt-env")
