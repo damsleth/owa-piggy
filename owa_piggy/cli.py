@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -1611,6 +1612,13 @@ def _agent_json_default(raw: list[str], command: str) -> list[str]:
 
 
 def main() -> int:
+    # Callers cap us with SIGTERM (yaams' ingest timeout kills the process
+    # group, then SIGKILLs 2s later). Python's default SIGTERM dies without
+    # unwinding, so capture's `finally: _terminate(proc)` never ran and the
+    # sidecar Edge - its own session, out of the caller's group - was left
+    # holding the profile lock. As SystemExit it unwinds and Edge gets its
+    # SIGTERM first.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(128 + signal.SIGTERM))
     raw = list(sys.argv[1:])
     # Top-level --doctor per owa-piggy's CLI conventions. Handle before
     # argparse so it composes with --json without touching the

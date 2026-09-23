@@ -350,6 +350,15 @@ def launch_edge(
         "--disable-gpu",
         "--no-first-run",
         "--no-default-browser-check",
+        # Edge copies its whole app bundle (~1.1 GB) into
+        # $TMPDIR/../X/com.microsoft.edgemac.code_sign_clone/ on every launch
+        # and only deletes it on a clean exit. Any capture Edge that gets
+        # SIGKILLed - our own escalation, a reaped orphan, a caller's timeout
+        # taking the group down - leaks one; 2026-09-22 a reauth retry storm
+        # left 1,074 of them and filled the disk. The clone only exists so a
+        # long-running browser survives an in-place update, which a sidecar
+        # that lives for seconds does not need.
+        "--disable-features=MacAppCodeSignClone",
         "--remote-debugging-address=127.0.0.1",
         f"--remote-debugging-port={port}",
         f"--user-data-dir={edge_dir}",
