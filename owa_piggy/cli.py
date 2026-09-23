@@ -1575,7 +1575,7 @@ def main() -> int:
 
     # Machine surface: `schema [<cmd>]` and `--help --json`, handled before
     # argparse so they compose without touching the subcommand grammar.
-    handled = schema_mod.maybe_emit_schema(raw, commands=schema_mod.COMMAND_SCHEMA)
+    handled = schema_mod.maybe_emit_schema(raw)
     if handled is not None:
         return handled
 
