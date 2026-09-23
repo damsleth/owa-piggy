@@ -481,6 +481,24 @@ def test_resolve_disabled_via_env_and_single_profile_refuses(tmp_config, clean_e
     assert resolve_profile(None)[0] == ""
 
 
+def test_folded_alias_does_not_reach_a_disabled_parent(tmp_config, clean_env, capsys):
+    """`--profile nc-ado` follows OWA_FOLDED_INTO to `nc`; a disabled `nc`
+    must stop it there instead of minting from the switched-off profile."""
+    import argparse
+
+    from owa_piggy.cli import _resolve_and_activate
+    from owa_piggy.config import profile_config_path
+
+    ensure_profile_registered("child")
+    profile_dir("child").mkdir(parents=True, exist_ok=True)
+    profile_dir("parent").mkdir(parents=True, exist_ok=True)
+    save_config({"OWA_FOLDED_INTO": "parent"}, profile_config_path("child"))
+    assert _resolve_and_activate(argparse.Namespace(profile="child")) == ("", 1)
+    assert "disabled" in capsys.readouterr().err
+    ensure_profile_registered("parent")
+    assert _resolve_and_activate(argparse.Namespace(profile="child")) == ("parent", 0)
+
+
 def test_disable_profile_also_unschedules(tmp_config, clean_env):
     """Disabling must drop the alias from OWA_SCHEDULED, or the hourly
     launchd agent keeps reseeding it."""
