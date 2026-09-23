@@ -558,6 +558,24 @@ def parse_kv_stream(text: str) -> dict[str, str]:
     return {k: v for k, v in _iter_kv(text) if k in allowed and v}
 
 
+class _LoadedConfig(dict[str, str]):
+    """A load_config() result that remembers which keys the environment
+    overrode, so save_config() can keep those values out of the file.
+
+    Without it, any save after a load (token rotation, SharePoint tenant
+    derivation, the reauth counter) would write an exported OWA_CLIENT_ID /
+    OWA_ORIGIN / OWA_REFRESH_TOKEN into the profile permanently - the same
+    clobbering `persist` already guards against for rotation. A key the
+    caller has since changed (a reseed's freshly captured token) is real
+    profile state and is written as usual. Configs built from scratch
+    (setup, capture) are plain dicts and persist everything.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.env_keys: set[str] = set()
+
+
 def load_config(path: Path | None = None) -> tuple[dict[str, str], bool]:
     """Returns (config, persist). persist is True only when the *effective*
     OWA_REFRESH_TOKEN came from the on-disk config - i.e. the file has the
@@ -571,7 +589,7 @@ def load_config(path: Path | None = None) -> tuple[dict[str, str], bool]:
     single-profile path, but callers that need to read several profiles
     concurrently pass an explicit path so they don't race the global."""
     cfg_path = path or CONFIG_PATH
-    config: dict[str, str] = {}
+    config = _LoadedConfig()
     file_keys: set[str] = set()
     if cfg_path.exists():
         for k, v in _iter_kv(cfg_path.read_text()):
@@ -581,6 +599,7 @@ def load_config(path: Path | None = None) -> tuple[dict[str, str], bool]:
     for key in ("OWA_REFRESH_TOKEN", "OWA_TENANT_ID", "OWA_CLIENT_ID", "OWA_ORIGIN"):
         if key in os.environ:
             config[key] = os.environ[key]
+            config.env_keys.add(key)
     persist = "OWA_REFRESH_TOKEN" in file_keys and "OWA_REFRESH_TOKEN" not in os.environ
     return config, persist
 
@@ -612,6 +631,10 @@ def save_config(config: dict[str, str], path: Path | None = None) -> None:
     profiles pass distinct explicit paths, so the writes never collide.
     """
     cfg_path = path or CONFIG_PATH
+    env_keys = getattr(config, "env_keys", ())
+    config = {
+        k: v for k, v in config.items() if not (k in env_keys and v == os.environ.get(k))
+    }
     lines = []
     if cfg_path.exists():
         # Preserve existing lines, update known keys in place
