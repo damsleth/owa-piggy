@@ -567,35 +567,13 @@ def do_debug(
             f"absent; run `owa-piggy setup --profile {alias}` or "
             f"`owa-piggy reseed --profile {alias}`",
         )
-    elif provider == "google":
-        # Google refresh tokens are opaque (typically `1//0...`) - the FOCI
-        # `1.`/`0.` shape check is an AAD-specific concept and doesn't apply.
-        row("ok", f"google opaque RT ({rt[:4]}...)")
-        print("  probing live exchange against Google...")
-        result, _info = exchange_fresh(
-            config, debug_scope, persist=persist, capture_stderr=False, **pim_options
-        )
-        if result and result.get("access_token"):
-            row("ok", "exchange succeeded")
-            # Google's access tokens are opaque bearer strings, not JWTs -
-            # expires_in from the token response is all there is to show.
-            exp = time.time() + result.get("expires_in", 0)
-            row(
-                "..",
-                "access token exp",
-                f"in {int((exp - time.time()) / 60)} min "
-                f"({time.strftime('%H:%M:%S', time.localtime(exp))})",
-            )
-
-            if _info["rotated"]:
-                if persist or pim_sink:
-                    row("ok", "refresh token rotated and persisted")
-                else:
-                    row("..", "refresh token rotated (env-only, not persisted)")
-        else:
-            row("no", "exchange failed - see error above")
     else:
-        if cid != CLIENT_ID:
+        if provider == "google":
+            # Google refresh tokens are opaque (typically `1//0...`) - the
+            # FOCI `1.`/`0.` shape check is an AAD-specific concept.
+            shape_ok = True
+            row("ok", f"google opaque RT ({rt[:4]}...)")
+        elif cid != CLIENT_ID:
             # Same rule as token_flow: only the default client's RT has a
             # FOCI shape to check. DevOps/Teams-client RTs are opaque.
             shape_ok = True
@@ -609,12 +587,13 @@ def do_debug(
                 else f"NOT FOCI (starts {rt[:4]!r}); AAD will reject as malformed",
             )
 
-        if shape_ok and tid:
-            print("  probing live exchange against AAD...")
-            # exchange_fresh handles persistence of any rotated RT when
-            # persist=True; we let stderr flow through (capture_stderr=False)
-            # so AAD error text reaches the user via the same path the
-            # `exchange failed - see error above` row points at.
+        if shape_ok and (tid or provider == "google"):
+            print(
+                f"  probing live exchange against {'Google' if provider == 'google' else 'AAD'}..."
+            )
+            # exchange_fresh handles persistence of any rotated RT; stderr
+            # flows through (capture_stderr=False) so the AAD/Google error
+            # text is the "see error above" the failure row points at.
             result, _info = exchange_fresh(
                 config,
                 debug_scope,
@@ -624,33 +603,36 @@ def do_debug(
             )
             if result and result.get("access_token"):
                 row("ok", "exchange succeeded")
-                at = result["access_token"]
-                try:
-                    payload = decode_jwt_segment(at.split(".")[1])
-                    aud = payload.get("aud", "?")
-                    scp = payload.get("scp", payload.get("roles", "?"))
-                    exp = payload.get("exp", 0)
-                    iat = payload.get("iat", 0)
-                    now = time.time()
-                    row("..", "access token aud", str(aud))
-                    if isinstance(scp, str) and len(scp) > 80:
-                        # OWA scopes are legion (~100 space-separated entries).
-                        # Show count and the first few so `debug` stays useful.
-                        parts = scp.split()
-                        preview = ", ".join(parts[:3])
-                        row("..", "access token scp", f"{len(parts)} scopes ({preview}, ...)")
-                    else:
-                        row("..", "access token scp", str(scp))
+                now = time.time()
+                if provider == "google":
+                    # Opaque bearer string, not a JWT: expires_in is all there is.
+                    exp = now + result.get("expires_in", 0)
+                else:
+                    try:
+                        payload = decode_jwt_segment(result["access_token"].split(".")[1])
+                        scp = payload.get("scp", payload.get("roles", "?"))
+                        row("..", "access token aud", str(payload.get("aud", "?")))
+                        if isinstance(scp, str) and len(scp) > 80:
+                            # OWA scopes are legion (~100 entries): show count
+                            # and the first few so `debug` stays useful.
+                            parts = scp.split()
+                            preview = ", ".join(parts[:3])
+                            row("..", "access token scp", f"{len(parts)} scopes ({preview}, ...)")
+                        else:
+                            row("..", "access token scp", str(scp))
+                        exp = payload.get("exp", 0)
+                        iat = payload.get("iat", 0)
+                        row("..", "access token iat", f"{int((now - iat) / 60)} min ago")
+                    except Exception as e:
+                        row("no", "access token decode failed", str(e))
+                        exp = None
+                if exp is not None:
                     row(
                         "..",
                         "access token exp",
                         f"in {int((exp - now) / 60)} min "
                         f"({time.strftime('%H:%M:%S', time.localtime(exp))})",
                     )
-                    row("..", "access token iat", f"{int((now - iat) / 60)} min ago")
-                except Exception as e:
-                    row("no", "access token decode failed", str(e))
-
                 if _info["rotated"]:
                     if persist or pim_sink:
                         row("ok", "refresh token rotated and persisted")
