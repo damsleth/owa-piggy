@@ -328,6 +328,8 @@ def test_offscreen_launch_starts_windowless(monkeypatch, tmp_path):
     # start-up token exchange unwatched.
     launch(headless=True, url="https://x", offscreen=True)
     assert "https://x" not in seen["args"]
+    # ...but not the new-tab page, whose Copilot NTP is not a `page` target.
+    assert seen["args"][-1] == "about:blank"
     # Only the visible sign-in window still navigates from the command line.
     launch(headless=False, url="https://y")
     assert "https://y" in seen["args"]
