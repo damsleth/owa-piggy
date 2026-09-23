@@ -38,6 +38,7 @@ from .config import (
     save_config,
     set_active_profile,
 )
+from .conventions import EXIT_AUTH
 from .scripts import find_reseed_script
 
 
@@ -161,6 +162,8 @@ def do_reseed(alias: str) -> int:
         what every profile that worked before this change still uses.
 
     Returns 0 on success, non-zero on failure (script exit code or 1).
+    EXIT_AUTH (3) means a capture profile's sidecar session is dead and
+    only an interactive `setup` will fix it - retrying is pointless.
 
     A disabled profile (on disk, absent from OWA_PROFILES) is refused here
     rather than only in `resolve_profile`, because the TUI's reseed action
@@ -209,7 +212,7 @@ def _do_reseed_capture(alias: str, config: dict[str, str]) -> int:
             file=sys.stderr,
         )
         print(f"       Run: owa-piggy setup --profile {alias}{hint}", file=sys.stderr)
-        return 1
+        return EXIT_AUTH
 
     # Capture-mode reseed can be reached either through the single-profile
     # CLI path (which already cleared the cache) or via do_reseed_all(),
@@ -318,7 +321,7 @@ def _do_reseed_capture(alias: str, config: dict[str, str]) -> int:
                 file=sys.stderr,
             )
             print(f"       Run: owa-piggy setup --profile {alias}{hint}", file=sys.stderr)
-            return 1
+            return EXIT_AUTH
     if status != "ok" or not captured:
         if os.environ.get("OWA_CAPTURE_DEBUG"):
             print(f"ERROR: [{alias}] capture-based reseed failed.", file=sys.stderr)
