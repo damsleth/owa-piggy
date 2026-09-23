@@ -466,28 +466,6 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-# Subcommand registry. Defined here so `_inject_default_command` can read
-# it without forcing the reader to scroll past every handler. The dispatch
-# table itself lives next to the handlers below; this is just the name
-# tuple used during argv preprocessing.
-COMMANDS = (
-    "token",
-    "status",
-    "debug",
-    "setup",
-    "reseed",
-    "decode",
-    "remaining",
-    "edge",
-    "tui",
-    "audiences",
-    "version",
-    "profiles",
-    "clients",
-    "install-owa-tools",
-)
-
-
 def _inject_default_command(argv: list[str]) -> list[str]:
     """Prepend `token` to argv when the user invoked owa-piggy without
     naming a subcommand - either bare (`owa-piggy`) or with only
@@ -504,10 +482,11 @@ def _inject_default_command(argv: list[str]) -> list[str]:
     head = argv[0]
     if head == "help":
         rest = list(argv[1:])
-        if rest and rest[0] in COMMANDS:
+        if rest and rest[0] in _DISPATCH:
             return rest + ["--help"]
         return ["--help"]
-    if head in COMMANDS:
+    # _DISPATCH is defined further down; it is looked up at call time.
+    if head in _DISPATCH:
         return list(argv)
     if head in ("-h", "--help", "--version", "-v"):
         return list(argv)
@@ -1511,11 +1490,6 @@ _DISPATCH: dict[str, Callable[[argparse.Namespace], int]] = {
     "clients": _cmd_clients,
     "install-owa-tools": _cmd_install_owa_tools,
 }
-
-# Sanity check: keep the COMMANDS tuple at the top of the file in sync
-# with the dispatch table below. assert at import time so a missing entry
-# fails loudly during development rather than at first invocation.
-assert set(COMMANDS) == set(_DISPATCH), "COMMANDS / _DISPATCH out of sync"
 
 
 def _dispatch(raw: list[str]) -> int:
