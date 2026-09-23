@@ -596,7 +596,7 @@ def do_debug(
             )
 
             if _info["rotated"]:
-                if persist:
+                if persist or pim_sink:
                     row("ok", "refresh token rotated and persisted")
                 else:
                     row("..", "refresh token rotated (env-only, not persisted)")
@@ -654,7 +654,7 @@ def do_debug(
                     row("no", "access token decode failed", str(e))
 
                 if _info["rotated"]:
-                    if persist:
+                    if persist or pim_sink:
                         row("ok", "refresh token rotated and persisted")
                     else:
                         row("..", "refresh token rotated (env-only, not persisted)")
