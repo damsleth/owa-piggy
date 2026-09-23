@@ -44,7 +44,7 @@ from .config import (
 )
 from .conventions import EXIT_AUTH, EXIT_USER_ERROR, action_envelope, emit_action
 from .jwt import decode_jwt, decode_jwt_segment, token_minutes_remaining
-from .migration import fold_bound_clients_if_needed, migrate_if_needed
+from .migration import fold_bound_clients_if_needed
 from .oauth import CLIENT_ID
 from .profiles import create_profile, delete_profile, set_default_profile
 from .reseed import do_reseed, do_reseed_all, do_reseed_scheduled
@@ -1458,13 +1458,11 @@ _DISPATCH: dict[str, Callable[[argparse.Namespace], int]] = {
 
 
 def _dispatch(raw: list[str]) -> int:
-    """Inject the default command, parse, migrate, and run a handler."""
+    """Inject the default command, parse, fold, and run a handler."""
     argv = _inject_default_command(raw)
     parser = _build_parser()
     args = parser.parse_args(argv)
 
-    # Idempotent on fresh or already-migrated installs.
-    migrate_if_needed()
     fold_bound_clients_if_needed()
 
     command = args.command or "token"

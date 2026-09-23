@@ -1,4 +1,4 @@
-"""Tests for multi-profile support: profile registry, resolution, migration.
+"""Tests for multi-profile support: profile registry and resolution.
 
 The `tmp_config` fixture patches both ROOT_DIR and CONFIG_PATH into
 tmp_path, so everything written here is fully sandboxed.
@@ -9,7 +9,6 @@ import stat
 import pytest
 
 from owa_piggy import config as config_mod
-from owa_piggy import migration
 from owa_piggy.config import (
     ensure_profile_registered,
     list_profiles,
@@ -32,7 +31,7 @@ from owa_piggy.config import (
 
 
 def test_profile_paths_resolve_under_root(tmp_config, clean_env):
-    root = tmp_config.parent
+    root = config_mod.ROOT_DIR
     assert profiles_dir() == root / "profiles"
     assert profiles_conf_path() == root / "profiles.conf"
     assert profile_dir("work") == root / "profiles" / "work"
@@ -306,55 +305,6 @@ def test_resolve_ambiguity_errors(tmp_config, clean_env):
     assert "personal" in err
 
 
-# --- Migration --------------------------------------------------------
-
-
-def test_migration_no_op_on_fresh(tmp_config, clean_env):
-    result = migration.migrate_if_needed()
-    assert result is None
-
-
-def test_migration_moves_legacy_config(tmp_config, clean_env):
-    """Legacy layout -> profiles/default/ layout."""
-    save_config({"OWA_REFRESH_TOKEN": "1.AQ_fake", "OWA_TENANT_ID": "tid"})
-    legacy = tmp_config
-    assert legacy.exists()
-
-    result = migration.migrate_if_needed()
-    assert result == "default"
-    # Legacy file is gone; default profile has it.
-    assert not legacy.exists()
-    assert profile_config_path("default").exists()
-    # Registry is populated.
-    out = load_profiles_conf()
-    assert out["OWA_DEFAULT_PROFILE"] == "default"
-    assert "default" in out["OWA_PROFILES"]
-
-
-def test_migration_moves_cache_and_edge_dir(tmp_config, clean_env):
-    save_config({"OWA_REFRESH_TOKEN": "1.AQ_fake", "OWA_TENANT_ID": "tid"})
-    root = tmp_config.parent
-    (root / "cache.json").write_text("{}")
-    (root / "edge-profile").mkdir()
-    (root / "edge-profile" / "marker").write_text("test")
-
-    migration.migrate_if_needed()
-
-    assert (profile_dir("default") / "cache.json").exists()
-    assert (profile_dir("default") / "edge-profile" / "marker").exists()
-    assert not (root / "cache.json").exists()
-    assert not (root / "edge-profile").exists()
-
-
-def test_migration_idempotent(tmp_config, clean_env):
-    """Second call after migration is a no-op."""
-    save_config({"OWA_REFRESH_TOKEN": "1.AQ_fake", "OWA_TENANT_ID": "tid"})
-    migration.migrate_if_needed()
-    # Second call must not error and must not re-touch anything.
-    assert migration.migrate_if_needed() is None
-    assert profile_config_path("default").exists()
-
-
 # --- Alias validation -------------------------------------------------
 
 
@@ -435,17 +385,6 @@ def test_resolve_profile_rejects_bad_env(tmp_config, clean_env, monkeypatch):
 def test_ensure_profile_registered_rejects_bad_alias(tmp_config, clean_env):
     with pytest.raises(ValueError):
         ensure_profile_registered("../escape")
-
-
-def test_migration_skips_when_profiles_dir_present(tmp_config, clean_env):
-    """If the user set up a profile-aware install first (no legacy
-    config), migration must not kick in even if a legacy path somehow
-    appears later."""
-    profile_dir("work").mkdir(parents=True)
-    save_config({"OWA_REFRESH_TOKEN": "1.AQ_fake", "OWA_TENANT_ID": "tid"})
-    # Legacy path exists AND profiles/ exists. Migration is a no-op.
-    assert migration.migrate_if_needed() is None
-    assert tmp_config.exists()  # legacy untouched
 
 
 # --- disabled profiles are unusable -----------------------------------
