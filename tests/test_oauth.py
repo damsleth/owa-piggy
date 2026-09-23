@@ -5,6 +5,7 @@ is mocked: socket.getaddrinfo/socket.socket for the Happy Eyeballs
 connector, and owa_piggy.oauth._OPENER.open for exchange_token.
 """
 
+import http.client
 import json
 import socket
 import threading
@@ -394,3 +395,32 @@ def test_exchange_token_urlerror(monkeypatch):
         out = oauth.exchange_token("1.FAKE-rt", "fake-tenant", oauth.CLIENT_ID, "scope")
     assert out is None
     assert "name resolution failed" in buf.getvalue()
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        http.client.RemoteDisconnected("Remote end closed connection"),
+        http.client.IncompleteRead(b"partial"),
+        ConnectionResetError("reset"),
+    ],
+)
+def test_exchange_token_mid_response_failures_return_none(monkeypatch, exc):
+    def _raise(req, timeout=None):
+        raise exc
+
+    monkeypatch.setattr(oauth._OPENER, "open", _raise)
+    with oauth.capture_errors() as buf:
+        out = oauth.exchange_token("1.FAKE-rt", "fake-tenant", oauth.CLIENT_ID, "scope")
+    assert out is None
+    assert "token exchange failed" in buf.getvalue()
+
+
+def test_exchange_token_non_json_200_returns_none(monkeypatch):
+    monkeypatch.setattr(
+        oauth._OPENER, "open", lambda req, timeout=None: _FakeResp(b"<html>portal</html>")
+    )
+    with oauth.capture_errors() as buf:
+        out = oauth.exchange_token("1.FAKE-rt", "fake-tenant", oauth.CLIENT_ID, "scope")
+    assert out is None
+    assert "JSONDecodeError" in buf.getvalue()

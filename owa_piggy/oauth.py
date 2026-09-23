@@ -251,3 +251,10 @@ def exchange_token(
     except urllib.error.URLError as e:
         print(f"ERROR: {e.reason}", file=_err_stream())
         return None
+    except (OSError, http.client.HTTPException, ValueError) as e:
+        # urllib wraps only send-side failures in URLError. A connection
+        # dropped mid-response (RemoteDisconnected, reset, IncompleteRead)
+        # or a non-JSON 200 (captive portal) escapes it and would abort a
+        # whole multi-profile `status` run on one bad profile.
+        print(f"ERROR: token exchange failed: {type(e).__name__}: {e}", file=_err_stream())
+        return None
