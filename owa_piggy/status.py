@@ -699,15 +699,6 @@ def do_debug(
     except subprocess.TimeoutExpired:
         row("no", "launchctl print timed out")
 
-    try:
-        proc = subprocess.run(["crontab", "-l"], capture_output=True, text=True, timeout=5)
-        if "owa-piggy" in proc.stdout:
-            row(
-                "!!", "legacy cron entry still present", "run ./scripts/setup-refresh.sh to migrate"
-            )
-    except Exception:
-        pass
-
     # --- Installation / PATH ---
     print("\nInstallation:")
     import shutil
