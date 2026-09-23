@@ -238,6 +238,24 @@ def test_capture_reseed_falls_back_to_non_headless_on_error(
     assert "falling back to non-headless" in capsys.readouterr().err
 
 
+def test_capture_reseed_filters_on_the_profiles_client(monkeypatch, tmp_config, clean_env):
+    """A DevOps/Teams profile's reseed must only accept its own client's
+    /token response, on the first attempt and every fallback alike."""
+    seen = []
+
+    def fake_silent(alias, **kwargs):
+        seen.append(kwargs.get("expected_client_id"))
+        return ("error", None) if len(seen) < 3 else ("ok", {"OWA_REFRESH_TOKEN": "rt"})
+
+    monkeypatch.setattr(reseed_mod, "clear_cache", lambda: None)
+    monkeypatch.setattr(capture_mod, "capture_silent", fake_silent)
+    monkeypatch.setattr(reseed_mod, "save_config", lambda config: None)
+
+    cfg = {"OWA_AUTH_MODE": "capture", "OWA_CLIENT_ID": "fake-devops-client"}
+    assert reseed_mod._do_reseed_capture("ado", cfg) == 0
+    assert seen == ["fake-devops-client"] * 3
+
+
 def test_capture_reseed_honors_persisted_headless_zero(monkeypatch, tmp_config, clean_env):
     """A profile that persisted a recent OWA_CAPTURE_HEADLESS=0 goes
     straight to non-headless - no wasted headless attempts."""

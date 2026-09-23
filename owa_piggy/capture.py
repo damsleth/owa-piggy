@@ -814,6 +814,7 @@ def capture_signin(
     timeout: int = 300,
     user_agent: str | None = None,
     capture_url: str | None = None,
+    expected_client_id: str | None = None,
 ) -> dict[str, str]:
     """Visible Edge for first-time setup. Returns a config dict on
     success, or raises RuntimeError with a user-facing message.
@@ -849,7 +850,9 @@ def capture_signin(
         session.call("Network.enable", {})
         session.call("Runtime.enable", {})
         deadline = time.monotonic() + timeout
-        expected_client_id = os.environ.get("OWA_CLIENT_ID", "").strip() or None
+        expected_client_id = (
+            expected_client_id or os.environ.get("OWA_CLIENT_ID", "").strip() or None
+        )
         log(
             f"awaiting /token response (timeout {timeout}s)..."
             + (f" filtering for client_id={expected_client_id}" if expected_client_id else "")
