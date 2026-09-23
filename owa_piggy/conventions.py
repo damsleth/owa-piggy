@@ -1,7 +1,7 @@
 """owa-piggy's CLI wire contract.
 
 The wire contract (action/error envelopes, the doctor payload shape,
-the 0-5 exit-code taxonomy, redact()) is defined here. owa-piggy keeps
+the 0-5 exit-code taxonomy) is defined here. owa-piggy keeps
 this self-contained rather than depending on a separate package, so it
 installs cleanly with no third-party runtime dependency and stays
 independently shippable.
@@ -13,11 +13,12 @@ The auth broker has no long-running streaming actions, so the NDJSON
 from __future__ import annotations
 
 import json
-import re
 import sys
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from typing import Any, Callable, TextIO
+from typing import Any, TextIO
+
+from . import __version__
 
 __all__ = [
     "EXIT_OK",
@@ -27,11 +28,8 @@ __all__ = [
     "EXIT_NOT_FOUND",
     "EXIT_PARTIAL",
     "TOOL_NAME",
-    "redact",
     "action_envelope",
     "emit_action",
-    "data_error",
-    "emit_data_error",
     "DoctorFinding",
     "DoctorPayload",
 ]
@@ -46,40 +44,10 @@ EXIT_USER_ERROR = 1
 EXIT_TRANSIENT = 2
 EXIT_AUTH = 3
 EXIT_NOT_FOUND = 4
-EXIT_PARTIAL = 5
-
-
-# --- Redaction -------------------------------------------------------------
-
-_JWT_RE = re.compile(r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}")
-_BEARER_RE = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._\-+/=]+")
-_TOKEN_FIELD_RE = re.compile(
-    r'(?i)"(access_token|refresh_token|id_token|client_secret|api_key|secret)"\s*:\s*"[^"]*"'
-)
-_BODY_FIELD_RE = re.compile(r'(?i)"(body|content|text|html_body|plain_body)"\s*:\s*"[^"]*"')
-
-
-def redact(text: Any) -> str:
-    if text is None:
-        return ""
-    s: str = text if isinstance(text, str) else str(text)
-    s = _JWT_RE.sub("<redacted-jwt>", s)
-    s = _BEARER_RE.sub("Bearer <redacted>", s)
-    s = _TOKEN_FIELD_RE.sub(lambda m: f'"{m.group(1)}":"<redacted>"', s)
-    s = _BODY_FIELD_RE.sub(lambda m: f'"{m.group(1)}":"<redacted>"', s)
-    return s
+EXIT_PARTIAL = 5  # 2, 4 and 5 are unused here; they complete the owa-* suite taxonomy
 
 
 # --- internals -------------------------------------------------------------
-
-
-def _version() -> str:
-    try:
-        from owa_piggy import __version__
-
-        return __version__
-    except Exception:
-        return "0.0.0"
 
 
 def _writeln(obj: Mapping[str, Any], stream: TextIO | None) -> None:
@@ -102,7 +70,7 @@ def action_envelope(
 ) -> dict[str, Any]:
     return {
         "tool": TOOL_NAME,
-        "version": _version(),
+        "version": __version__,
         "command": command,
         "ok": bool(ok),
         "duration_ms": float(duration_ms) if duration_ms is not None else 0.0,
@@ -113,35 +81,6 @@ def action_envelope(
 
 
 def emit_action(envelope: Mapping[str, Any], stream: TextIO | None = None) -> None:
-    _writeln(envelope, stream)
-
-
-# --- Data-class failure envelope -------------------------------------------
-
-
-def data_error(
-    *,
-    command: str,
-    code: str,
-    message: str,
-    hint: str | None = None,
-) -> dict[str, Any]:
-    # Redacted on the way out: these messages routinely carry an AAD error
-    # body, and this tool's whole payload is refresh tokens. redact() existed
-    # for exactly this and nothing was calling it.
-    err: dict[str, Any] = {"code": code, "message": redact(message)}
-    if hint:
-        err["hint"] = redact(hint)
-    return {
-        "tool": TOOL_NAME,
-        "version": _version(),
-        "command": command,
-        "ok": False,
-        "error": err,
-    }
-
-
-def emit_data_error(envelope: Mapping[str, Any], stream: TextIO | None = None) -> None:
     _writeln(envelope, stream)
 
 
@@ -169,24 +108,17 @@ class DoctorFinding:
 @dataclass
 class DoctorPayload:
     tool: str = TOOL_NAME
-    version: str | Callable[[], str] = field(default_factory=lambda: _version)
+    version: str = __version__
     config_path: str | None = None
-    data_path: str | None = None
     auth: dict[str, Any] | None = None
-    models: dict[str, Any] | None = None
     findings: list[DoctorFinding] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
-        v = self.version() if callable(self.version) else self.version
-        out: dict[str, Any] = {"tool": self.tool, "version": str(v)}
+        out: dict[str, Any] = {"tool": self.tool, "version": self.version}
         if self.config_path is not None:
             out["config_path"] = self.config_path
-        if self.data_path is not None:
-            out["data_path"] = self.data_path
         if self.auth is not None:
             out["auth"] = self.auth
-        if self.models is not None:
-            out["models"] = self.models
         out["findings"] = [f.to_dict() for f in self.findings]
         return out
 
