@@ -789,7 +789,7 @@ def _mint_and_emit(args: argparse.Namespace, *, mode: str) -> int:
     # write to disk - surface that to the user so they know to update
     # their environment (the NOTE writes go to stderr to keep stdout
     # script-clean).
-    if info["rotated"] and not persist:
+    if info["rotated"] and not persist and token_sink is None:
         print(
             "NOTE: refresh token rotated; OWA_REFRESH_TOKEN was env-only so "
             "the new token was not written to disk. Update your environment "
