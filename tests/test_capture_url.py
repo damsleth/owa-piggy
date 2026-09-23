@@ -13,7 +13,7 @@ def _mock_reseed(monkeypatch):
     monkeypatch.setattr(reseed_mod, "save_config", lambda cfg: None)
     seen = {}
 
-    def _fake_silent(alias, *, timeout=None, headless=None, user_agent=None, capture_url=None):
+    def _fake_silent(alias, *, timeout=None, headless=None, user_agent=None, capture_url=None, **_):
         seen["capture_url"] = capture_url
         return "ok", {"OWA_REFRESH_TOKEN": "1.AQ_x", "OWA_TENANT_ID": "tid-x"}
 
