@@ -641,6 +641,32 @@ def test_reseed_bypasses_cache(monkeypatch, tmp_config, clean_env, make_jwt):
     assert called["n"] == 1
 
 
+def test_token_surfaces_reauth_exit_code_without_retrying(monkeypatch, tmp_config, clean_env):
+    """A dead sidecar session comes back from auto-reseed as EXIT_AUTH; token
+    must pass it through - not the generic 1 - and not re-exchange, so the
+    caller can drop the profile instead of retrying into more Edge launches."""
+    from owa_piggy.config import save_config
+    from owa_piggy.conventions import EXIT_AUTH
+
+    save_config({"OWA_REFRESH_TOKEN": "1.AQ_fake-rt-for-tests", "OWA_TENANT_ID": "tid"})
+    exchanges = []
+    info = {
+        "stderr_text": "",
+        "rt_present": True,
+        "rt_shape_ok": True,
+        "tid_present": True,
+        "aad_error": "AADSTS700084",
+    }
+    monkeypatch.setattr(
+        cli_mod, "exchange_fresh", lambda *a, **kw: exchanges.append(1) or (None, info)
+    )
+    monkeypatch.setattr(cli_mod, "do_reseed", lambda alias: EXIT_AUTH)
+
+    rc = _run(monkeypatch, ["token", "--no-cache"])
+    assert rc == EXIT_AUTH
+    assert len(exchanges) == 1
+
+
 # --- Cache-hit output branches -----------------------------------------
 
 
