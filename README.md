@@ -372,8 +372,6 @@ owa-piggy profiles unschedule work            # stop auto-reseeding 'work'
 
 Selection precedence when `--profile` is omitted: `OWA_PROFILE` env var > `OWA_DEFAULT_PROFILE` in `profiles.conf` > lone profile on disk > `default` on fresh installs. If multiple profiles exist but none is marked default, the command errors out rather than guessing.
 
-Legacy single-config installs auto-migrate on first run: `~/.config/owa-piggy/{config,cache.json,edge-profile}` move into `profiles/default/` atomically and a `profiles.conf` is written that marks `default` as the active profile.
-
 ### One identity, several clients
 
 A profile is a **user**, not a (user, client) pair. Most audiences are reachable
