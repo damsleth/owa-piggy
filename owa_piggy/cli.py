@@ -32,7 +32,6 @@ from .cache import (
     get_cached_token,
     store_token,
 )
-from .conventions import EXIT_AUTH
 from .config import (
     classify_profile_type,
     list_profiles,
@@ -43,6 +42,7 @@ from .config import (
     set_active_profile,
     validate_alias,
 )
+from .conventions import EXIT_AUTH
 from .jwt import decode_jwt, decode_jwt_segment, token_minutes_remaining
 from .migration import fold_bound_clients_if_needed, migrate_if_needed
 from .oauth import CLIENT_ID
