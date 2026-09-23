@@ -113,3 +113,59 @@ def test_standalone_scraper_declares_matching_cdp_parity_version():
     spec.loader.exec_module(module)
 
     assert module.CDP_HELPER_PARITY_VERSION == cdp.CDP_HELPER_PARITY_VERSION
+
+
+def _session_pair():
+    """A CdpSession wired to one end of a socketpair; the test plays Edge
+    on the other end."""
+    a, b = socket.socketpair()
+    a.settimeout(5)
+    s = cdp.CdpSession.__new__(cdp.CdpSession)
+    s._sock, s._next_id, s._buffered = b, 0, []
+    return s, a
+
+
+def test_events_during_call_are_buffered_for_wait_event():
+    """The capture flow enables Network, then waits for events that may
+    already have arrived while call() was reading its reply. Those must be
+    delivered later, and events matching nothing must be kept, not lost."""
+    import json
+
+    s, edge = _session_pair()
+    try:
+        ev = lambda m, **p: json.dumps({"method": m, "params": p})  # noqa: E731
+        cdp._send_frame(edge, 0x1, ev("Network.responseReceived", requestId="1"))
+        cdp._send_frame(edge, 0x1, json.dumps({"id": 1, "result": {"ok": True}}))
+        assert s.call("Network.enable") == {"ok": True}
+        assert s._buffered[0]["method"] == "Network.responseReceived"
+
+        cdp._send_frame(edge, 0x1, ev("Page.frameNavigated"))
+        cdp._send_frame(edge, 0x1, ev("Network.loadingFinished", requestId="1"))
+        assert s.wait_event("Network.responseReceived", timeout=1) == {"requestId": "1"}
+        assert s.wait_event("Network.loadingFinished", timeout=1) == {"requestId": "1"}
+        assert [m["method"] for m in s._buffered] == ["Page.frameNavigated"]
+    finally:
+        edge.close()
+        s.close()
+
+
+def test_wait_event_timeout_never_splits_a_frame():
+    """A frame whose payload lands after the wait window must still be read
+    whole by the next wait - not parsed from mid-payload."""
+    import json
+    import struct
+
+    s, edge = _session_pair()
+    try:
+        body = json.dumps({"method": "Network.loadingFinished", "params": {"requestId": "7"}})
+        data = body.encode()
+        edge.sendall(struct.pack("!BB", 0x81, len(data)))  # header only
+        timer = threading.Timer(0.3, edge.sendall, args=(data,))
+        timer.start()
+        with pytest.raises(TimeoutError):
+            s.wait_event("Nope", timeout=0.1)
+        timer.join()
+        assert s.wait_event("Network.loadingFinished", timeout=1) == {"requestId": "7"}
+    finally:
+        edge.close()
+        s.close()
