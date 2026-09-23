@@ -57,8 +57,7 @@ owa_piggy/
   setup.py           # interactive_setup(alias), read_input (raw-tty paste safety)
   scripts.py         # find_packaged_script + per-script wrappers (reseed, setup-refresh)
   launchd.py         # SHARED_LABEL + shared_plist_path, is_scheduled,
-                     # schedule/unschedule (single shared agent); label_for/
-                     # plist_path retained for migration of old per-profile plists
+                     # schedule/unschedule (single shared agent)
   reseed.py          # do_reseed(alias), do_reseed_all, do_reseed_scheduled
                      # (launchd entry point: reseeds OWA_SCHEDULED only)
   capture.py         # headless Edge /token interception (capture-mode setup + reseed)
