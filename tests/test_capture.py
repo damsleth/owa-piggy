@@ -300,6 +300,8 @@ def test_offscreen_launch_keeps_renderer_hot(monkeypatch, tmp_path):
     )
     capture.launch_edge(tmp_path, 9999, headless=False, url="https://x", offscreen=True)
     capture._release_edge_lock(_FakeProc.pid)
+    # Every killed Edge would otherwise leak a ~1.1 GB app-bundle clone.
+    assert "--disable-features=MacAppCodeSignClone" in seen["args"]
     assert "--disable-backgrounding-occluded-windows" in seen["args"]
     assert "--disable-renderer-backgrounding" in seen["args"]
 
