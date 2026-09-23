@@ -906,6 +906,18 @@ def test_status_json_no_profiles(monkeypatch, capsys, tmp_config, clean_env):
     assert payload == {"profiles": [], "summary": {"ok": 0, "warn": 0, "fail": 0}}
 
 
+def test_status_json_all_profiles_exits_nonzero_on_a_failure(
+    monkeypatch, capsys, tmp_config, clean_env
+):
+    import owa_piggy.cli as cli_mod
+
+    fake = {"profiles": [], "summary": {"ok": 1, "warn": 0, "fail": 1}}
+    monkeypatch.setattr(cli_mod, "status_all_report", lambda **kw: fake)
+    assert _run(monkeypatch, ["status", "--json"]) == 1
+    fake["summary"]["fail"] = 0
+    assert _run(monkeypatch, ["status", "--json"]) == 0
+
+
 def test_status_json_single_profile_redacts_tokens(
     monkeypatch, capsys, tmp_config, clean_env, make_jwt
 ):
