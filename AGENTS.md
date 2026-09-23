@@ -47,7 +47,7 @@ owa_piggy/
   jwt.py             # decode_jwt_segment, decode_jwt, token_minutes_remaining
   config.py          # ROOT_DIR, CONFIG_PATH, profile path helpers,
                      # resolve_profile, profiles.conf I/O, load/save_config
-  migration.py       # one-shot legacy single-config -> profiles/default/ rescue
+  migration.py       # one-shot fold of client-bound profiles into clients.json
   cache.py           # access-token cache keyed by (tenant, client, scope),
                      # scoped per-profile via CONFIG_PATH.parent
   oauth.py           # CLIENT_ID, per-client Origin (origin_for_client /
@@ -93,10 +93,6 @@ profiles/
     cache.json                    access-token cache for this profile
     edge-profile/                 Edge sidecar userdata dir for this profile
 ```
-
-The single-file layout (`~/.config/owa-piggy/config`) is auto-migrated into
-`profiles/default/` the first time any profile-aware code path runs; see
-`owa_piggy/migration.py`.
 
 Planning docs live in `.plans/`. If you are about to do something
 non-trivial, check `.plans/plan-*.md` first - the plan may already
