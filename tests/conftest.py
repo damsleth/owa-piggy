@@ -54,14 +54,12 @@ def tmp_config(tmp_path, monkeypatch):
     """Redirect the owa-piggy config tree to a path under tmp_path.
 
     Patches both `ROOT_DIR` (profiles/profiles.conf resolve through it)
-    and `CONFIG_PATH` (active-profile legacy-compat path). Returns the
-    legacy-style config path so tests that call `save_config(...)`
-    directly still write to the expected location - migration then
-    relocates it under `profiles/default/` when main() is invoked,
-    matching production behavior.
+    and `CONFIG_PATH` (the active profile's config). Returns the `default`
+    profile's config path, so tests that call `save_config(...)` directly
+    create the single on-disk profile that main() then resolves to.
     """
     fake_root = tmp_path / "owa-piggy"
-    fake_path = fake_root / "config"
+    fake_path = fake_root / "profiles" / "default" / "config"
     from owa_piggy import config as config_mod
 
     monkeypatch.setattr(config_mod, "ROOT_DIR", fake_root)

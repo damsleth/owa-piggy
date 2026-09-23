@@ -19,10 +19,6 @@ Profile layout (since multi-tenant support landed):
 `set_active_profile(alias)`. `cache.py` reads `CONFIG_PATH.parent` at call
 time (see cache.py docstring), so flipping `CONFIG_PATH` automatically
 redirects the cache without any other plumbing.
-
-Pre-migration (legacy) installs keep `CONFIG_PATH` at the flat
-`~/.config/owa-piggy/config`. `migration.migrate_if_needed()` moves that
-into `profiles/default/` the first time a profile-aware code path runs.
 """
 
 from __future__ import annotations
@@ -210,8 +206,6 @@ def private_permission_paths() -> list[tuple[Path, int, str]]:
         (ROOT_DIR, 0o700, "config root"),
         (profiles_dir(), 0o700, "profiles root"),
         (profiles_conf_path(), 0o600, "profile registry"),
-        (ROOT_DIR / "config", 0o600, "legacy config"),
-        (ROOT_DIR / "cache.json", 0o600, "legacy cache"),
     ]
     for alias in list_profiles():
         paths.extend(
