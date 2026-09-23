@@ -328,6 +328,23 @@ def test_token_sink_receives_the_rotated_token_instead_of_the_config(
     assert load_config()[0]["OWA_REFRESH_TOKEN"] == RT
 
 
+def test_token_sink_runs_even_when_the_profile_rt_is_env_only(tmp_config, clean_env, monkeypatch):
+    """persist=False means the profile's FOCI RT came from the environment.
+    A bound client's token always comes from clients.json, so its rotation
+    must still be kept - dropping it strands that client on a dead token."""
+    config = {"OWA_REFRESH_TOKEN": "1.bound-client-rt", "OWA_TENANT_ID": TID}
+    monkeypatch.setattr(
+        token_flow,
+        "exchange_token",
+        lambda *a, **k: {"access_token": "AT", "refresh_token": "1.bound-client-rt-v2"},
+    )
+    sunk = []
+
+    token_flow.exchange_fresh(config, SCOPE, persist=False, token_sink=sunk.append)
+
+    assert sunk == ["1.bound-client-rt-v2"]
+
+
 def test_no_token_sink_still_persists_to_the_config(tmp_config, clean_env, monkeypatch):
     from owa_piggy.config import save_config
 
