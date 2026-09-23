@@ -386,7 +386,13 @@ def launch_edge(
         # tokens while booting (Teams does, 0.8-2.3s in) can finish the
         # whole exchange before Network.enable arrives. Attaching first and
         # navigating second is the only way to be sure we see it.
-        launch_url = None
+        #
+        # Headless still gets an explicit about:blank: with no URL it opens
+        # the profile's new-tab page, and Edge 153's Copilot NTP (rolled
+        # out per profile) surfaces as a `browser_ui` target, not `page`.
+        # find_tab never sees a page, headless times out twice, and every
+        # reseed falls back to a non-headless window.
+        launch_url = "about:blank" if headless else None
     if user_agent:
         # Spoof the UA before any navigation so AAD's first request hits
         # the override. Tenant CA policies that gate on platform (e.g.
