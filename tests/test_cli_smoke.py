@@ -1403,14 +1403,7 @@ def test_profiles_unschedule_removes_from_registry(monkeypatch, capsys, tmp_conf
 
 
 def _bound_profile(make_jwt):
-    """Profile with a FOCI token plus a bound Teams client token.
-
-    Written straight into profiles/default/ rather than the legacy path the
-    other tests use: creating clients.json makes profiles/ exist, which is
-    exactly the signal migrate_if_needed() reads as "already migrated", so
-    a legacy-path config would never be relocated and main() would find an
-    empty profile.
-    """
+    """Profile with a FOCI token plus a bound Teams client token."""
     from owa_piggy import clients
     from owa_piggy.config import profile_config_path, save_config
 
