@@ -66,6 +66,7 @@ complete -c owa-piggy -n '__fish_seen_subcommand_from setup' -l user-agent
 complete -c owa-piggy -n '__fish_seen_subcommand_from setup' -l sharepoint-tenant
 complete -c owa-piggy -n '__fish_seen_subcommand_from setup' -l with-client
 complete -c owa-piggy -n '__fish_seen_subcommand_from setup' -l google
+complete -c owa-piggy -n '__fish_seen_subcommand_from setup' -l halo
 complete -c owa-piggy -n '__fish_seen_subcommand_from setup' -l google-client-id
 complete -c owa-piggy -n '__fish_seen_subcommand_from setup' -l google-client-secret
 complete -c owa-piggy -n '__fish_seen_subcommand_from setup' -l json
