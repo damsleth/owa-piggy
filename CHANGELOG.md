@@ -12,6 +12,28 @@ Releases before v0.12.0 are recorded only in the annotated git tags
 
 ### Added
 
+- Halo as a service on an AAD profile: `owa-piggy clients add
+  halo=https://<tenant>.haloitsm.com --profile nc` signs the profile's Edge
+  sidecar in to Halo through Entra SSO (clicking the profile's own tile on
+  the account picker Halo forces), reads the `refresh_token` cookie, and
+  reseed renews it with the other clients. `token --audience halo --profile
+  nc [--json]` mints Halo's bearer from it, with `host` in the envelope.
+- `profiles --json` rows carry `services` (`OWA_SERVICES` when set, else
+  derived: `owa`, plus `ado`/`halo` for bound credentials that hold a token)
+  and `edge_dir`, the sidecar a consumer may drive under the same
+  `<edge_dir>/.owa-lock` flock capture takes.
+- A pinned-headless profile whose headless capture fails three runs in a row
+  while the non-headless fallback works skips headless for a day, without
+  touching the pin.
+
+### Changed
+
+- Non-headless capture drives a hidden CDP tab instead of a minimized
+  window, so Edge never appears or takes keyboard focus. Edge only allows a
+  hidden tab once an extension background page is running (uBlock Origin in
+  the sidecar is enough); without one it falls back to the minimized window
+  and hands focus back to the previous app.
+
 - HaloITSM provider: `owa-piggy setup --profile <alias> --halo <host>` seeds a
   profile from the Halo agent web app's `refresh_token` cookie (pasted or
   piped, verified live before saving). `token` mints Halo's opaque one-hour

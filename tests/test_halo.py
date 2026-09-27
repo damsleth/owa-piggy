@@ -152,3 +152,73 @@ def test_halo_token_json_is_cached_without_jwt(monkeypatch, capsys, tmp_config, 
     second = json.loads(capsys.readouterr().out)
     assert (second["access_token"], second["host"]) == ("hat-opaque", "norconsult.haloitsm.com")
     assert calls == ["norconsult.haloitsm.com"]
+
+
+# --- Halo as a service on an AAD profile ------------------------------------
+
+
+def test_halo_service_token_mints_from_the_bound_entry(monkeypatch, capsys, tmp_config, clean_env):
+    """`token --audience halo` on an AAD profile exchanges the clients.json
+    Halo entry against its host, never the profile's FOCI token."""
+    from owa_piggy import cli, clients
+    from owa_piggy.config import save_config, set_active_profile
+
+    set_active_profile("work")
+    save_config({"OWA_REFRESH_TOKEN": "1.fake-foci-rt", "OWA_TENANT_ID": "fake-tid"})
+    clients.declare_client("work", clients.HALO_KEY, capture_url="https://norconsult.haloitsm.com")
+    clients.save_client("work", clients.HALO_KEY, refresh_token="fake-halo-rt")
+    calls = []
+    monkeypatch.setattr(
+        token_flow,
+        "halo_exchange_token",
+        lambda host, rt: calls.append((host, rt)) or {"access_token": "hat", "expires_in": 3600},
+    )
+
+    monkeypatch.setattr(cli.sys, "argv", ["owa-piggy", "token", "--audience", "halo", "--json"])
+    assert cli.main() == 0
+    out = json.loads(capsys.readouterr().out)
+    assert (out["access_token"], out["host"]) == ("hat", "norconsult.haloitsm.com")
+    assert calls == [("norconsult.haloitsm.com", "fake-halo-rt")]
+    assert clients.profile_services("work", {}) == ["owa", "halo"]
+
+
+def test_halo_service_without_a_sign_in_says_how(monkeypatch, capsys, tmp_config, clean_env):
+    from owa_piggy import cli
+    from owa_piggy.config import save_config, set_active_profile
+
+    set_active_profile("work")
+    save_config({"OWA_REFRESH_TOKEN": "1.fake-foci-rt", "OWA_TENANT_ID": "fake-tid"})
+    monkeypatch.setattr(cli.sys, "argv", ["owa-piggy", "token", "--audience", "halo"])
+    assert cli.main() == 1
+    assert "clients add halo=" in capsys.readouterr().err
+
+
+def test_parse_spec_takes_halo_with_its_url():
+    from owa_piggy import clients
+
+    assert clients.parse_spec("halo=https://norconsult.haloitsm.com") == (
+        clients.HALO_KEY,
+        "https://norconsult.haloitsm.com",
+        "",
+    )
+
+
+def test_bound_client_rotation_reads_halo_from_its_cookie(monkeypatch, tmp_config, clean_env):
+    """Reseed walks clients.json; the halo entry goes to the cookie capture,
+    not the AAD /token interception."""
+    from owa_piggy import capture, clients
+    from owa_piggy.config import set_active_profile
+
+    set_active_profile("work")
+    clients.declare_client("work", clients.HALO_KEY, capture_url="https://norconsult.haloitsm.com")
+    seen = []
+    monkeypatch.setattr(capture, "capture_silent", lambda *a, **kw: 1 / 0)
+    monkeypatch.setattr(
+        capture,
+        "capture_halo",
+        lambda alias, url, headless=None: seen.append(url) or ("ok", {"OWA_REFRESH_TOKEN": "new"}),
+    )
+
+    assert capture.capture_bound_clients("work") == (1, [])
+    assert seen == ["https://norconsult.haloitsm.com"]
+    assert clients.load_clients("work")[clients.HALO_KEY]["refresh_token"] == "new"
