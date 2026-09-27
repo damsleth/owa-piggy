@@ -571,6 +571,27 @@ def _mint_and_emit(args: argparse.Namespace, *, mode: str) -> int:
 
     config, persist = load_config()
     provider = (config.get("OWA_PROVIDER", "") or "msal").strip() or "msal"
+    token_sink: Callable[[str], None] | None = None
+    if args.audience == "halo" and provider not in OPAQUE_PROVIDERS:
+        # Halo as a service on an AAD profile: its refresh token lives in
+        # clients.json (captured from the sidecar's cookie), and from here on
+        # the exchange, cache and `host` envelope are the Halo provider's.
+        halo = clients.load_clients(alias).get(clients.HALO_KEY) or {}
+        if not halo.get("refresh_token"):
+            print(
+                f"ERROR: profile {alias!r} has no Halo sign-in. Run: "
+                f"owa-piggy clients add halo=https://<tenant>.haloitsm.com --profile {alias}",
+                file=sys.stderr,
+            )
+            return 1
+        config = clients.overlay_halo(config, halo)
+        provider = "halo"
+
+        def token_sink(new_rt: str, _entry: dict[str, str] = halo) -> None:
+            clients.save_client(
+                alias, clients.HALO_KEY, refresh_token=new_rt, capture_url=_entry.get("capture_url")
+            )
+
     tenant_id = config.get("OWA_TENANT_ID", "").strip()
     client_id = config.get("OWA_CLIENT_ID", CLIENT_ID).strip()
 
@@ -630,7 +651,6 @@ def _mint_and_emit(args: argparse.Namespace, *, mode: str) -> int:
             file=sys.stderr,
         )
         return 1
-    token_sink: Callable[[str], None] | None = None
     if bound_id and bound_entry is not None:
         entry = bound_entry
         config = clients.overlay_config(config, bound_id, entry)
