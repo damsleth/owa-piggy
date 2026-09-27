@@ -1,4 +1,4 @@
-"""Tests for the HaloITSM provider: exchange helper, dispatch, setup, cache (no network)."""
+"""Tests for HaloITSM: exchange helper, dispatch, the bound service, cache (no network)."""
 
 import io
 import json
@@ -6,7 +6,6 @@ import urllib.error
 import urllib.parse
 
 from owa_piggy import oauth_halo, token_flow
-from owa_piggy import setup as setup_mod
 from owa_piggy.config import classify_profile_type
 
 
@@ -98,28 +97,6 @@ def test_exchange_fresh_halo_without_host_short_circuits(monkeypatch):
 
 def test_classify_profile_type_halo():
     assert classify_profile_type({"OWA_PROVIDER": "halo"}) == "halo"
-
-
-def test_halo_setup_verifies_then_persists(tmp_config, clean_env, monkeypatch):
-    monkeypatch.setattr(setup_mod.sys, "stdin", io.StringIO("fake-rt-for-tests\n"))
-    monkeypatch.setattr(oauth_halo, "refresh_access_token", lambda host, rt: {"access_token": "a"})
-    config = {}
-
-    assert setup_mod.interactive_setup(config, "nc-halo", halo="norconsult") is True
-    assert config == {
-        "OWA_PROVIDER": "halo",
-        "OWA_TENANT_ID": "norconsult.haloitsm.com",
-        "OWA_REFRESH_TOKEN": "fake-rt-for-tests",
-    }
-    assert tmp_config.exists()
-
-
-def test_halo_setup_rejected_token_is_not_saved(tmp_config, clean_env, monkeypatch):
-    monkeypatch.setattr(setup_mod.sys, "stdin", io.StringIO("dead-rt\n"))
-    monkeypatch.setattr(oauth_halo, "refresh_access_token", lambda host, rt: None)
-
-    assert setup_mod.interactive_setup({}, "nc-halo", halo="norconsult") is False
-    assert not tmp_config.exists()
 
 
 def test_halo_token_json_is_cached_without_jwt(monkeypatch, capsys, tmp_config, clean_env):

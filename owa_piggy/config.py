@@ -600,6 +600,9 @@ def load_config(path: Path | None = None) -> tuple[dict[str, str], bool]:
 
 # Providers whose tokens are opaque bearer strings from a non-AAD token
 # endpoint: no audience, no FOCI shape, no JWT payload, no Edge reseed.
+# 'halo' is never a saved profile any more (Halo is a service on an AAD
+# profile); clients.overlay_halo sets it on the in-memory config so
+# `token --audience halo` takes this path.
 OPAQUE_PROVIDERS = ("google", "halo")
 
 
