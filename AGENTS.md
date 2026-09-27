@@ -51,7 +51,8 @@ owa_piggy/
                      # scoped per-profile via CONFIG_PATH.parent
   oauth.py           # CLIENT_ID, per-client Origin (origin_for_client /
                      # KNOWN_CLIENT_ORIGINS), exchange_token (the one HTTP call)
-  oauth_halo.py      # HaloITSM refresh grant (public agent-app client, host = OWA_TENANT_ID)
+  oauth_halo.py      # HaloITSM refresh grant (public agent-app client); Halo is a
+                     # service on an AAD profile (clients.json `halo`, capture.capture_halo)
   token_flow.py      # shared live AAD exchange for token/status/debug:
                      # scope resolve, RT shape check, rotated-RT persist
   setup.py           # interactive_setup(alias), read_input (raw-tty paste safety)
