@@ -40,6 +40,7 @@ import socket
 import subprocess
 import sys
 import time
+import urllib.parse
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -1357,6 +1358,124 @@ def capture_silent(
         return "error", None
 
 
+# The account tile on Entra's "Pick an account" page. Halo's authorize
+# request carries prompt=select_account, so even a signed-in sidecar stops
+# there; the tile's data-test-id is the account's UPN. Text match is the
+# fallback in case Microsoft renames the attribute.
+_PICK_ACCOUNT_JS = """((email) => {
+    const tiles = [...document.querySelectorAll('[data-test-id], div[role=button], .table')];
+    const t = tiles.find(e => (e.getAttribute('data-test-id') || '').toLowerCase() === email)
+        || tiles.find(e => (e.innerText || '').toLowerCase().includes(email));
+    if (!t) return false;
+    t.click();
+    return true;
+})(%s)"""
+
+
+def capture_halo(
+    alias: str,
+    capture_url: str,
+    *,
+    headless: bool | None = None,
+    timeout: float = 30.0,
+) -> tuple[str, dict[str, str] | None]:
+    """Sign the sidecar in to a HaloITSM tenant and read its refresh token.
+
+    Halo signs agents in through Entra SSO but mints its own opaque tokens,
+    and the agent web app keeps the refresh token in a `refresh_token`
+    cookie on the Halo host. So there is no /token response to intercept:
+    navigate, let SSO bounce through Entra, and read the cookie over CDP.
+    `oauth_halo` exchanges it (verified 2026-09-27: headless, 2.5s, no
+    prompt).
+
+    The one stop on the way is Entra's account picker (see
+    _PICK_ACCOUNT_JS). Clicking the profile's own account there is the
+    same click a user makes and needs no credential; any other login page
+    - no tile for OWA_EMAIL, or still on login.* after the click - means a
+    real sign-in is needed, reported as 'reauth'.
+
+    Returns ('ok', {'OWA_REFRESH_TOKEN': ...}), ('reauth', None) or
+    ('error', None), the same shape capture_silent uses, so
+    capture_bound_clients handles both alike.
+    """
+    log = _logger(f"capture/halo/{alias}")
+    host = urllib.parse.urlsplit(capture_url).netloc
+    edge_dir = _config.profile_edge_dir(alias)
+    if not host or not edge_dir.is_dir():
+        return "reauth", None
+    email = (
+        (_config.load_config(_config.profile_config_path(alias))[0].get("OWA_EMAIL") or "")
+        .strip()
+        .lower()
+    )
+    if headless is None:
+        headless = _capture_headless_default()
+    port = find_free_port()
+    try:
+        proc = launch_edge(edge_dir, port, headless=headless, url=capture_url, offscreen=True)
+    except RuntimeError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return "error", None
+    session = None
+    try:
+        if headless:
+            session = _open_session(port)
+        else:
+            session = _open_parked_session(port, log)
+            _park_window(session, log)
+        session.call("Network.enable", {})
+        session.call("Page.navigate", {"url": capture_url})
+        start = time.monotonic()
+        clicked_at = None
+        login_since = None
+        while time.monotonic() - start < timeout:
+            time.sleep(0.5)
+            here = (
+                session.call(
+                    "Runtime.evaluate", {"expression": "location.host", "returnByValue": True}
+                )
+                .get("result", {})
+                .get("value")
+                or ""
+            )
+            if here == host:
+                login_since = None
+                cookies = session.call("Network.getCookies", {"urls": [f"https://{host}"]})
+                for c in cookies.get("cookies", []):
+                    if c.get("name") == "refresh_token" and c.get("value"):
+                        log(f"refresh_token cookie after {time.monotonic() - start:.1f}s")
+                        return "ok", {"OWA_REFRESH_TOKEN": c["value"]}
+                continue
+            if not _is_login_host(here):
+                continue
+            now = time.monotonic()
+            login_since = login_since or now
+            if clicked_at is None and email:
+                picked = session.call(
+                    "Runtime.evaluate",
+                    {"expression": _PICK_ACCOUNT_JS % json.dumps(email), "returnByValue": True},
+                )
+                if picked.get("result", {}).get("value") is True:
+                    log("picked the profile's account on the Entra account picker")
+                    clicked_at = now
+                    continue
+            # The picker renders within a second or two; a login page that
+            # has sat there this long without one (or kept us after the
+            # click) is asking for a real sign-in.
+            if now - (clicked_at or login_since) > 8.0:
+                log(f"parked on {here} (reauth required)")
+                return "reauth", None
+        log(f"no refresh_token cookie on {host} after {timeout:.0f}s")
+        return "error", None
+    except (ConnectionError, CdpError, OSError, TimeoutError) as e:
+        log(f"CDP failure: {e}")
+        return "error", None
+    finally:
+        if session is not None:
+            session.close()
+        _terminate(proc)
+
+
 def capture_bound_clients(
     alias: str,
     *,
@@ -1395,24 +1514,26 @@ def capture_bound_clients(
             failed.append(name)
             print(f"[{alias}] client {name}: no capture URL declared; skipped", file=sys.stderr)
             continue
-        status, captured = capture_silent(
-            alias,
-            headless=headless,
-            user_agent=user_agent,
-            capture_url=capture_url,
-            expected_client_id=client_id,
-        )
+
+        def attempt(
+            _client_id: str = client_id, _url: str = capture_url
+        ) -> tuple[str, dict[str, str] | None]:
+            if _client_id == clients_mod.HALO_KEY:
+                return capture_halo(alias, _url, headless=headless)
+            return capture_silent(
+                alias,
+                headless=headless,
+                user_agent=user_agent,
+                capture_url=_url,
+                expected_client_id=_client_id,
+            )
+
+        status, captured = attempt()
         if status == "error":
             # Same transient-error retry the FOCI path does: a CDP hiccup
             # or a /token round-trip past the timeout recovers on a second
             # attempt more often than not.
-            status, captured = capture_silent(
-                alias,
-                headless=headless,
-                user_agent=user_agent,
-                capture_url=capture_url,
-                expected_client_id=client_id,
-            )
+            status, captured = attempt()
         rt = (captured or {}).get("OWA_REFRESH_TOKEN", "")
         if status != "ok" or not rt:
             failed.append(name)
