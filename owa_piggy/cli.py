@@ -39,6 +39,7 @@ from .config import (
     load_config,
     load_profiles_conf,
     profile_config_path,
+    profile_edge_dir,
     resolve_profile,
     set_active_profile,
     validate_alias,
@@ -1272,13 +1273,22 @@ def _profiles_report() -> dict[str, Any]:
         cfg_path = profile_config_path(alias)
         has_config = cfg_path.is_file()
         ptype = "m365"
+        services: list[str] = []
         if has_config:
             config, _ = load_config(cfg_path)
             ptype = classify_profile_type(config)
+            services = clients.profile_services(alias, config)
         out.append(
             {
                 "alias": alias,
                 "type": ptype,
+                "services": services,
+                # The profile's Edge sidecar. Consumers that drive it
+                # themselves (owa-swodp) must hold `<edge_dir>/.owa-lock`
+                # (exclusive flock, waited for) from launch to exit, the same
+                # lock capture._acquire_edge_lock takes, or a concurrent
+                # reseed and the consumer singleton-forward into each other.
+                "edge_dir": str(profile_edge_dir(alias)),
                 "default": alias == default,
                 "registered": alias in enabled,
                 "scheduled": alias in scheduled,
