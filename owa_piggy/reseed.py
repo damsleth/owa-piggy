@@ -62,6 +62,14 @@ def _profile_cdp_port(alias: str) -> int:
 # preference is trusted before headless gets another chance.
 _HEADLESS_PREF_TTL_HOURS = 24
 
+# Consecutive runs in which a *pinned*-headless profile's headless capture
+# failed but the non-headless fallback worked, before reseed stops paying
+# for the doomed headless attempts (2 x the capture timeout) and goes
+# straight to non-headless - for _HEADLESS_PREF_TTL_HOURS, then headless
+# gets another try. One failure is noise (a cold Edge start, a slow /token
+# round-trip); three in a row is the tenant.
+_HEADLESS_FAIL_STREAK = 3
+
 # How many consecutive unattended sign-in failures a capture profile may
 # rack up before scheduled reseed stops launching Edge for it. Every
 # attempt against an expired sidecar session parks on login.* - which,
@@ -116,12 +124,38 @@ def _headless_pinned(config: dict[str, str]) -> bool:
     return at is not None and not at.strip()
 
 
+def _headless_fails(config: dict[str, str]) -> int:
+    try:
+        return int((config.get("OWA_HEADLESS_FAILS") or "0").strip())
+    except ValueError:
+        return 0
+
+
+def _headless_streak_active(config: dict[str, str]) -> bool:
+    """Has pinned headless failed often enough, recently enough, that this
+    run should skip it? The streak outlives the TTL: once it expires the
+    next run tries headless, and a single further failure re-arms it for
+    another day, while a success clears it (see _do_reseed_capture)."""
+    if _headless_fails(config) < _HEADLESS_FAIL_STREAK:
+        return False
+    stamp = parse_iso_utc((config.get("OWA_HEADLESS_FAILS_AT") or "").strip())
+    if stamp is None:
+        return False
+    age_hours = (datetime.now(timezone.utc) - stamp).total_seconds() / 3600
+    return age_hours <= _HEADLESS_PREF_TTL_HOURS
+
+
 def _headless_pref(config: dict[str, str]) -> bool:
     """Should this profile's capture run headless?
 
     Precedence: OWA_CAPTURE_HEADLESS in the environment (ad-hoc override),
     then a pinned per-profile value, then the auto-learned one, then
     headless.
+
+    A pinned headless value is not absolute: a run where headless fails
+    still falls back to non-headless (once, and the next run is headless
+    again), and _HEADLESS_FAIL_STREAK such runs in a row switch the
+    profile to non-headless for a day without touching the pin.
 
     The dashboard's 'h' key writes a pinned value; this module writes the
     auto-learned one, whenever the non-headless fallback is what succeeded -
@@ -139,7 +173,9 @@ def _headless_pref(config: dict[str, str]) -> bool:
     if env:
         return env != "0"
     if _headless_pinned(config):
-        return (config.get("OWA_CAPTURE_HEADLESS") or "").strip() != "0"
+        if (config.get("OWA_CAPTURE_HEADLESS") or "").strip() == "0":
+            return False
+        return not _headless_streak_active(config)
     if (config.get("OWA_CAPTURE_HEADLESS") or "").strip() != "0":
         return True
     stamp = parse_iso_utc((config.get("OWA_CAPTURE_HEADLESS_AT") or "").strip())
@@ -362,6 +398,16 @@ def _do_reseed_capture(alias: str, config: dict[str, str]) -> int:
     # OWA_CLIENT_ID overrides, etc.) and stamp issuance time so `status`
     # can compute the 24h SPA hard-cap remaining.
     config.update(captured)
+    if _headless_pinned(config) and not os.environ.get("OWA_CAPTURE_HEADLESS", "").strip():
+        # The pin itself never changes; the streak is what decides whether
+        # the next run bothers with headless. Tried and failed where the
+        # fallback worked: one more strike. Headless worked: clean slate.
+        if fell_back:
+            config["OWA_HEADLESS_FAILS"] = str(_headless_fails(config) + 1)
+            config["OWA_HEADLESS_FAILS_AT"] = iso_utc_now()
+        elif headless_ok and _headless_fails(config):
+            config["OWA_HEADLESS_FAILS"] = ""
+            config["OWA_HEADLESS_FAILS_AT"] = ""
     if fell_back and not _headless_pinned(config):
         # The non-headless fallback is what worked - remember that per
         # profile so the next reseeds go straight to offscreen mode, but

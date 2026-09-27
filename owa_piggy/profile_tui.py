@@ -375,6 +375,10 @@ def _action_toggle_headless(current: str) -> str:
         {
             "OWA_CAPTURE_HEADLESS": "1" if headless else "0",
             "OWA_CAPTURE_HEADLESS_AT": "",
+            # Re-pinning is a fresh start: a headless failure streak from
+            # the old pin must not keep overriding the new one.
+            "OWA_HEADLESS_FAILS": "",
+            "OWA_HEADLESS_FAILS_AT": "",
         },
         profile_config_path(current),
     )
