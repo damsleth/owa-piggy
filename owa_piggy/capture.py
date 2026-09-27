@@ -331,10 +331,10 @@ def launch_edge(
     clamps windows to the visible screen, so Edge lands at 0,39 at its
     enforced 500x375 minimum, and CDP `setWindowBounds` is clamped the
     same way (a 40px sliver always stays onscreen). The only reliable
-    hiding place is minimized, so offscreen mode also passes
+    hiding place is no window at all, so offscreen mode also passes
     --no-startup-window: Edge boots windowless and `_open_parked_session`
-    creates the tab and minimizes its window in the same CDP round-trip,
-    instead of leaving a real window onscreen for Edge's ~1.3s cold start.
+    drives a hidden tab that never gets one (and so never activates Edge
+    or takes keyboard focus).
     Headless is implicitly offscreen. Visible (sign-in) mode is the only
     one that puts the window where the user can see and interact with
     it."""
@@ -695,23 +695,120 @@ def _open_session(port: int) -> CdpSession:
     return CdpSession(port, tab["webSocketDebuggerUrl"])
 
 
+# How long to keep asking for a hidden tab while the profile's extension
+# background pages come up (nc: 0.3s). Profiles that never get one pay this
+# on every non-headless capture, so keep it short.
+_HIDDEN_TAB_WAIT = 1.5
+
+# How long the minimized-window fallback keeps handing focus back from Edge.
+_FOCUS_WATCH = 2.5
+
+
+def _front_app() -> str | None:
+    """Bundle id of the frontmost macOS app, or None if it can't be read.
+
+    `lsappinfo` rather than AppleScript: reading the front app over Apple
+    Events would need an Automation (TCC) grant for whatever runs the
+    reseed, and launchd has nobody to click "Allow"."""
+    try:
+        asn = subprocess.run(
+            ["lsappinfo", "front"], capture_output=True, text=True, timeout=2
+        ).stdout.strip()
+        out = subprocess.run(
+            ["lsappinfo", "info", "-only", "bundleid", asn],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    _, _, value = out.partition("=")
+    return value.strip().strip('"') or None
+
+
+def _give_focus_back(previous: str | None, log: Callable[[str], None]) -> None:
+    """Re-activate `previous` if Edge took the foreground from it.
+
+    Creating any window activates Edge, and macOS then routes the user's
+    keystrokes into it; minimizing the window does not hand focus back.
+    `open -b` on an already-running app just activates it (no TCC grant
+    needed, unlike AppleScript). Only acts when Edge is actually frontmost
+    now, so a locked screen or screensaver is left alone.
+    ponytail: the keystrokes typed during the ~0.5s Edge held focus are still
+    lost, and this costs the fallback path _FOCUS_WATCH seconds; only a
+    hidden target (no window at all) avoids both."""
+    if not previous or "edge" in previous.lower():
+        return
+    # Edge activates more than once while the window comes up (seen: again
+    # ~0.4s after the first hand-back), so watch for a moment rather than
+    # correcting once.
+    deadline = time.monotonic() + _FOCUS_WATCH
+    while time.monotonic() < deadline:
+        now = _front_app()
+        if now and "edge" in now.lower():
+            try:
+                subprocess.run(["open", "-b", previous], capture_output=True, timeout=5)
+            except (OSError, subprocess.SubprocessError) as e:
+                log(f"could not hand focus back to {previous}: {e}")
+                return
+        time.sleep(0.1)
+
+
 def _open_parked_session(port: int, log: Callable[[str], None]) -> CdpSession:
-    """Open the capture tab for offscreen non-headless mode without
-    letting its window sit onscreen.
+    """Open the capture tab for offscreen non-headless mode without a
+    window the user can see.
 
     The tab is created blank; the caller navigates it once it has the
     Network domain enabled, so no part of the page load happens unwatched.
 
     Edge was launched with --no-startup-window, so nothing is visible
-    during its ~1.3s cold start. We attach to the browser-level CDP
-    endpoint, create the tab, and minimize its window in the next call -
-    the window exists onscreen for one round-trip (tens of ms) instead of
-    the whole reseed. Creating the tab has to succeed - nothing else does it
-    under --no-startup-window - but hiding it afterwards is best-effort: a
-    capture we could not hide beats no capture.
+    during its ~1.3s cold start. The tab is then a *hidden* target
+    (`Target.createTarget hidden=true`): a real renderer with cookies,
+    localStorage and a full network stack, but no browser window at all.
+    That matters beyond the flash. Any window Edge creates - even one born
+    minimized - activates the app, and macOS hands it keyboard focus: a
+    reseed landing mid-sentence used to swallow the rest of the sentence
+    into Edge and leave it frontmost. A hidden target never becomes a
+    window, so Edge never becomes the active app.
+
+    Hidden targets are experimental CDP (present in Edge 154). If Edge
+    refuses one, fall back to a normal tab whose window is shoved offscreen
+    and minimized straight away, then hand focus back to whatever app had
+    it. That one still flashes, but a capture we could not hide beats no
+    capture.
+
+    Edge refuses a hidden target until the browser already has some frame
+    target (Chromium's check, in content's TargetHandler). Most sidecar
+    profiles have extension background pages up within a fraction of a
+    second; a sidecar with only Edge's built-in extensions has none and
+    always takes the fallback. Installing uBlock Origin (MV2, persistent
+    background page) in the sidecar once is what fixed swon/brkh/une in
+    2026-09; if Edge ever drops MV2 that fix goes with it.
     """
     browser = CdpSession(port, browser_ws(port, timeout=20.0))
+    handed_off = False
     try:
+        deadline = time.monotonic() + _HIDDEN_TAB_WAIT
+        while True:
+            try:
+                target_id = browser.call(
+                    "Target.createTarget",
+                    {"url": "about:blank", "hidden": True, "background": True},
+                )["targetId"]
+                # Hidden targets report type 'other', which find_tab skips.
+                page = CdpSession(port, f"ws://127.0.0.1:{port}/devtools/page/{target_id}")
+                # Edge destroys a hidden target the moment the session that
+                # created it disconnects, so the browser session has to live
+                # as long as the page one. It dies with Edge in _terminate.
+                page.owner = browser  # type: ignore[attr-defined]
+                handed_off = True
+                return page
+            except CdpError as e:
+                if time.monotonic() >= deadline:
+                    log(f"hidden capture tab refused ({e}); falling back to a minimized window")
+                    break
+            time.sleep(0.1)
+        front = _front_app() if sys.platform == "darwin" else None
         target_id = browser.call("Target.createTarget", {"url": "about:blank"})["targetId"]
         try:
             wid = browser.call("Browser.getWindowForTarget", {"targetId": target_id})["windowId"]
@@ -733,37 +830,43 @@ def _open_parked_session(port: int, log: Callable[[str], None]) -> CdpSession:
             )
         except (CdpError, KeyError, TypeError) as e:
             log(f"could not park the capture window: {e}")
+        _give_focus_back(front, log)
     finally:
-        browser.close()
-    session = _open_session(port)
-    # Minimized windows are "occluded" to Chromium; focus emulation keeps
-    # the page reporting visible so timers and the /token round-trip are
-    # not throttled.
-    _park_window(session, log)
-    return session
+        if not handed_off:
+            browser.close()
+    return _open_session(port)
 
 
 def _park_window(session: CdpSession, log: Callable[[str], None]) -> None:
-    """Take a non-headless capture window off the screen.
+    """Keep a non-headless capture page running at full speed, and
+    minimize its window if it has one.
 
-    --window-position is honored on X11 but macOS clamps windows back onto
-    the visible screen, so minimizing over CDP is the only thing that
-    actually removes one. Focus emulation then keeps the page reporting
-    visible/focused, so Chromium doesn't throttle the /token round-trip the
-    way it would in a real background window.
+    Focus emulation keeps the page reporting visible/focused, so Chromium
+    doesn't throttle the /token round-trip the way it would in a background
+    or hidden page. It goes first because it is the part every capture
+    needs: the hidden tab from `_open_parked_session` has no window, so the
+    minimize below has nothing to act on - that is the normal case, not a
+    failure worth logging.
 
-    Idempotent and best-effort: `_open_parked_session` minimizes the window
-    as it creates it, this re-asserts it after the session opens and again
-    after the reload (Edge can lose a minimize on a window that is still
-    coming up), and a capture we couldn't hide is still a capture worth
-    finishing."""
+    The minimize only matters for the fallback tab. --window-position is
+    honored on X11 but macOS clamps windows back onto the visible screen,
+    so minimizing over CDP is the only thing that removes one. Called again
+    after the reload because Edge can lose a minimize on a window that is
+    still coming up. Best-effort throughout: a capture we couldn't hide is
+    still a capture worth finishing."""
+    try:
+        session.call("Emulation.setFocusEmulationEnabled", {"enabled": True})
+    except (CdpError, ConnectionError, OSError) as e:
+        log(f"could not enable focus emulation: {e}")
     try:
         wid = session.call("Browser.getWindowForTarget", {})["windowId"]
+    except (CdpError, ConnectionError, OSError, KeyError, TypeError):
+        return
+    try:
         session.call(
             "Browser.setWindowBounds", {"windowId": wid, "bounds": {"windowState": "minimized"}}
         )
-        session.call("Emulation.setFocusEmulationEnabled", {"enabled": True})
-    except (CdpError, ConnectionError, OSError, KeyError, TypeError) as e:
+    except (CdpError, ConnectionError, OSError) as e:
         log(f"could not park window offscreen: {e}")
 
 
@@ -1011,10 +1114,9 @@ def capture_silent(
 
     `headless=None` reads OWA_CAPTURE_HEADLESS (default headless). Pass
     headless=False to force the offscreen-but-not-headless mode. That
-    mode launches Edge windowless (--no-startup-window) and creates its
-    tab already minimized (`_open_parked_session`), so there is no window
-    onscreen during Edge's cold start and only a round-trip's worth of one
-    afterwards.
+    mode launches Edge windowless (--no-startup-window) and drives a
+    hidden tab (`_open_parked_session`), so no window appears at all and
+    Edge never steals keyboard focus.
 
     `timeout=None` reads OWA_CAPTURE_TIMEOUT (default 60s). The default was
     20s historically but Conditional-Access-heavy tenants routinely take
@@ -1057,8 +1159,8 @@ def capture_silent(
     )
     try:
         # offscreen=True means "no window the user can see": headless
-        # has none, non-headless boots windowless and gets a minimized one
-        # from _open_parked_session. The user must never see a window here
+        # has none, non-headless boots windowless and drives a hidden
+        # tab from _open_parked_session. The user must never see a window here
         # and assume it's interactive - capture_silent never is.
         proc = launch_edge(
             edge_dir,
@@ -1074,9 +1176,13 @@ def capture_silent(
 
     session = None
     try:
-        # Non-headless booted Edge windowless, so its tab is created already
-        # minimized - nothing lingers onscreen while we drive it.
-        session = _open_session(port) if headless else _open_parked_session(port, log)
+        # Non-headless booted Edge windowless and drives a hidden tab, so
+        # there is no window onscreen and Edge never takes keyboard focus.
+        if headless:
+            session = _open_session(port)
+        else:
+            session = _open_parked_session(port, log)
+            _park_window(session, log)
         session.call("Page.enable", {})
         session.call("Network.enable", {})
         # Only now navigate. Edge was launched blank precisely so that the
@@ -1181,9 +1287,9 @@ def capture_silent(
 
         session.call("Page.reload", {"ignoreCache": True})
         if not headless:
-            # Park again: minimizing a window that Edge is still bringing
-            # up occasionally loses the race, and a reload is another
-            # chance for it to surface. Both calls are cheap.
+            # Park again: a reload can reset focus emulation, and on the
+            # minimized-window fallback it is another chance for the
+            # window to surface. Both calls are cheap.
             _park_window(session, log)
 
         # Fast-fail reauth check. If MSAL's silent refresh attempt fails
