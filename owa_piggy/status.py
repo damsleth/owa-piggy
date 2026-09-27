@@ -369,8 +369,6 @@ def _status_human(probe: dict[str, Any], multi: bool = False, verbose: bool = Fa
     # `reseed` (which doesn't apply there either) would be the wrong hint.
     if probe["provider"] == "google":
         rt_expires = "does not expire (Google refresh tokens are long-lived)"
-    elif probe["provider"] == "halo":
-        rt_expires = "unknown (Halo; re-run setup --halo if it stops working)"
     else:
         rt_expires = "unknown (run `owa-piggy reseed` to establish)"
         dt = parse_iso_utc(probe["rt_issued_at"])
@@ -533,8 +531,6 @@ def do_debug(
     row("ok" if rt else "no", "OWA_REFRESH_TOKEN", f"{len(rt)} bytes, {source}" if rt else "unset")
     if provider == "google":
         row("..", "OWA_TENANT_ID", "n/a (google provider)")
-    elif provider == "halo":
-        row("ok" if tid else "no", "OWA_TENANT_ID", f"{tid} (halo host)" if tid else "unset")
     else:
         row("ok" if tid else "no", "OWA_TENANT_ID", tid or "unset")
     row(
@@ -593,7 +589,7 @@ def do_debug(
             )
 
         if shape_ok and (tid or provider == "google"):
-            target = {"google": "Google", "halo": "Halo"}.get(provider, "AAD")
+            target = "Google" if provider == "google" else "AAD"
             print(f"  probing live exchange against {target}...")
             # exchange_fresh handles persistence of any rotated RT; stderr
             # flows through (capture_stderr=False) so the AAD/Google error
