@@ -112,3 +112,14 @@ def test_profiles_list_plain_does_not_open_picker():
     # or the empty-state hint. Both are non-interactive.
     assert result.returncode == 0
     assert "owa-piggy setup" in result.stdout or result.stdout.strip()
+
+
+def test_profiles_json_carries_services_and_edge_dir(tmp_config):
+    """owa-tools fans out on `services` and owa-swodp drives `edge_dir`."""
+    from owa_piggy import cli
+    from owa_piggy.config import save_config
+
+    save_config({"OWA_REFRESH_TOKEN": "fake-rt-for-tests"})
+    [row] = cli._profiles_report()["profiles"]
+    assert row["services"] == ["owa"]
+    assert row["edge_dir"].endswith("profiles/default/edge-profile")
