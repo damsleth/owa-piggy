@@ -23,9 +23,10 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TypedDict
 
-from .config import save_config
+from .config import OPAQUE_PROVIDERS, save_config
 from .oauth import CLIENT_ID, capture_errors, exchange_token
 from .oauth_google import refresh_access_token as google_exchange_token
+from .oauth_halo import refresh_access_token as halo_exchange_token
 
 # AAD error codes the caller can recover from by triggering an automatic
 # reseed (sliding-window expiry, hard-cap expiry). Detected from
@@ -100,6 +101,10 @@ def exchange_fresh(
     """
     provider = (config.get("OWA_PROVIDER", "") or "msal").strip() or "msal"
     is_google = provider == "google"
+    # Opaque non-AAD providers: no FOCI shape to check. Halo keeps its
+    # tenant host in OWA_TENANT_ID (it doubles as the cache key); Google
+    # has no tenant at all.
+    is_opaque = provider in OPAQUE_PROVIDERS
     rt = config.get("OWA_REFRESH_TOKEN", "").strip()
     tid = config.get("OWA_TENANT_ID", "").strip()
     cid = config.get("OWA_CLIENT_ID", CLIENT_ID).strip()
@@ -118,7 +123,7 @@ def exchange_fresh(
         # piggybacked MSAL client.
         "tid_present": True if is_google else bool(tid),
         "rt_shape_ok": True
-        if is_google
+        if is_opaque
         else (
             bool(rt)
             and (
@@ -143,6 +148,8 @@ def exchange_fresh(
     if is_google:
         secret = config.get("OWA_CLIENT_SECRET", "").strip()
         result = google_exchange_token(cid, secret, rt)
+    elif provider == "halo":
+        result = halo_exchange_token(tid, rt)
     elif capture_stderr:
         # Capture via oauth's thread-local sink rather than swapping the
         # global sys.stderr, so concurrent probes (status fans out across
@@ -161,7 +168,7 @@ def exchange_fresh(
     if not result:
         # AADSTS recovery codes don't exist on the Google side - nothing
         # else to classify there.
-        if not is_google:
+        if not is_opaque:
             for code in _RECOVERABLE_AAD_CODES:
                 if code in info["stderr_text"]:
                     info["aad_error"] = code

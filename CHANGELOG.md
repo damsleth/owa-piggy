@@ -8,6 +8,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 Releases before v0.12.0 are recorded only in the annotated git tags
 (`git tag -n99`).
 
+## [Unreleased]
+
+### Added
+
+- HaloITSM provider: `owa-piggy setup --profile <alias> --halo <host>` seeds a
+  profile from the Halo agent web app's `refresh_token` cookie (pasted or
+  piped, verified live before saving). `token` mints Halo's opaque one-hour
+  bearer, caches it, and `token --json` adds `host`. Reseed is skipped;
+  `profiles --json` reports `type: "halo"`.
+
+### Fixed
+
+- The access-token cache now works for opaque (non-JWT) tokens by taking the
+  expiry from `expires_in`.
+
 ## [1.2.0] - 2026-09-23
 
 ### Added

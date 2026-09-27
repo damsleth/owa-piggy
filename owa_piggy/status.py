@@ -24,6 +24,7 @@ from typing import Any
 from . import clients
 from . import config as _config
 from .config import (
+    OPAQUE_PROVIDERS,
     list_profiles,
     load_config,
     load_profiles_conf,
@@ -167,8 +168,8 @@ def _probe_profile(
         )
         return probe
 
-    if probe["provider"] == "google":
-        # Google's OAuth access tokens are opaque bearer strings, not JWTs -
+    if probe["provider"] in OPAQUE_PROVIDERS:
+        # Google's and Halo's access tokens are opaque bearer strings, not JWTs -
         # there's no payload to decode. Synthesize the minimal shape
         # downstream rendering needs (just `exp`) from expires_in so
         # status/debug don't need a separate google-aware code path.
@@ -368,6 +369,8 @@ def _status_human(probe: dict[str, Any], multi: bool = False, verbose: bool = Fa
     # `reseed` (which doesn't apply there either) would be the wrong hint.
     if probe["provider"] == "google":
         rt_expires = "does not expire (Google refresh tokens are long-lived)"
+    elif probe["provider"] == "halo":
+        rt_expires = "unknown (Halo; re-run setup --halo if it stops working)"
     else:
         rt_expires = "unknown (run `owa-piggy reseed` to establish)"
         dt = parse_iso_utc(probe["rt_issued_at"])
@@ -530,6 +533,8 @@ def do_debug(
     row("ok" if rt else "no", "OWA_REFRESH_TOKEN", f"{len(rt)} bytes, {source}" if rt else "unset")
     if provider == "google":
         row("..", "OWA_TENANT_ID", "n/a (google provider)")
+    elif provider == "halo":
+        row("ok" if tid else "no", "OWA_TENANT_ID", f"{tid} (halo host)" if tid else "unset")
     else:
         row("ok" if tid else "no", "OWA_TENANT_ID", tid or "unset")
     row(
@@ -568,11 +573,11 @@ def do_debug(
             f"`owa-piggy reseed --profile {alias}`",
         )
     else:
-        if provider == "google":
-            # Google refresh tokens are opaque (typically `1//0...`) - the
-            # FOCI `1.`/`0.` shape check is an AAD-specific concept.
+        if provider in OPAQUE_PROVIDERS:
+            # Google/Halo refresh tokens are opaque - the FOCI `1.`/`0.`
+            # shape check is an AAD-specific concept.
             shape_ok = True
-            row("ok", f"google opaque RT ({rt[:4]}...)")
+            row("ok", f"{provider} opaque RT ({rt[:4]}...)")
         elif cid != CLIENT_ID:
             # Same rule as token_flow: only the default client's RT has a
             # FOCI shape to check. DevOps/Teams-client RTs are opaque.
@@ -588,9 +593,8 @@ def do_debug(
             )
 
         if shape_ok and (tid or provider == "google"):
-            print(
-                f"  probing live exchange against {'Google' if provider == 'google' else 'AAD'}..."
-            )
+            target = {"google": "Google", "halo": "Halo"}.get(provider, "AAD")
+            print(f"  probing live exchange against {target}...")
             # exchange_fresh handles persistence of any rotated RT; stderr
             # flows through (capture_stderr=False) so the AAD/Google error
             # text is the "see error above" the failure row points at.
@@ -604,7 +608,7 @@ def do_debug(
             if result and result.get("access_token"):
                 row("ok", "exchange succeeded")
                 now = time.time()
-                if provider == "google":
+                if provider in OPAQUE_PROVIDERS:
                     # Opaque bearer string, not a JWT: expires_in is all there is.
                     exp = now + result.get("expires_in", 0)
                 else:
@@ -695,10 +699,10 @@ def do_debug(
     else:
         row("no", "owa-piggy not on PATH", "run ./scripts/add-to-path.sh or pipx install .")
 
-    if provider == "google":
-        # Google profiles never launch Edge - reseed is a no-op for them
+    if provider in OPAQUE_PROVIDERS:
+        # Google/Halo profiles never launch Edge - reseed is a no-op for them
         # (see reseed.do_reseed), so an absent sidecar dir isn't a problem.
-        row("..", "Edge sidecar profile", "n/a (google provider)")
+        row("..", "Edge sidecar profile", f"n/a ({provider} provider)")
     else:
         sidecar = profile_edge_dir(alias)
         row(
