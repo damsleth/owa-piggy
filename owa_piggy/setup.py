@@ -120,7 +120,6 @@ def interactive_setup(
     trough_sub: str | None = None,
     user_agent: str | None = None,
     google: bool = False,
-    halo: str | None = None,
     google_client_id: str | None = None,
     google_client_secret: str | None = None,
 ) -> bool:
@@ -157,8 +156,6 @@ def interactive_setup(
         return _capture_setup(config, alias, email, user_agent=user_agent)
     if google:
         return _google_setup(config, alias, google_client_id, google_client_secret)
-    if halo:
-        return _halo_setup(config, alias, halo)
 
     # Non-interactive path: if stdin is piped, parse KEY=value lines from it.
     # This avoids the bracketed-paste corruption that raw-tty input is prone
@@ -329,41 +326,6 @@ def _google_setup(
     # AAD's 24h SPA hard-cap window (see status._rt_expires_at). Google
     # refresh tokens don't expire on a schedule, so leave it unset rather
     # than have status.py render a bogus countdown.
-    save_config(config)
-    print(f"Config saved to {_config.CONFIG_PATH} [profile={alias}]", file=sys.stderr)
-    return True
-
-
-def _halo_setup(config: dict[str, str], alias: str, host: str) -> bool:
-    """Seed a HaloITSM profile from the agent web app's refresh_token cookie.
-
-    Halo signs agents in through Entra SSO but mints its own opaque tokens,
-    so there is nothing for the MSAL paths to capture. The user copies the
-    `refresh_token` cookie from a signed-in tab; we verify it with one live
-    exchange before saving. It is the same token the browser session uses,
-    so signing out of Halo in the browser may revoke it (untested).
-    """
-    from . import oauth_halo
-
-    host = oauth_halo.normalize_host(host)
-    if not host:
-        print("ERROR: --halo needs a host, e.g. norconsult.haloitsm.com", file=sys.stderr)
-        return False
-    print(f"owa-piggy setup [profile={alias}, provider=halo, host={host}]\n", file=sys.stderr)
-    if sys.stdin.isatty():
-        print(f"1. Sign in at https://{host} in your browser", file=sys.stderr)
-        print("2. DevTools (F12) > Application > Cookies > copy `refresh_token`\n", file=sys.stderr)
-        rt = read_input(f"[{alias}] Halo refresh token, then Enter (input hidden):", secret=True)
-    else:
-        rt = sys.stdin.read().strip()
-    if not rt:
-        print("ERROR: no refresh token provided", file=sys.stderr)
-        return False
-    if not oauth_halo.refresh_access_token(host, rt):
-        return False
-    config["OWA_PROVIDER"] = "halo"
-    config["OWA_TENANT_ID"] = host
-    config["OWA_REFRESH_TOKEN"] = rt
     save_config(config)
     print(f"Config saved to {_config.CONFIG_PATH} [profile={alias}]", file=sys.stderr)
     return True

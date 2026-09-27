@@ -316,16 +316,6 @@ def _build_parser() -> argparse.ArgumentParser:
         "Mutually exclusive with --email/--from-trough.",
     )
     p_setup.add_argument(
-        "--halo",
-        metavar="<host>",
-        default=None,
-        help="seed this profile for HaloITSM at <host> "
-        "(e.g. norconsult.haloitsm.com): paste the agent web "
-        "app's `refresh_token` cookie (DevTools > Application > "
-        "Cookies), or pipe it on stdin. Mutually exclusive with "
-        "--email/--from-trough/--google.",
-    )
-    p_setup.add_argument(
         "--google-client-id",
         metavar="<id>",
         default=None,
@@ -872,10 +862,9 @@ def _cmd_setup(args: argparse.Namespace) -> int:
     email = getattr(args, "email", None)
     trough_url = getattr(args, "from_trough", None) or os.environ.get("OWA_TROUGH_URL") or None
     google = getattr(args, "google", False)
-    halo = getattr(args, "halo", None)
-    if sum(bool(x) for x in (email, trough_url, google, halo)) > 1:
+    if sum(bool(x) for x in (email, trough_url, google)) > 1:
         print(
-            "ERROR: --email, --from-trough, --google and --halo are mutually "
+            "ERROR: --email, --from-trough and --google are mutually "
             "exclusive (pick one capture source).",
             file=sys.stderr,
         )
@@ -895,7 +884,6 @@ def _cmd_setup(args: argparse.Namespace) -> int:
         sharepoint_tenant=getattr(args, "sharepoint_tenant", None),
         with_client=getattr(args, "with_client", None),
         google=google,
-        halo=halo,
         google_client_id=(
             getattr(args, "google_client_id", None)
             or os.environ.get("GOOGLE_OAUTH_CLIENT_ID")

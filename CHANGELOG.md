@@ -34,11 +34,6 @@ Releases before v0.12.0 are recorded only in the annotated git tags
   the sidecar is enough); without one it falls back to the minimized window
   and hands focus back to the previous app.
 
-- HaloITSM provider: `owa-piggy setup --profile <alias> --halo <host>` seeds a
-  profile from the Halo agent web app's `refresh_token` cookie (pasted or
-  piped, verified live before saving). `token` mints Halo's opaque one-hour
-  bearer, caches it, and `token --json` adds `host`. Reseed is skipped;
-  `profiles --json` reports `type: "halo"`.
 
 ### Fixed
 
