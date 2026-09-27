@@ -83,6 +83,14 @@ KNOWN_CLIENTS: dict[str, ClientMeta] = {
         "origin": "https://dev.azure.com",
         "capture_url": None,
     },
+    # Not an AAD client: Halo's own identity server mints its tokens, and
+    # the capture reads them from a cookie (capture.capture_halo). Listed
+    # here so `clients add halo=<url>` and reseed treat it like the rest.
+    HALO_KEY: {
+        "name": "halo",
+        "origin": None,
+        "capture_url": None,
+    },
 }
 
 # Clients `setup` / `reseed` capture without being asked. Only clients whose
@@ -368,6 +376,27 @@ def overlay_config(config: dict[str, str], client_id: str, entry: ClientEntry) -
     origin = entry.get("origin") or KNOWN_CLIENTS.get(client_id, {}).get("origin")
     if origin:
         overlaid["OWA_ORIGIN"] = origin
+    return overlaid
+
+
+def overlay_halo(config: dict[str, str], entry: ClientEntry) -> dict[str, str]:
+    """Config copy that mints the profile's Halo token instead of its FOCI one.
+
+    Shaped like a standalone Halo profile (OWA_PROVIDER=halo, the Halo host
+    in OWA_TENANT_ID), so token_flow's Halo exchange and the (host, client,
+    scope) cache key apply unchanged. The host comes from the entry's
+    capture_url: the same URL the sidecar signs in at.
+    """
+    from urllib.parse import urlsplit
+
+    from .oauth_halo import HALO_CLIENT_ID
+
+    overlaid = dict(config)
+    overlaid["OWA_PROVIDER"] = "halo"
+    overlaid["OWA_TENANT_ID"] = urlsplit(entry.get("capture_url", "")).netloc
+    overlaid["OWA_CLIENT_ID"] = HALO_CLIENT_ID
+    overlaid["OWA_REFRESH_TOKEN"] = entry.get("refresh_token", "")
+    overlaid.pop("OWA_ORIGIN", None)
     return overlaid
 
 
