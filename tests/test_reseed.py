@@ -574,3 +574,40 @@ def test_do_reseed_refuses_disabled_profile(tmp_config, clean_env, capsys):
     save_config({"OWA_REFRESH_TOKEN": "fake-rt-for-tests"}, profile_dir("retired") / "config")
     assert do_reseed("retired") == 1
     assert "disabled" in capsys.readouterr().err
+
+
+_PINNED = {"OWA_AUTH_MODE": "capture", "OWA_CAPTURE_HEADLESS": "1", "OWA_CAPTURE_HEADLESS_AT": ""}
+
+
+def test_pinned_headless_streak_switches_to_non_headless_for_a_day(monkeypatch):
+    """Pinned headless falls back once per run and returns to headless -
+    until it has failed _HEADLESS_FAIL_STREAK runs in a row; then it skips
+    headless for a day, and tries it again after."""
+    from datetime import datetime, timedelta, timezone
+
+    def at(hours_ago):
+        t = datetime.now(timezone.utc) - timedelta(hours=hours_ago)
+        return t.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    two = {**_PINNED, "OWA_HEADLESS_FAILS": "2", "OWA_HEADLESS_FAILS_AT": at(1)}
+    three = {**_PINNED, "OWA_HEADLESS_FAILS": "3", "OWA_HEADLESS_FAILS_AT": at(1)}
+    stale = {**_PINNED, "OWA_HEADLESS_FAILS": "3", "OWA_HEADLESS_FAILS_AT": at(25)}
+    assert _pref(two, monkeypatch=monkeypatch) is True
+    assert _pref(three, monkeypatch=monkeypatch) is False
+    assert _pref(stale, monkeypatch=monkeypatch) is True
+    assert _pref(three, env="1", monkeypatch=monkeypatch) is True
+
+
+def test_pinned_fallback_counts_a_strike_and_success_clears_it(monkeypatch, tmp_config, clean_env):
+    ok = ("ok", {"OWA_REFRESH_TOKEN": "rt", "OWA_TENANT_ID": "tid"})
+    monkeypatch.setattr(capture_mod, "capture_bound_clients", lambda *a, **kw: (0, []))
+    calls, saved = _mock_capture_reseed(monkeypatch, [("error", None), ("error", None), ok])
+    assert reseed_mod._do_reseed_capture("brkh", {**_PINNED, "OWA_HEADLESS_FAILS": "1"}) == 0
+    assert calls == [True, True, False]
+    assert saved["OWA_HEADLESS_FAILS"] == "2"
+    assert saved["OWA_CAPTURE_HEADLESS"] == "1"  # the pin is never touched
+
+    calls, saved = _mock_capture_reseed(monkeypatch, [ok])
+    assert reseed_mod._do_reseed_capture("brkh", {**_PINNED, "OWA_HEADLESS_FAILS": "2"}) == 0
+    assert calls == [True]
+    assert saved["OWA_HEADLESS_FAILS"] == ""
