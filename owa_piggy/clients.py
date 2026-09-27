@@ -38,11 +38,21 @@ import json
 from collections.abc import Callable
 from pathlib import Path
 
-from .config import DEVOPS_CLIENT_ID, atomic_write, iso_utc_now, profile_dir
+from .config import (
+    DEVOPS_CLIENT_ID,
+    atomic_write,
+    classify_profile_type,
+    iso_utc_now,
+    profile_dir,
+)
 from .oauth import PIM_CLIENT_ID
 from .scopes import PIM_PERMISSION
 
 CLIENTS_FILENAME = "clients.json"
+
+# clients.json key for the HaloITSM service. Not an AAD client id: Halo's own
+# identity server mints the token, so the entry is keyed by service name.
+HALO_KEY = "halo"
 
 
 # Plain string maps rather than TypedDicts: every value is a string, the
@@ -311,6 +321,34 @@ def select_for_scope(alias: str, scope: str) -> tuple[str | None, ClientEntry | 
     if not entry or not entry.get("refresh_token"):
         return None, None
     return client_id, entry
+
+
+def profile_services(alias: str, config: dict[str, str]) -> list[str]:
+    """The services this profile's user signs in to, for consumers that fan
+    out per service (owa-tools `-A`: `owa-ado -A` only hits profiles with
+    `ado`, `owa-halo` picks the profile with `halo`).
+
+    `OWA_SERVICES="owa,ado,halo"` in the profile config is authoritative
+    when set. Without it the list is derived from the credentials the
+    profile holds, so existing profiles need no edit: `owa` for any AAD
+    profile with a FOCI token, `ado` once a devops client carries a token,
+    `halo` once a Halo entry does. Services that leave no credential behind
+    (`swodp` reads its session straight from the sidecar on each call) can
+    only be declared, which is what the explicit key is for.
+    """
+    explicit = [x.strip() for x in (config.get("OWA_SERVICES") or "").split(",") if x.strip()]
+    if explicit:
+        return explicit
+    ptype = classify_profile_type(config)
+    if ptype != "m365":
+        return [ptype]
+    services = ["owa"]
+    clients = load_clients(alias)
+    if (clients.get(DEVOPS_CLIENT_ID) or {}).get("refresh_token"):
+        services.append("ado")
+    if (clients.get(HALO_KEY) or {}).get("refresh_token"):
+        services.append("halo")
+    return services
 
 
 def overlay_config(config: dict[str, str], client_id: str, entry: ClientEntry) -> dict[str, str]:

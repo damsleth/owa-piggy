@@ -208,3 +208,25 @@ def test_store_is_valid_json_on_disk(profile):
     clients.save_client(profile, TEAMS, refresh_token="rt-1")
     data = json.loads(clients.clients_path(profile).read_text())
     assert list(data) == [TEAMS]
+
+
+# --- services -----------------------------------------------------------
+
+
+def test_services_derive_from_held_credentials(profile):
+    """No OWA_SERVICES: `owa` for the FOCI profile, plus one service per
+    bound credential that actually carries a token."""
+    assert clients.profile_services(profile, {}) == ["owa"]
+    clients.declare_client(profile, DEVOPS_CLIENT_ID, capture_url="https://dev.azure.com/o")
+    assert clients.profile_services(profile, {}) == ["owa"]  # declared, no token yet
+    clients.save_client(profile, DEVOPS_CLIENT_ID, refresh_token="fake-rt-for-tests")
+    assert clients.profile_services(profile, {}) == ["owa", "ado"]
+
+
+def test_explicit_services_are_authoritative(profile):
+    clients.save_client(profile, DEVOPS_CLIENT_ID, refresh_token="fake-rt-for-tests")
+    assert clients.profile_services(profile, {"OWA_SERVICES": "owa, swodp"}) == ["owa", "swodp"]
+
+
+def test_non_aad_profiles_are_their_own_service(profile):
+    assert clients.profile_services(profile, {"OWA_PROVIDER": "google"}) == ["google"]
