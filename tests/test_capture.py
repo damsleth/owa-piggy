@@ -276,6 +276,42 @@ def test_park_window_minimizes_and_disables_throttling():
     assert ("Emulation.setFocusEmulationEnabled", {"enabled": True}) in s.calls
 
 
+def test_park_window_without_a_window_still_keeps_page_hot():
+    """The hidden capture tab has no window: focus emulation must still
+    run, and the missing window is not worth a log line."""
+    logged = []
+    s = _FakeSession(fail={"Browser.getWindowForTarget"})
+    capture._park_window(s, logged.append)
+    assert ("Emulation.setFocusEmulationEnabled", {"enabled": True}) in s.calls
+    assert not any(m == "Browser.setWindowBounds" for m, _ in s.calls)
+    assert not logged
+
+
+def test_parked_session_uses_hidden_target(monkeypatch):
+    """A hidden target never becomes a window, so Edge never activates and
+    steals keyboard focus mid-typing."""
+    browser = _FakeSession()
+    browser.call = lambda m, p=None: browser.calls.append((m, p)) or {"targetId": "T1"}
+    browser.close = lambda: None
+    made = []
+
+    page = _FakeSession()
+
+    def fake_session(port, ws):
+        made.append(ws)
+        return browser if not made[1:] else page
+
+    monkeypatch.setattr(capture, "CdpSession", fake_session)
+    monkeypatch.setattr(capture, "browser_ws", lambda port, timeout: "ws-browser")
+    assert capture._open_parked_session(9, lambda _m: None) is page
+    # Edge kills a hidden target when its creating session disconnects.
+    assert page.owner is browser
+    assert browser.calls == [
+        ("Target.createTarget", {"url": "about:blank", "hidden": True, "background": True})
+    ]
+    assert made[1] == "ws://127.0.0.1:9/devtools/page/T1"
+
+
 def test_park_window_survives_cdp_failure():
     """A window we can't hide must not abort an otherwise-fine capture."""
     logged = []
