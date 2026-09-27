@@ -28,7 +28,7 @@ _owa_piggy() {
     debug) compadd -- -h --help --profile --no-cache --audience --scope --sharepoint-tenant ;;
     decode) compadd -- -h --help --profile --no-cache --audience --scope --sharepoint-tenant ;;
     remaining) compadd -- -h --help --profile --no-cache --audience --scope --sharepoint-tenant ;;
-    setup) compadd -- -h --help --profile --email --from-trough --trough-tenant --trough-sub --user-agent --sharepoint-tenant --with-client --google --google-client-id --google-client-secret --json ;;
+    setup) compadd -- -h --help --profile --email --from-trough --trough-tenant --trough-sub --user-agent --sharepoint-tenant --with-client --google --halo --google-client-id --google-client-secret --json ;;
     reseed) compadd -- -h --help --profile --all --scheduled --json ;;
     edge) compadd -- -h --help --profile ;;
     tui) compadd -- -h --help --profile --no-cache --audience --scope --sharepoint-tenant ;;

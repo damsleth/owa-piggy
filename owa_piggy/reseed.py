@@ -28,6 +28,7 @@ from datetime import datetime, timezone
 from . import config as _config
 from .cache import clear_cache
 from .config import (
+    OPAQUE_PROVIDERS,
     iso_utc_now,
     list_profiles,
     load_config,
@@ -180,12 +181,11 @@ def do_reseed(alias: str) -> int:
     set_active_profile(alias)
     config, _ = load_config()
     provider = (config.get("OWA_PROVIDER", "") or "msal").strip() or "msal"
-    if provider == "google":
-        # Google refresh tokens don't expire on Entra's sliding-window/
-        # hard-cap schedule, so there's nothing here that needs an Edge-
-        # driven silent refresh to keep warm. `token`/`status` already
-        # refresh on demand via exchange_fresh.
-        print(f"[{alias}] provider=google: reseed not applicable, skipping", file=sys.stderr)
+    if provider in OPAQUE_PROVIDERS:
+        # Google/Halo refresh tokens don't expire on Entra's sliding-window/
+        # hard-cap schedule, and have no Edge sidecar capture to replay.
+        # `token`/`status` already refresh on demand via exchange_fresh.
+        print(f"[{alias}] provider={provider}: reseed not applicable, skipping", file=sys.stderr)
         return 0
     auth_mode = (config.get("OWA_AUTH_MODE") or "").strip()
     if auth_mode == "capture":
