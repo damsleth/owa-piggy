@@ -98,6 +98,7 @@ def create_profile(
     user_agent: str | None = None,
     sharepoint_tenant: str | None = None,
     google: bool = False,
+    halo: str | None = None,
     google_client_id: str | None = None,
     google_client_secret: str | None = None,
     with_client: list[str] | None = None,
@@ -124,7 +125,7 @@ def create_profile(
     # followed by more questions. Only on a TTY, and only for what the
     # caller did not already specify: a piped or flag-driven setup must
     # stay exactly as non-interactive as it was.
-    interactive = sys.stdin.isatty() and not google and not trough_url
+    interactive = sys.stdin.isatty() and not google and not halo and not trough_url
     # `ask_email=False` says the caller already put the question to the user
     # and a blank answer was a real answer (the TUI's add-profile flow treats
     # blank as "use the paste flow"). Re-asking would override their choice.
@@ -151,17 +152,18 @@ def create_profile(
         trough_sub=trough_sub,
         user_agent=user_agent,
         google=google,
+        halo=halo,
         google_client_id=google_client_id,
         google_client_secret=google_client_secret,
     ):
         return 1
-    if not google:
+    if not google and not halo:
         _seed_bound_clients(alias, with_client, user_agent=user_agent)
     ensure_profile_registered(alias, make_default_if_first=True)
     print(f"\n\tOWA-PIGGY 🐽  CONFIGURED [{alias}]", file=sys.stderr)
     # The app-reg-free banner is about the MSAL piggyback trick specifically -
     # a Google profile uses a real app registration, so it doesn't apply.
-    if full_banner and not google:
+    if full_banner and not google and not halo:
         print("\n\tENJOY YOUR APP-REG-FREE SCOPES\n", file=sys.stderr)
     return 0
 

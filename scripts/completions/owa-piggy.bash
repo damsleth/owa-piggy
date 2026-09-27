@@ -15,7 +15,7 @@ _owa_piggy() {
     debug) COMPREPLY=( $(compgen -W "-h --help --profile --no-cache --audience --scope --sharepoint-tenant" -- "$cur") ) ;;
     decode) COMPREPLY=( $(compgen -W "-h --help --profile --no-cache --audience --scope --sharepoint-tenant" -- "$cur") ) ;;
     remaining) COMPREPLY=( $(compgen -W "-h --help --profile --no-cache --audience --scope --sharepoint-tenant" -- "$cur") ) ;;
-    setup) COMPREPLY=( $(compgen -W "-h --help --profile --email --from-trough --trough-tenant --trough-sub --user-agent --sharepoint-tenant --with-client --google --google-client-id --google-client-secret --json" -- "$cur") ) ;;
+    setup) COMPREPLY=( $(compgen -W "-h --help --profile --email --from-trough --trough-tenant --trough-sub --user-agent --sharepoint-tenant --with-client --google --halo --google-client-id --google-client-secret --json" -- "$cur") ) ;;
     reseed) COMPREPLY=( $(compgen -W "-h --help --profile --all --scheduled --json" -- "$cur") ) ;;
     edge) COMPREPLY=( $(compgen -W "-h --help --profile" -- "$cur") ) ;;
     tui) COMPREPLY=( $(compgen -W "-h --help --profile --no-cache --audience --scope --sharepoint-tenant" -- "$cur") ) ;;

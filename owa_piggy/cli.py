@@ -33,6 +33,7 @@ from .cache import (
     store_token,
 )
 from .config import (
+    OPAQUE_PROVIDERS,
     classify_profile_type,
     list_profiles,
     load_config,
@@ -314,6 +315,16 @@ def _build_parser() -> argparse.ArgumentParser:
         "Mutually exclusive with --email/--from-trough.",
     )
     p_setup.add_argument(
+        "--halo",
+        metavar="<host>",
+        default=None,
+        help="seed this profile for HaloITSM at <host> "
+        "(e.g. norconsult.haloitsm.com): paste the agent web "
+        "app's `refresh_token` cookie (DevTools > Application > "
+        "Cookies), or pipe it on stdin. Mutually exclusive with "
+        "--email/--from-trough/--google.",
+    )
+    p_setup.add_argument(
         "--google-client-id",
         metavar="<id>",
         default=None,
@@ -562,10 +573,10 @@ def _mint_and_emit(args: argparse.Namespace, *, mode: str) -> int:
     tenant_id = config.get("OWA_TENANT_ID", "").strip()
     client_id = config.get("OWA_CLIENT_ID", CLIENT_ID).strip()
 
-    if provider == "google":
-        # Google has no audience/tenant concept - the exchange in
-        # token_flow.exchange_fresh ignores scope entirely for this
-        # provider, so there's nothing to resolve or validate here.
+    if provider in OPAQUE_PROVIDERS:
+        # Google and Halo have no audience concept - the exchange in
+        # token_flow.exchange_fresh ignores scope entirely for these
+        # providers, so there's nothing to resolve or validate here.
         scope, err = "", ""
     else:
         profile_default = config.get("OWA_DEFAULT_AUDIENCE", "").strip()
@@ -654,6 +665,9 @@ def _mint_and_emit(args: argparse.Namespace, *, mode: str) -> int:
     # Cache key is (tenant, client, scope) AND scoped per-profile via
     # a separate cache.json under each profile dir, so switching profiles
     # or tenants naturally misses the old entries.
+    # A Halo token is only usable against its own tenant, so tell the
+    # consumer where: OWA_TENANT_ID holds the Halo host for that provider.
+    emit_extra = {"host": tenant_id} if provider == "halo" else None
     if tenant_id and not getattr(args, "no_cache", False):
         cached_at = get_cached_token(tenant_id, client_id, scope)
         if cached_at:
@@ -662,6 +676,7 @@ def _mint_and_emit(args: argparse.Namespace, *, mode: str) -> int:
                 mode,
                 cache_hit_exp=get_cached_exp(tenant_id, client_id, scope),
                 scope=scope,
+                extra=emit_extra,
             )
 
     # exchange_fresh handles config-field extraction, FOCI shape check,
@@ -755,8 +770,11 @@ def _mint_and_emit(args: argparse.Namespace, *, mode: str) -> int:
     # (disk full, permission weirdness) must not fail the exchange - we
     # already have the token in hand; caching is an optimisation.
     try:
-        payload = decode_jwt_segment(access_token.split(".")[1])
-        exp = payload.get("exp")
+        if provider in OPAQUE_PROVIDERS:
+            # Opaque bearer, no JWT exp: expires_in is all there is.
+            exp = time.time() + int(result.get("expires_in") or 0)
+        else:
+            exp = decode_jwt_segment(access_token.split(".")[1]).get("exp")
         if isinstance(exp, (int, float)):
             store_token(info["tid"], info["cid"], scope, access_token, exp)
     except Exception:
@@ -775,7 +793,7 @@ def _mint_and_emit(args: argparse.Namespace, *, mode: str) -> int:
             file=sys.stderr,
         )
 
-    return _emit(access_token, mode, full_response=result)
+    return _emit(access_token, mode, full_response=result, extra=emit_extra)
 
 
 def _emit(
@@ -785,8 +803,11 @@ def _emit(
     full_response: dict[str, Any] | None = None,
     cache_hit_exp: float | None = None,
     scope: str | None = None,
+    extra: dict[str, Any] | None = None,
 ) -> int:
-    """Print access token in the requested mode. Returns 0."""
+    """Print access token in the requested mode. Returns 0.
+
+    `extra` fields are merged into the json envelope only (Halo's `host`)."""
     if mode == "json":
         # On a cache hit there is no AAD response to echo, so synthesize
         # the envelope from the cached AT + exp. No refresh_token: the
@@ -800,7 +821,7 @@ def _emit(
                 "expires_at": exp,
                 "scope": scope or "",
             }
-        print(json.dumps(full_response, indent=2))
+        print(json.dumps({**full_response, **(extra or {})}, indent=2))
     elif mode == "env":
         print(f"ACCESS_TOKEN={access_token}")
         if full_response is not None:
@@ -830,9 +851,10 @@ def _cmd_setup(args: argparse.Namespace) -> int:
     email = getattr(args, "email", None)
     trough_url = getattr(args, "from_trough", None) or os.environ.get("OWA_TROUGH_URL") or None
     google = getattr(args, "google", False)
-    if sum(bool(x) for x in (email, trough_url, google)) > 1:
+    halo = getattr(args, "halo", None)
+    if sum(bool(x) for x in (email, trough_url, google, halo)) > 1:
         print(
-            "ERROR: --email, --from-trough, and --google are mutually "
+            "ERROR: --email, --from-trough, --google and --halo are mutually "
             "exclusive (pick one capture source).",
             file=sys.stderr,
         )
@@ -852,6 +874,7 @@ def _cmd_setup(args: argparse.Namespace) -> int:
         sharepoint_tenant=getattr(args, "sharepoint_tenant", None),
         with_client=getattr(args, "with_client", None),
         google=google,
+        halo=halo,
         google_client_id=(
             getattr(args, "google_client_id", None)
             or os.environ.get("GOOGLE_OAUTH_CLIENT_ID")

@@ -598,14 +598,19 @@ def load_config(path: Path | None = None) -> tuple[dict[str, str], bool]:
     return config, persist
 
 
+# Providers whose tokens are opaque bearer strings from a non-AAD token
+# endpoint: no audience, no FOCI shape, no JWT payload, no Edge reseed.
+OPAQUE_PROVIDERS = ("google", "halo")
+
+
 def classify_profile_type(config: dict[str, str]) -> str:
-    """What kind of profile this is: 'google', 'ado', or 'm365'.
+    """What kind of profile this is: 'google', 'halo', 'ado', or 'm365'.
 
     Broker-level classification only - no source/capability names, those are
     a consumer concern (yaams owns type -> {sources})."""
     provider = (config.get("OWA_PROVIDER", "") or "msal").strip() or "msal"
-    if provider == "google":
-        return "google"
+    if provider in OPAQUE_PROVIDERS:
+        return provider
     if config.get("OWA_CLIENT_ID", "").strip() == DEVOPS_CLIENT_ID:
         return "ado"
     return "m365"
