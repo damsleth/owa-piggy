@@ -13,6 +13,7 @@ import pytest
 
 from owa_piggy import cli as cli_mod
 from owa_piggy.scopes import KNOWN_AUDIENCES
+from tests.conftest import read_settings, write_doc  # noqa: F401
 
 
 def _run(monkeypatch, argv):
@@ -829,9 +830,9 @@ def test_profiles_json_classifies_type(monkeypatch, capsys, tmp_config, clean_en
         profile_dir(alias).mkdir(parents=True, exist_ok=True)
         ensure_profile_registered(alias)
 
-    profile_config_path("brkh-g").write_text("OWA_PROVIDER=google\n")
-    profile_config_path("nc-ado").write_text(f"OWA_CLIENT_ID={DEVOPS_CLIENT_ID}\n")
-    profile_config_path("nc").write_text("OWA_REFRESH_TOKEN=1.AQ_fake\n")
+    write_doc(profile_config_path("brkh-g"), {"OWA_PROVIDER": "google"})
+    write_doc(profile_config_path("nc-ado"), {"OWA_CLIENT_ID": DEVOPS_CLIENT_ID})
+    write_doc(profile_config_path("nc"), {"OWA_REFRESH_TOKEN": "1.AQ_fake"})
     # 'bare' stays registered with no config file at all.
 
     rc = _run(monkeypatch, ["profiles", "--json"])

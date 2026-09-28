@@ -13,6 +13,7 @@ borrowed.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -20,13 +21,19 @@ from typing import Any, Callable, TypeVar
 
 from .cache import clear_cache
 from .config import (
+    ConfigCorruptError,
+    atomic_write,
     list_profiles,
     load_config,
     load_profiles_conf,
+    merge_edit,
     profile_config_path,
     profile_dir,
+    read_doc,
     save_config,
+    update_doc,
     validate_alias,
+    validate_doc,
 )
 from .launchd import (
     is_scheduled as launchd_is_scheduled,
@@ -387,25 +394,49 @@ def _action_toggle_headless(current: str) -> str:
 
 
 def _action_edit_config(state: PickerState, current: str) -> str:
-    """Open <current>'s config file in $EDITOR for anything the dashboard
-    has no key for. No validation: the file is `KEY="value"` lines and the
-    consumers already tolerate junk - a typo shows up as a failed probe
-    on the next redraw."""
+    """Open <current>'s config.json in $EDITOR for anything the dashboard
+    has no key for.
+
+    The user edits a private copy, never the live file: tokens rotate while
+    the editor is open, and a broken hand edit must not be able to replace
+    the file that holds every token. On save the copy is validated (bad
+    JSON -> re-edit or discard) and merged in with `merge_edit`, which
+    applies only the keys and client records the user actually changed."""
     path = profile_config_path(current)
 
-    def do() -> int:
+    def do() -> str:
         sys.stdout.write(CLEAR_SCREEN)
         sys.stdout.flush()
-        editor = os.environ.get("EDITOR") or os.environ.get("VISUAL") or "vi"
         try:
-            return subprocess.call([editor, str(path)])
-        except OSError as e:
-            print(f"ERROR: could not run {editor!r}: {e}", file=sys.stderr)
-            input("press enter to continue...")
-            return 1
+            base = read_doc(path, strict=True)
+        except ConfigCorruptError as e:
+            return f"config is unreadable, fix it by hand: {e}"
+        editor = os.environ.get("EDITOR") or os.environ.get("VISUAL") or "vi"
+        tmp = path.parent / ".config.edit.json"
+        atomic_write(tmp, json.dumps(base, indent=2) + "\n")
+        try:
+            while True:
+                try:
+                    rc = subprocess.call([editor, str(tmp)])
+                except OSError as e:
+                    return f"could not run {editor!r}: {e}"
+                if rc != 0:
+                    return f"editor exited {rc}; nothing saved."
+                try:
+                    edited = validate_doc(json.loads(tmp.read_text()))
+                except (json.JSONDecodeError, ConfigCorruptError) as e:
+                    print(f"\ninvalid config: {e}", file=sys.stderr)
+                    if input("[e]dit again or [d]iscard? ").strip().lower().startswith("e"):
+                        continue
+                    return "edit discarded; config unchanged."
+                if edited == base:
+                    return "no changes."
+                update_doc(path, lambda live, e=edited: live.update(merge_edit(base, e, live)))
+                return f"edited {current!r} config."
+        finally:
+            tmp.unlink(missing_ok=True)
 
-    rc = state.cooked_action(do)
-    return f"edited {current!r} config." if rc == 0 else f"editor exited {rc}."
+    return state.cooked_action(do)
 
 
 def _action_reseed_all(state: PickerState) -> str:

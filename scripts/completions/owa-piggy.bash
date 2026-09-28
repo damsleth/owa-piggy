@@ -22,7 +22,7 @@ _owa_piggy() {
     audiences) COMPREPLY=( $(compgen -W "-h --help" -- "$cur") ) ;;
     install-owa-tools) COMPREPLY=( $(compgen -W "-h --help" -- "$cur") ) ;;
     version) COMPREPLY=( $(compgen -W "-h --help --json" -- "$cur") ) ;;
-    clients) COMPREPLY=( $(compgen -W "-h --help --profile --json add remove" -- "$cur") ) ;;
+    clients) COMPREPLY=( $(compgen -W "-h --help --profile --json add enable disable remove" -- "$cur") ) ;;
     profiles) COMPREPLY=( $(compgen -W "-h --help --json list set-default new delete schedule unschedule" -- "$cur") ) ;;
   esac
 }

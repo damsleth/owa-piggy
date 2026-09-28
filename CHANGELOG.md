@@ -10,7 +10,26 @@ Releases before v0.12.0 are recorded only in the annotated git tags
 
 ## [Unreleased]
 
+### Changed
+
+- One `config.json` per profile replaces `config` (KV) + `clients.json`:
+  `{"version": 2, "settings": {OWA_* ...}, "clients": [{"name", "client_id",
+  "enabled", ...}]}`. Pre-1.3 profiles are migrated on first read; the old
+  files are kept as `*.v1.bak`. Every write is a locked read-modify-write
+  (`.config.lock`), which fixes concurrent rotations of two clients (or FOCI +
+  a client) overwriting each other.
+- `services` derive from the enabled `clients[]` records only; the
+  `OWA_SERVICES` key is gone (the migration turns token-less entries such as
+  `swodp` into bare client records). `clients add swodp` declares one.
+- The dashboard's `c` edits a copy of `config.json`, validates it, and merges
+  only the keys and client records you changed.
+
 ### Added
+
+- `owa-piggy clients enable|disable <name>`: a disabled client keeps its token
+  but is not minted with, not captured on reseed, and not a service.
+  `clients` / `clients --json` and `debug` show it; `profiles --json` rows
+  gain `clients: [{name, enabled}]`.
 
 - Halo as a service on an AAD profile: `owa-piggy clients add
   halo=https://<tenant>.haloitsm.com --profile nc` signs the profile's Edge
@@ -26,8 +45,8 @@ Releases before v0.12.0 are recorded only in the annotated git tags
   cleanly so the cookie store reaches disk. Nothing is stored in
   clients.json but the timestamp; `owa-kova` reads the session from the
   sidecar.
-- `profiles --json` rows carry `services` (`OWA_SERVICES` when set, else
-  derived: `owa`, plus `ado`/`halo` for bound credentials that hold a token)
+- `profiles --json` rows carry `services` (`owa`, plus `ado`/`halo` for bound
+  credentials that hold a token)
   and `edge_dir`, the sidecar a consumer may drive under the same
   `<edge_dir>/.owa-lock` flock capture takes.
 - A pinned-headless profile whose headless capture fails three runs in a row

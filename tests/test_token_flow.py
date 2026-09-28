@@ -2,6 +2,7 @@
 
 from owa_piggy import token_flow
 from owa_piggy.config import load_config
+from tests.conftest import read_settings, write_doc  # noqa: F401
 
 
 def test_exchange_fresh_msal_path_unaffected(monkeypatch):
@@ -76,9 +77,9 @@ def test_rotated_refresh_token_is_written_to_the_named_profile(monkeypatch, tmp_
     the profile is dead within the day. Nothing covered that write."""
     from owa_piggy.config import load_config
 
-    other = tmp_path / "other" / "config"
-    other.parent.mkdir(parents=True)
-    other.write_text('OWA_REFRESH_TOKEN="1.OLD"\nOWA_TENANT_ID="tid"\n')
+    other = write_doc(
+        tmp_path / "other" / "config.json", {"OWA_REFRESH_TOKEN": "1.OLD", "OWA_TENANT_ID": "tid"}
+    )
     monkeypatch.setattr(
         token_flow,
         "exchange_token",
@@ -96,8 +97,9 @@ def test_rotated_refresh_token_is_written_to_the_named_profile(monkeypatch, tmp_
 def test_no_persist_leaves_the_config_file_untouched(monkeypatch, tmp_path, clean_env):
     """`status` probes with persist=False and must not write - a probe that
     rotates the on-disk RT would invalidate the token the caller still holds."""
-    path = tmp_path / "config"
-    path.write_text('OWA_REFRESH_TOKEN="1.OLD"\nOWA_TENANT_ID="tid"\n')
+    path = write_doc(
+        tmp_path / "config.json", {"OWA_REFRESH_TOKEN": "1.OLD", "OWA_TENANT_ID": "tid"}
+    )
     monkeypatch.setattr(
         token_flow,
         "exchange_token",

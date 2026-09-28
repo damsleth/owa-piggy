@@ -7,6 +7,7 @@ import json
 import pytest
 
 from owa_piggy import clients, oauth, pim_setup, scopes
+from owa_piggy import config as config_mod
 
 
 @pytest.fixture
@@ -164,7 +165,7 @@ def test_signin_waits_and_saves_only_verified_native_token(profile, monkeypatch,
     assert not out.out
     assert "FAKE-CODE" in out.err
     assert "fake-native-rt" not in out.err
-    assert clients.clients_path(profile).stat().st_mode & 0o777 == 0o600
+    assert config_mod.profile_config_path(profile).stat().st_mode & 0o777 == 0o600
 
 
 @pytest.mark.parametrize("result", [{"error": "access_denied"}, _result(tid="wrong"), {}])

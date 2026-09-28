@@ -93,6 +93,8 @@ complete -c owa-piggy -n '__fish_seen_subcommand_from version' -o h
 complete -c owa-piggy -n '__fish_seen_subcommand_from version' -l help
 complete -c owa-piggy -n '__fish_seen_subcommand_from version' -l json
 complete -c owa-piggy -n '__fish_seen_subcommand_from clients' -a add -d 'sign in to another service under this identity'
+complete -c owa-piggy -n '__fish_seen_subcommand_from clients' -a enable -d 'use a service on this profile'
+complete -c owa-piggy -n '__fish_seen_subcommand_from clients' -a disable -d 'stop using (keeps its token) a service on this profile'
 complete -c owa-piggy -n '__fish_seen_subcommand_from clients' -a remove -d 'forget a service and its token'
 complete -c owa-piggy -n '__fish_seen_subcommand_from clients' -o h
 complete -c owa-piggy -n '__fish_seen_subcommand_from clients' -l help

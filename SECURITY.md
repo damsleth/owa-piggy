@@ -57,8 +57,11 @@ changed something. Read the AADSTS code and plan accordingly.
 Edge on their own machine, running the CLI under their own account.
 
 - The refresh token is stored per profile at
-  `~/.config/owa-piggy/profiles/<alias>/config`, mode `0600`. Any
-  process running as that user can read it.
+  `~/.config/owa-piggy/profiles/<alias>/config.json`, mode `0600`,
+  together with every bound client's token. Any process running as that
+  user can read it. Pre-1.3 profiles leave `config.v1.bak` /
+  `clients.json.v1.bak` (also 0600, holding the tokens as of migration)
+  behind; delete them once the migrated profile works.
 - Access tokens are cached per profile at
   `~/.config/owa-piggy/profiles/<alias>/cache.json`, same mode,
   same rules - keyed by `(tenant, client, scope)`, valid until
@@ -126,7 +129,7 @@ It requests delegated `RoleManagement.ReadWrite.Directory` plus identity and
 refresh scopes. It does not reuse the OWA family refresh token. Native refresh
 exchanges omit the SPA Origin header; existing SPA client headers are unchanged.
 The broker stores the verified native refresh token in the selected profile's
-`clients.json`, mode 0600, and routes rotations back to that client entry.
+`config.json` (`clients[]` `pim`), mode 0600, and routes rotations back to that client entry.
 
 Device challenges are shown only during explicit setup. OAuth credentials and
 raw error responses are not logged by that flow. A failed or mismatched sign-in

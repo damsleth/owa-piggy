@@ -394,6 +394,15 @@ def _build_parser() -> argparse.ArgumentParser:
         "--browser", action="store_true", help="PIM: interactive browser sign-in with PKCE"
     )
 
+    for verb, what in (("enable", "use"), ("disable", "stop using (keeps its token)")):
+        p_cl_tg = clients_sub.add_parser(verb, help=f"{what} a service on this profile")
+        p_cl_tg.add_argument(
+            "name", metavar="<name>", help="teams, devops, halo, ... or a client id"
+        )
+        p_cl_tg.add_argument(
+            "--profile", metavar="<alias>", default=None, help="target a specific profile"
+        )
+
     p_cl_rm = clients_sub.add_parser("remove", help="forget a service and its token")
     p_cl_rm.add_argument("name", metavar="<name>", help="teams, devops, or a client id")
     p_cl_rm.add_argument(
@@ -1138,7 +1147,7 @@ def _cmd_clients(args: argparse.Namespace) -> int:
     """`clients` - show or change the other services a profile signs in to.
 
     The counterpart to setup's prompts: adding a service later must not mean
-    re-running setup or editing clients.json by hand.
+    re-running setup or editing config.json by hand.
     """
     alias, rc = _resolve_and_activate(args)
     if rc:
@@ -1161,10 +1170,17 @@ def _cmd_clients(args: argparse.Namespace) -> int:
         if getattr(args, "browser", False):
             print("ERROR: --browser applies only to clients add pim", file=sys.stderr)
             return 1
+        if client_id in clients.DECLARED_SERVICES:
+            clients.declare_service(alias, client_id)
+            clients.set_client_enabled(alias, client_id, True)
+            print(f"[{alias}] {client_id}: declared", file=sys.stderr)
+            return 0
         entry, derr = clients.declare_client(alias, client_id, capture_url=url)
         if derr or entry is None:
             print(f"ERROR: {derr}", file=sys.stderr)
             return 1
+        # Adding a service the user disabled earlier means they want it back.
+        clients.set_client_enabled(alias, client_id, True)
         name = clients.client_name(client_id)
         print(f"[{alias}] {name}: {entry.get('capture_url')}", file=sys.stderr)
         print(f"[{alias}] signing in to {name}...", file=sys.stderr)
@@ -1197,6 +1213,14 @@ def _cmd_clients(args: argparse.Namespace) -> int:
             return 1
         return 0
 
+    if sub in ("enable", "disable"):
+        client_id = clients.client_id_for_name(args.name) or args.name
+        if clients.set_client_enabled(alias, client_id, sub == "enable"):
+            print(f"[{alias}] {clients.client_name(client_id)} {sub}d", file=sys.stderr)
+            return 0
+        print(f"ERROR: [{alias}] no such client {args.name!r}", file=sys.stderr)
+        return 1
+
     if sub == "remove":
         client_id = clients.client_id_for_name(args.name) or args.name
         if clients.forget_client(alias, client_id):
@@ -1205,8 +1229,9 @@ def _cmd_clients(args: argparse.Namespace) -> int:
         print(f"ERROR: [{alias}] no such client {args.name!r}", file=sys.stderr)
         return 1
 
-    # Bare `clients`: list what this profile can mint.
-    bound = clients.load_clients(alias)
+    # Bare `clients`: list what this profile can mint, disabled ones included.
+    records = {clients.record_key(r): r for r in clients.load_records(alias)}
+    bound = clients.load_clients(alias, include_disabled=True)
     if getattr(args, "json", False):
         print(
             json.dumps(
@@ -1217,6 +1242,7 @@ def _cmd_clients(args: argparse.Namespace) -> int:
                             "name": clients.client_name(cid),
                             "client_id": cid,
                             "capture_url": entry.get("capture_url", ""),
+                            "enabled": records[cid].get("enabled", True) is not False,
                             "has_token": bool(entry.get("refresh_token")),
                             "rt_issued_at": entry.get("rt_issued_at", ""),
                         }
@@ -1233,8 +1259,16 @@ def _cmd_clients(args: argparse.Namespace) -> int:
         print("  no other services. Add one: owa-piggy clients add teams")
         return 0
     for cid, entry in bound.items():
-        state = "ok" if entry.get("refresh_token") else "not signed in yet"
-        print(f"  {clients.client_name(cid):<14} {entry.get('capture_url', '?')}  [{state}]")
+        if records[cid].get("enabled", True) is False:
+            state = "disabled"
+        elif cid in clients.DECLARED_SERVICES:
+            state = "declared"
+        elif cid in clients.SESSION_SERVICES:
+            state = "ok" if entry.get("rt_issued_at") else "not signed in yet"
+        else:
+            state = "ok" if entry.get("refresh_token") else "not signed in yet"
+        url = "-" if cid in clients.DECLARED_SERVICES else entry.get("capture_url", "?")
+        print(f"  {clients.client_name(cid):<14} {url}  [{state}]")
     return 0
 
 
@@ -1293,18 +1327,24 @@ def _profiles_report() -> dict[str, Any]:
     out = []
     for alias in list_profiles():
         cfg_path = profile_config_path(alias)
+        config, _ = load_config(cfg_path)  # migrates a pre-v2 profile first
         has_config = cfg_path.is_file()
         ptype = "m365"
         services: list[str] = []
+        profile_clients: list[dict[str, Any]] = []
         if has_config:
-            config, _ = load_config(cfg_path)
             ptype = classify_profile_type(config)
             services = clients.profile_services(alias, config)
+            profile_clients = [
+                {"name": r["name"], "enabled": r.get("enabled", True) is not False}
+                for r in clients.load_records(alias)
+            ]
         out.append(
             {
                 "alias": alias,
                 "type": ptype,
                 "services": services,
+                "clients": profile_clients,
                 # The profile's Edge sidecar. Consumers that drive it
                 # themselves (owa-swodp) must hold `<edge_dir>/.owa-lock`
                 # (exclusive flock, waited for) from launch to exit, the same
