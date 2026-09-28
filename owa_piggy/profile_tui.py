@@ -17,16 +17,21 @@ import json
 import os
 import subprocess
 import sys
+import time
 from typing import Any, Callable, TypeVar
 
+from . import clients as clients_mod
 from .cache import clear_cache
 from .config import (
+    DEVOPS_CLIENT_ID,
     ConfigCorruptError,
     atomic_write,
+    classify_profile_type,
     list_profiles,
     load_config,
     load_profiles_conf,
     merge_edit,
+    parse_iso_utc,
     profile_config_path,
     profile_dir,
     read_doc,
@@ -66,6 +71,7 @@ YELLOW = "\x1b[33m"
 RED = "\x1b[31m"
 CYAN = "\x1b[36m"
 RESET = "\x1b[0m"
+REVERSE = "\x1b[7m"
 
 # Suggested audiences shown in the new-profile prompt. This is a
 # usability hint, not a constraint - any KNOWN_AUDIENCES short name or
@@ -175,6 +181,8 @@ class PickerState:
         self.fd = fd
         self.old = old_termios
         self.idx = 0
+        # Cell cursor: 0 = the profile itself, n = client column n-1.
+        self.col = 0
         self.message = ""
         # alias -> status report, populated by the dashboard's reprobe().
         self.reports: dict[str, Any] = {}
@@ -439,6 +447,136 @@ def _action_edit_config(state: PickerState, current: str) -> str:
     return state.cooked_action(do)
 
 
+# --- Client actions (cell cursor on a client column) --------------------
+
+
+def _client_toggle(current: str, label: str, key: str | None, record: dict[str, Any] | None) -> str:
+    if key is None:
+        return "owa is the profile's own token; toggle the profile on the first column."
+    if record is None:
+        return f"{label} is not on {current!r}; a adds it."
+    enabled = record.get("enabled", True) is False
+    clients_mod.set_client_enabled(current, key, enabled)
+    if enabled:
+        return f"{label} enabled on {current!r}."
+    tail = " owa-teams chats will fail on this profile." if label == "teams" else ""
+    return f"{label} disabled on {current!r} (token kept).{tail}"
+
+
+def _client_add(
+    state: PickerState,
+    current: str,
+    label: str,
+    key: str | None,
+    record: dict[str, Any] | None,
+    records_by_alias: dict[str, list[dict[str, Any]]],
+) -> str:
+    if key is None:
+        return "owa is the profile's own token; nothing to add."
+    if record is not None:
+        if record.get("enabled", True) is False:
+            return f"{label} is disabled; space enables it."
+        return f"{label} is already on {current!r} (e edits, r captures)."
+
+    def do() -> int:
+        from .cli import add_client
+
+        url = None
+        if key in _URL_CLIENTS or key not in {k for _, k in KNOWN_COLUMNS}:
+            suggested = _url_suggestion(key, records_by_alias, current)
+            hint = f" [{suggested}]" if suggested else ""
+            try:
+                typed = input(f"{label} sign-in URL for {current!r}{hint}: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                return 1
+            url = clients_mod.normalize_capture_url(key, typed or suggested)
+            if not url:
+                print("no URL given.", file=sys.stderr)
+                return 1
+        rc = add_client(current, key, url)
+        if rc != 0:
+            input("press enter to continue...")
+        return rc
+
+    rc = state.cooked_action(do)
+    if rc == 0:
+        return f"{label} added to {current!r}."
+    return f"{label}: not added / not captured yet."
+
+
+def _client_edit(
+    state: PickerState, current: str, label: str, key: str | None, record: dict[str, Any] | None
+) -> str:
+    if key is None or record is None:
+        return f"{label}: nothing to edit here."
+    if key in clients_mod.DECLARED_SERVICES or key == clients_mod.PIM_CLIENT_ID:
+        return f"{label} has no sign-in URL to edit."
+
+    def do() -> str:
+        old = str(record.get("capture_url", ""))
+        try:
+            typed = input(f"{label} sign-in URL [{old}]: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return "edit cancelled."
+        url = clients_mod.normalize_capture_url(key, typed) if typed else old
+        if url == old:
+            return "URL unchanged."
+        _, err = clients_mod.declare_client(current, key, capture_url=url)
+        if err:
+            return err
+        if _confirm("capture now?"):
+            from . import capture
+
+            ok, _ = capture.capture_bound_clients(current, only=[key])
+            return f"{label} URL set and captured." if ok else f"{label} URL set; capture failed."
+        return f"{label} URL set; r captures."
+
+    return state.cooked_action(do)
+
+
+def _client_remove(
+    state: PickerState, current: str, label: str, key: str | None, record: dict[str, Any] | None
+) -> str:
+    if key is None:
+        return "owa is the profile's own token; d on the first column deletes the profile."
+    if record is None:
+        return f"{label} is not on {current!r}."
+    if not state.cooked_action(
+        lambda: _confirm(f"remove {label} from {current!r} (forgets its token)?")
+    ):
+        return "remove cancelled."
+    clients_mod.forget_client(current, key)
+    return f"{label} removed from {current!r}."
+
+
+def _client_capture(
+    state: PickerState, current: str, label: str, key: str | None, record: dict[str, Any] | None
+) -> str:
+    if key is None:
+        return _action_reseed(state, current)
+    if record is None:
+        return f"{label} is not on {current!r}; a adds it."
+    if record.get("enabled", True) is False:
+        return f"{label} is disabled; space enables it."
+    if key in clients_mod.DECLARED_SERVICES:
+        return f"{label} is declared only; nothing to capture."
+    if key == clients_mod.PIM_CLIENT_ID:
+        return "pim refreshes on demand; re-sign in with `owa-piggy clients add pim`."
+
+    def do() -> int:
+        from . import capture
+
+        sys.stdout.write(CLEAR_SCREEN)
+        sys.stdout.flush()
+        print(f"Capturing {label} for {current!r}...\n")
+        ok, _ = capture.capture_bound_clients(current, only=[key])
+        if not ok:
+            input("press enter to continue...")
+        return ok
+
+    return f"{label} captured." if state.cooked_action(do) else f"{label}: capture failed."
+
+
 def _action_reseed_all(state: PickerState) -> str:
     """Shift-r: reseed every configured profile sequentially.
 
@@ -524,6 +662,121 @@ def _freshness_cell(report: dict[str, Any] | None) -> tuple[str, str]:
     return label, RED
 
 
+# --- Client columns ----------------------------------------------------
+# One column per service a profile can sign in to. `key` is how clients.py
+# addresses the record (client id, else service name); None is the
+# profile's own FOCI token, which isn't a clients[] record.
+
+KNOWN_COLUMNS: tuple[tuple[str, str | None], ...] = (
+    ("owa", None),
+    ("teams", clients_mod.TEAMS_WEB_CLIENT_ID),
+    ("ado", DEVOPS_CLIENT_ID),
+    ("halo", clients_mod.HALO_KEY),
+    ("swodp", "swodp"),
+    ("kova", clients_mod.KOVA_KEY),
+    ("pim", clients_mod.PIM_CLIENT_ID),
+)
+
+# SPA-bound AAD refresh tokens die 24h after issue; reseed renews them
+# hourly, so an older stamp means reseed has been failing for that client.
+_SPA_RT_MAX_AGE_S = 24 * 3600
+
+# Clients whose sign-in URL is org-specific: adding one asks for it.
+_URL_CLIENTS = frozenset({DEVOPS_CLIENT_ID, clients_mod.HALO_KEY})
+
+
+def _client_columns(
+    records_by_alias: dict[str, list[dict[str, Any]]],
+) -> list[tuple[str, str | None]]:
+    """Every known column, then any unknown client some profile has (in
+    first-seen order), labelled by its name's first 6 characters."""
+    columns = list(KNOWN_COLUMNS)
+    known = {key for _, key in columns}
+    for records in records_by_alias.values():
+        for record in records:
+            key = clients_mod.record_key(record)
+            if key not in known:
+                known.add(key)
+                columns.append((str(record["name"])[:6], key))
+    return columns
+
+
+def _client_cell(
+    key: str | None,
+    record: dict[str, Any] | None,
+    config: dict[str, str],
+    now: float,
+) -> tuple[str, str, str]:
+    """(glyph, color, detail) for one profile x client cell. Pure.
+
+    ● green  in use and healthy        ● yellow  added, needs attention
+    ○ dim    disabled (token kept)     · dim     not added
+    """
+    if classify_profile_type(config) != "m365":
+        return " ", DIM, "not an AAD profile"
+    if key is None:
+        if config.get("OWA_REFRESH_TOKEN"):
+            return "●", GREEN, "the profile's own token"
+        return "·", DIM, "no profile token (setup)"
+    if record is None:
+        return "·", DIM, "not added (a adds it)"
+    if record.get("enabled", True) is False:
+        return "○", DIM, "disabled; token kept (space enables)"
+    if key in clients_mod.DECLARED_SERVICES:
+        return "●", GREEN, "declared (nothing to capture)"
+    issued = record.get("rt_issued_at", "")
+    if key in clients_mod.SESSION_SERVICES:
+        if issued:
+            return "●", GREEN, f"signed in {issued}"
+        return "●", YELLOW, "not signed in yet (r captures)"
+    if not record.get("refresh_token"):
+        return "●", YELLOW, "added, not captured yet (r captures)"
+    dt = parse_iso_utc(issued)
+    spa = bool(record.get("client_id")) and key != clients_mod.PIM_CLIENT_ID
+    if spa and dt is not None and now - dt.timestamp() > _SPA_RT_MAX_AGE_S:
+        return "●", YELLOW, f"token from {issued}: older than 24h, reseed failing?"
+    return "●", GREEN, f"token from {issued or 'unknown'}"
+
+
+def _find_record(records: list[dict[str, Any]], key: str | None) -> dict[str, Any] | None:
+    if key is None:
+        return None
+    return next((r for r in records if clients_mod.record_key(r) == key), None)
+
+
+def _url_suggestion(
+    key: str, records_by_alias: dict[str, list[dict[str, Any]]], current: str
+) -> str:
+    """The URL this client uses on another profile (same org, most likely)."""
+    for alias, records in records_by_alias.items():
+        record = _find_record(records, key)
+        if alias != current and record and record.get("capture_url"):
+            return str(record["capture_url"])
+    return ""
+
+
+def _cells_row(
+    columns: list[tuple[str, str | None]],
+    records: list[dict[str, Any]],
+    config: dict[str, str],
+    now: float,
+    selected: int | None = None,
+) -> str:
+    """The client cells of one dashboard row; `selected` is the 0-based
+    column under the cell cursor (reverse video), or None."""
+    out = []
+    for i, (label, key) in enumerate(columns):
+        glyph, color, _ = _client_cell(key, _find_record(records, key), config, now)
+        pad = " " * max(0, len(label) - 1)
+        mark = REVERSE if i == selected else ""
+        out.append(f"{mark}{color}{glyph}{RESET}{pad}")
+    return " ".join(out)
+
+
+def _cells_header(columns: list[tuple[str, str | None]]) -> str:
+    return " ".join(label for label, _ in columns)
+
+
 def print_plain_status(
     audience: str | None = None,
     scope: str | None = None,
@@ -570,6 +823,7 @@ def run_dashboard(
     `status.status_all_report` probe. Keys:
 
       up/down or j/k   navigate
+      left/right       move the cell cursor across the service columns
       space            toggle enabled (registered in OWA_PROFILES)
       enter            set highlighted profile default
       a                add a new profile
@@ -582,6 +836,10 @@ def run_dashboard(
       c                edit the highlighted profile's config in $EDITOR
       g                refresh token health (re-probe)
       q / esc          quit
+
+    With the cell cursor on a service column, `space` enables/disables that
+    service, `a` adds it, `e` edits its URL, `d` removes it and `r` captures
+    it (the `_client_*` actions); every other key keeps its profile meaning.
 
     Probing is network-bound (one live AAD exchange per profile, run
     concurrently by `_probe_all`), so the screen paints a "probing..."
@@ -629,24 +887,50 @@ def run_dashboard(
         )
         state.reports = {r["profile"]: r for r in data["profiles"]}
 
+    def load_clients_view(
+        profiles: list[str],
+    ) -> tuple[dict[str, list[dict[str, Any]]], list[tuple[str, str | None]]]:
+        records = {alias: clients_mod.load_records(alias) for alias in profiles}
+        columns = _client_columns(records)
+        state.col = max(0, min(state.col, len(columns)))
+        return records, columns
+
     def draw() -> None:
         profiles, default, enabled = load_state()
         clamp_cursor(profiles)
+        records_by_alias, columns = load_clients_view(profiles)
+        now = time.time()
         scheduled = set(load_profiles_conf().get("OWA_SCHEDULED", []))
         launchd_state = {alias: alias in scheduled for alias in profiles}
         width = max((len(a) for a in profiles), default=0)
         sys.stdout.write(CLEAR_SCREEN)
         sys.stdout.write("owa-piggy dashboard\r\n")
-        sys.stdout.write(
-            f"  {DIM}"
-            "up/down  navigate  ·  space toggle  ·  enter set default  ·  g refresh\r\n"
-            "  a add  ·  d delete  ·  l schedule  ·  u unschedule  ·  r reseed  ·  R reseed all\r\n"
-            "  e edge  ·  h headless/visible  ·  c edit config  ·  q quit"
-            f"{RESET}\r\n\r\n"
-        )
+        if state.col == 0:
+            sys.stdout.write(
+                f"  {DIM}"
+                "up/down  navigate  ·  left/right  services  ·  space toggle  ·  "
+                "enter set default\r\n"
+                "  a add  ·  d delete  ·  l schedule  ·  u unschedule  ·  r reseed  ·  "
+                "R reseed all  ·  g refresh\r\n"
+                "  e edge  ·  h headless/visible  ·  c edit config  ·  q quit"
+                f"{RESET}\r\n\r\n"
+            )
+        else:
+            label = columns[state.col - 1][0]
+            sys.stdout.write(
+                f"  {DIM}"
+                f"service {label}:  space enable/disable  ·  a add  ·  e edit URL  ·  "
+                "d remove  ·  r capture\r\n"
+                "  up/down  navigate  ·  left/right  services  ·  enter set default  ·  "
+                "g refresh\r\n"
+                "  l/u schedule  ·  h headless/visible  ·  c edit config  ·  q quit"
+                f"{RESET}\r\n\r\n"
+            )
         if not profiles:
             sys.stdout.write('  (no profiles - press "a" to add one, q to quit)\r\n')
         else:
+            # Row prefix: " > [x] <alias><(S) or 4 spaces>  <mode 9>  "
+            sys.stdout.write(f"{DIM}{' ' * (width + 24)}{_cells_header(columns)}{RESET}\r\n")
             for i, alias in enumerate(profiles):
                 cursor = ">" if i == state.idx else " "
                 if alias == default:
@@ -655,18 +939,30 @@ def run_dashboard(
                     state_marker = f"{GREEN}x{RESET}"
                 else:
                     state_marker = f"{DIM} {RESET}"
-                launchd_marker = f" {CYAN}(S){RESET}" if launchd_state[alias] else ""
+                launchd_marker = f" {CYAN}(S){RESET}" if launchd_state[alias] else "    "
                 text, color = _freshness_cell(state.reports.get(alias))
                 cell = f"{color}{text}{RESET}"
-                mode_text, mode_color = _headless_cell(_profile_config(alias))
+                config = _profile_config(alias)
+                mode_text, mode_color = _headless_cell(config)
                 mode_cell = f"{mode_color}{mode_text.ljust(9)}{RESET}"
+                selected = state.col - 1 if i == state.idx and state.col else None
+                cells = _cells_row(columns, records_by_alias[alias], config, now, selected)
+                row_mark = REVERSE if i == state.idx and state.col == 0 else ""
                 sys.stdout.write(
-                    f" {cursor} [{state_marker}] {alias.ljust(width)}{launchd_marker}"
-                    f"  {mode_cell}  {cell}{CLEAR_EOL}\r\n"
+                    f" {cursor} [{state_marker}] {row_mark}{alias.ljust(width)}{RESET}"
+                    f"{launchd_marker}  {mode_cell}  {cells}  {cell}{CLEAR_EOL}\r\n"
                 )
         sys.stdout.write("\r\n")
         if state.message:
             sys.stdout.write(f"  {state.message}{CLEAR_EOL}\r\n")
+        elif profiles and state.col:
+            alias = profiles[state.idx]
+            label, key = columns[state.col - 1]
+            record = _find_record(records_by_alias[alias], key)
+            _, _, detail = _client_cell(key, record, _profile_config(alias), now)
+            url = (record or {}).get("capture_url", "")
+            extra = f" · {url}" if url else ""
+            sys.stdout.write(f"  {DIM}{alias} · {label}: {detail}{extra}{RESET}{CLEAR_EOL}\r\n")
         else:
             sys.stdout.write(f"{CLEAR_EOL}\r\n")
         sys.stdout.flush()
@@ -703,6 +999,10 @@ def run_dashboard(
                         state.idx = max(0, state.idx - 1)
                     elif arrow == "B":
                         state.idx = min(max(0, len(profiles) - 1), state.idx + 1)
+                    elif arrow == "C":
+                        state.col += 1  # draw() clamps to the column count
+                    elif arrow == "D":
+                        state.col = max(0, state.col - 1)
                     state.message = ""
                     draw()
                     continue
@@ -723,6 +1023,28 @@ def run_dashboard(
                 state.message = ""
                 reprobe()
                 continue
+
+            if state.col and current and ch in (" ", "a", "e", "d", "r"):
+                # Cell cursor on a client column: these keys act on that
+                # service for the highlighted profile, not on the profile.
+                records_by_alias, columns = load_clients_view(profiles)
+                if state.col:
+                    label, key = columns[state.col - 1]
+                    record = _find_record(records_by_alias[current], key)
+                    if ch == " ":
+                        state.message = _client_toggle(current, label, key, record)
+                    elif ch == "a":
+                        state.message = _client_add(
+                            state, current, label, key, record, records_by_alias
+                        )
+                    elif ch == "e":
+                        state.message = _client_edit(state, current, label, key, record)
+                    elif ch == "d":
+                        state.message = _client_remove(state, current, label, key, record)
+                    else:
+                        state.message = _client_capture(state, current, label, key, record)
+                    draw()
+                    continue
 
             if ch == "a":
                 state.message = _action_add(state) or ""
