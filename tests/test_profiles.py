@@ -35,7 +35,7 @@ def test_profile_paths_resolve_under_root(tmp_config, clean_env):
     assert profiles_dir() == root / "profiles"
     assert profiles_conf_path() == root / "profiles.conf"
     assert profile_dir("work") == root / "profiles" / "work"
-    assert profile_config_path("work") == root / "profiles" / "work" / "config"
+    assert profile_config_path("work") == root / "profiles" / "work" / "config.json"
     assert profile_edge_dir("work") == root / "profiles" / "work" / "edge-profile"
     assert profile_log_path("work") == root / "profiles" / "work" / "refresh.log"
 

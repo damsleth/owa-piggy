@@ -221,7 +221,7 @@ The token comes back with a broad set of delegated scopes: `Calendars.ReadWrite`
 
 The sliding window renews on every exchange. The hard-cap does not - after 24h AAD returns `AADSTS700084` and the token is unrecoverable via rotation. The launchd agent handles the sliding window; `owa-piggy reseed` handles the hard-cap.
 
-The rotated refresh token is saved automatically to `~/.config/owa-piggy/profiles/<alias>/config` after every exchange (only when the token originally came from the config file - env-only callers keep env-only semantics and get a rotation notice on stderr). A single shared LaunchAgent keeps the sliding window fresh for whichever profiles you opt in:
+The rotated refresh token is saved automatically to `~/.config/owa-piggy/profiles/<alias>/config.json` after every exchange (only when the token originally came from the config file - env-only callers keep env-only semantics and get a rotation notice on stderr). A single shared LaunchAgent keeps the sliding window fresh for whichever profiles you opt in:
 
 ```sh
 owa-piggy profiles schedule default     # add 'default' to the hourly schedule
@@ -320,13 +320,25 @@ The token is scoped to your user identity. A password change or admin revocation
 
 See [SECURITY.md](SECURITY.md) for the full threat model and known failure modes.
 
-Per-profile config lives at `~/.config/owa-piggy/profiles/<alias>/config`, mode 0600:
+Per-profile config lives at `~/.config/owa-piggy/profiles/<alias>/config.json`, mode 0600: the profile's settings plus the other services it signs in to.
 
+```json
+{
+  "version": 2,
+  "settings": {
+    "OWA_REFRESH_TOKEN": "1.AQ...",
+    "OWA_TENANT_ID": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+    "OWA_RT_ISSUED_AT": "2026-04-19T10:15:00Z"
+  },
+  "clients": [
+    {"name": "teams", "client_id": "5e3ce6c0-...", "enabled": true,
+     "refresh_token": "...", "capture_url": "https://teams.microsoft.com/"},
+    {"name": "swodp", "enabled": true}
+  ]
+}
 ```
-OWA_REFRESH_TOKEN="1.AQ..."
-OWA_TENANT_ID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-OWA_RT_ISSUED_AT="2026-04-19T10:15:00Z"
-```
+
+`owa-piggy clients enable|disable <name>` toggles a client without forgetting its token: a disabled client is not used for minting, not captured on reseed, and drops out of the profile's `services` (so owa-tools `-A` skips it). Every write is a locked read-modify-write, so concurrent token rotations can't overwrite each other. The dashboard's `c` key edits a copy, validates it, and merges only what you changed. Profiles from before 1.3 (`config` + `clients.json`) are migrated on first use; the old files are kept as `*.v1.bak` and can be deleted once everything works.
 
 A small registry at `~/.config/owa-piggy/profiles.conf` tracks which profiles exist and which is the default.
 
@@ -385,8 +397,8 @@ the token's `appid` rather than its scopes:
 
 An OWA-minted `api.spaces.skype.com` token is therefore perfectly valid *and*
 useless at authsvc. The audience is reachable; the client is not. So a profile
-keeps its FOCI token in `config` and any extra client-bound refresh tokens in a
-sibling `clients.json`, all captured through the one Edge sidecar session that
+keeps its FOCI token in `config.json` `settings` and any extra client-bound
+refresh tokens in the same file's `clients` array, all captured through the one Edge sidecar session that
 profile already owns — one sign-in, one identity, several minting clients.
 
 Setting one up is a conversation, not a flag list. `setup` asks on a TTY:
