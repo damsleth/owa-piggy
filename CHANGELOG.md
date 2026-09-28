@@ -18,6 +18,14 @@ Releases before v0.12.0 are recorded only in the annotated git tags
   the account picker Halo forces), reads the `refresh_token` cookie, and
   reseed renews it with the other clients. `token --audience halo --profile
   nc [--json]` mints Halo's bearer from it, with `host` in the envelope.
+- Kova as a session service: `owa-piggy clients add kova --profile brkh`
+  signs the sidecar in to Kova through Okta (a visible window on a TTY when
+  there is no session yet), then pins the chain's session cookies with an
+  expiry so they survive Edge exiting - Okta's "Keep me signed in" does not
+  make them persistent. Reseed revisits Kova, re-pins, and closes Edge
+  cleanly so the cookie store reaches disk. Nothing is stored in
+  clients.json but the timestamp; `owa-kova` reads the session from the
+  sidecar.
 - `profiles --json` rows carry `services` (`OWA_SERVICES` when set, else
   derived: `owa`, plus `ado`/`halo` for bound credentials that hold a token)
   and `edge_dir`, the sidecar a consumer may drive under the same

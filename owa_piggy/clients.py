@@ -54,6 +54,14 @@ CLIENTS_FILENAME = "clients.json"
 # identity server mints the token, so the entry is keyed by service name.
 HALO_KEY = "halo"
 
+# Kova (Red Cross volunteer schedule): a server-rendered app that signs in
+# through Okta and knows the user only by its session cookie. There is no
+# token to store; reseed keeps the sidecar's session alive and pins its
+# session cookies (capture.capture_session), and owa-kova reads them from the
+# sidecar on demand, the way owa-swodp reads ServiceNow's.
+KOVA_KEY = "kova"
+SESSION_SERVICES: tuple[str, ...] = (KOVA_KEY,)
+
 
 # Plain string maps rather than TypedDicts: every value is a string, the
 # registry's only nuance is that `capture_url` may be absent, and entries are
@@ -90,6 +98,11 @@ KNOWN_CLIENTS: dict[str, ClientMeta] = {
         "name": "halo",
         "origin": None,
         "capture_url": None,
+    },
+    KOVA_KEY: {
+        "name": "kova",
+        "origin": None,
+        "capture_url": "https://www.kova.no",
     },
 }
 
@@ -356,6 +369,9 @@ def profile_services(alias: str, config: dict[str, str]) -> list[str]:
         services.append("ado")
     if (clients.get(HALO_KEY) or {}).get("refresh_token"):
         services.append("halo")
+    # Session services hold no token: a completed capture (stamped
+    # rt_issued_at) is what says the sidecar is signed in.
+    services += [key for key in SESSION_SERVICES if (clients.get(key) or {}).get("rt_issued_at")]
     return services
 
 
