@@ -1336,7 +1336,7 @@ def _profiles_report() -> dict[str, Any]:
     out = []
     for alias in list_profiles():
         cfg_path = profile_config_path(alias)
-        config, _ = load_config(cfg_path)  # migrates a pre-v2 profile first
+        config, _ = load_config(cfg_path)
         has_config = cfg_path.is_file()
         ptype = "m365"
         services: list[str] = []

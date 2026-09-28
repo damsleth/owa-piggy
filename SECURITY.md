@@ -59,7 +59,7 @@ Edge on their own machine, running the CLI under their own account.
 - The refresh token is stored per profile at
   `~/.config/owa-piggy/profiles/<alias>/config.json`, mode `0600`,
   together with every bound client's token. Any process running as that
-  user can read it. Pre-1.3 profiles leave `config.v1.bak` /
+  user can read it. The 1.3.x migration left `config.v1.bak` /
   `clients.json.v1.bak` (also 0600, holding the tokens as of migration)
   behind; delete them once the migrated profile works.
 - Access tokens are cached per profile at

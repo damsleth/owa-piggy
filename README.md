@@ -338,7 +338,7 @@ Per-profile config lives at `~/.config/owa-piggy/profiles/<alias>/config.json`, 
 }
 ```
 
-`owa-piggy clients enable|disable <name>` toggles a client without forgetting its token: a disabled client is not used for minting, not captured on reseed, and drops out of the profile's `services` (so owa-tools `-A` skips it). Every write is a locked read-modify-write, so concurrent token rotations can't overwrite each other. The dashboard's `c` key edits a copy, validates it, and merges only what you changed. Profiles from before 1.3 (`config` + `clients.json`) are migrated on first use; the old files are kept as `*.v1.bak` and can be deleted once everything works.
+`owa-piggy clients enable|disable <name>` toggles a client without forgetting its token: a disabled client is not used for minting, not captured on reseed, and drops out of the profile's `services` (so owa-tools `-A` skips it). Every write is a locked read-modify-write, so concurrent token rotations can't overwrite each other. The dashboard's `c` key edits a copy, validates it, and merges only what you changed. Profiles from before 1.3 (`config` + `clients.json`) must run owa-piggy 1.3.x once, which migrates them and keeps the old files as `*.v1.bak`; delete those once everything works.
 
 A small registry at `~/.config/owa-piggy/profiles.conf` tracks which profiles exist and which is the default.
 
