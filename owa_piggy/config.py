@@ -27,8 +27,8 @@ bound-client / service list `clients.py` owns. One file means one lock: every
 write is a locked read-modify-write (`update_doc`), so two concurrent token
 rotations (FOCI + a bound client, or two bound clients) can no longer drop
 each other's write, which the old two-file layout (`config` KV +
-`clients.json`) allowed. Those files are migrated on first read and kept as
-`*.v1.bak`.
+`clients.json`) allowed. 1.3.x migrated those files on first read and kept
+them as `*.v1.bak`; a profile that never ran 1.3.x must pass through it once.
 
 `ROOT_DIR` is mutable so tests can redirect it. `CONFIG_PATH` points at the
 *currently active* profile's config file and is rebound by
@@ -58,7 +58,8 @@ ROOT_DIR = Path.home() / ".config" / "owa-piggy"
 CONFIG_FILENAME = "config.json"
 CONFIG_PATH = ROOT_DIR / CONFIG_FILENAME
 DOC_VERSION = 2
-# Pre-v2 per-profile files, migrated into config.json on first read.
+# Pre-v2 per-profile files. 1.3.x migrated them and left `*.v1.bak` copies
+# (still permission-audited: they hold tokens); now they only trigger a warning.
 LEGACY_CONFIG_FILENAME = "config"
 LEGACY_CLIENTS_FILENAME = "clients.json"
 LOCK_FILENAME = ".config.lock"
@@ -618,74 +619,32 @@ def _parse_doc(path: Path) -> dict[str, Any]:
         raise ConfigCorruptError(f"{path}: {e}") from None
 
 
-def _legacy_doc(cfg_dir: Path) -> dict[str, Any] | None:
-    """Build a v2 document from the pre-v2 `config` KV + `clients.json`
-    pair in `cfg_dir`, or None when neither exists.
-
-    ponytail: one-shot migration; delete a release after 1.3.0 ships.
-    """
-    legacy_cfg = cfg_dir / LEGACY_CONFIG_FILENAME
-    legacy_clients = cfg_dir / LEGACY_CLIENTS_FILENAME
-    if not legacy_cfg.exists() and not legacy_clients.exists():
-        return None
-    from . import clients as _clients  # lazy: clients imports this module
-
-    doc = _empty_doc()
-    if legacy_cfg.exists():
-        doc["settings"] = dict(_iter_kv(legacy_cfg.read_text()))
-    declared = [s.strip() for s in doc["settings"].pop("OWA_SERVICES", "").split(",") if s.strip()]
-    raw: object = {}
-    if legacy_clients.exists():
-        with contextlib.suppress(json.JSONDecodeError, OSError):
-            raw = json.loads(legacy_clients.read_text())
-    for key, entry in raw.items() if isinstance(raw, dict) else []:
-        if isinstance(entry, dict):
-            doc["clients"].append(_clients.new_record(key, entry))
-    # OWA_SERVICES named services the credentials could not show (swodp):
-    # they become bare, token-less entries. Names the clients already
-    # provide (owa, ado for devops, halo, kova) need nothing.
-    covered = {"owa"} | {_clients.service_for(c) for c in doc["clients"]}
-    for name in declared:
-        if name not in covered:
-            doc["clients"].append({"name": name, "enabled": True})
-            covered.add(name)
-    return doc
-
-
 def read_doc(path: Path | None = None, *, strict: bool = False) -> dict[str, Any]:
     """The profile's config.json document (empty when there is none yet).
 
-    Migrates a pre-v2 profile on first read. A corrupt file raises
-    ConfigCorruptError when `strict` (writers); readers get an empty
-    document and a warning, the same degrade-to-unconfigured the KV parser
-    had, so one bad file can't crash every other profile's status row."""
+    A corrupt file raises ConfigCorruptError when `strict` (writers);
+    readers get an empty document and a warning, the same
+    degrade-to-unconfigured the KV parser had, so one bad file can't crash
+    every other profile's status row."""
+    import sys
+
     cfg_path = path or CONFIG_PATH
-    legacy_present = any(
-        (cfg_path.parent / n).exists() for n in (LEGACY_CONFIG_FILENAME, LEGACY_CLIENTS_FILENAME)
-    )
-    # Only lock (which creates the profile dir) when there is something to
-    # migrate: a read of a profile that doesn't exist must not create it.
-    if not cfg_path.exists() and legacy_present:
-        with _locked(cfg_path):
-            # Both re-checks only differ from the outer test when another
-            # process migrated first while we waited on the lock.
-            if not cfg_path.exists():  # pragma: no branch
-                legacy = _legacy_doc(cfg_path.parent)
-                if legacy is not None:  # pragma: no branch
-                    atomic_write(cfg_path, json.dumps(legacy, indent=2) + "\n")
-                    for name in (LEGACY_CONFIG_FILENAME, LEGACY_CLIENTS_FILENAME):
-                        old = cfg_path.parent / name
-                        if old.exists():
-                            old.rename(old.with_name(name + ".v1.bak"))
     if not cfg_path.exists():
+        if any(
+            (cfg_path.parent / n).exists()
+            for n in (LEGACY_CONFIG_FILENAME, LEGACY_CLIENTS_FILENAME)
+        ):
+            print(
+                f"WARNING: {cfg_path.parent} has a pre-1.3 profile (config /"
+                " clients.json); run owa-piggy 1.3.x once to migrate it",
+                file=sys.stderr,
+            )
         return _empty_doc()
     try:
         return _parse_doc(cfg_path)
     except ConfigCorruptError as e:
         if strict:
             raise
-        import sys
-
         print(f"WARNING: ignoring unreadable profile config: {e}", file=sys.stderr)
         return _empty_doc()
 
@@ -694,7 +653,6 @@ def update_doc(path: Path | None, fn: Callable[[dict[str, Any]], _T]) -> _T:
     """Locked read-modify-write of config.json: `fn` mutates the document in
     place and its return value is passed through. The only write path."""
     cfg_path = path or CONFIG_PATH
-    read_doc(cfg_path, strict=True)  # migrate first (takes the lock itself)
     with _locked(cfg_path):
         doc = read_doc(cfg_path, strict=True) if cfg_path.exists() else _empty_doc()
         result = fn(doc)
