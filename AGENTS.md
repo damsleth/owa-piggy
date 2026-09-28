@@ -124,6 +124,11 @@ exist with acceptance criteria.
 - `.venv/bin/python -m owa_piggy --help` and `.venv/bin/python -m owa_piggy audiences` run
   without traceback on a machine with no config.
 - `.venv/bin/python -m pytest -q` is green.
+- CI's core gate passes (a green `pytest -q` does not imply it; a red gate
+  blocks the release workflow's PyPI publish): `.venv/bin/python -m pytest -q
+  --cov=owa_piggy --cov-branch --cov-report=` then `.venv/bin/python -m
+  coverage report --fail-under=100 --include=owa_piggy/oauth.py,owa_piggy/config.py,owa_piggy/cache.py,owa_piggy/token_flow.py,owa_piggy/jwt.py`.
+  Before tagging a release, also check `gh run list --workflow ci.yml --limit 1` is green.
 - If you touched token logic: `owa-piggy decode` and `owa-piggy status`
   still produce sane output against a real configured profile. If
   you cannot run against a real token, say so explicitly rather than
