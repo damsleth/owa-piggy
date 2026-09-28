@@ -79,6 +79,10 @@ ClientEntry = dict[str, str]
 # Teams audience), so routing an audience to it never costs reach.
 TEAMS_WEB_CLIENT_ID = "5e3ce6c0-2b1f-4285-8d4b-75ee78787346"
 
+# Windows App web client. Named so `clients` lists it as `winapp` rather than
+# its id; it mints no audience we route to yet.
+WINAPP_CLIENT_ID = "451f2815-40fe-44bb-b8a6-3a2e55cf40c4"
+
 
 KNOWN_CLIENTS: dict[str, ClientMeta] = {
     PIM_CLIENT_ID: {
@@ -90,6 +94,12 @@ KNOWN_CLIENTS: dict[str, ClientMeta] = {
         "name": "teams",
         "origin": "https://teams.microsoft.com",
         "capture_url": "https://teams.microsoft.com/",
+    },
+    # Windows App (windows.cloud.microsoft, the Windows 365 / AVD web client).
+    WINAPP_CLIENT_ID: {
+        "name": "winapp",
+        "origin": None,
+        "capture_url": "https://windows.cloud.microsoft",
     },
     DEVOPS_CLIENT_ID: {
         "name": "devops",
