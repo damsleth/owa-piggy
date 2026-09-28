@@ -272,3 +272,12 @@ def test_declared_and_disabled_services(profile):
 
 def test_non_aad_profiles_are_their_own_service(profile):
     assert clients.profile_services(profile, {"OWA_PROVIDER": "google"}) == ["google"]
+
+
+def test_windows_app_client_has_a_name():
+    assert clients.client_name(clients.WINAPP_CLIENT_ID) == "winapp"
+    assert clients.parse_spec("winapp") == (
+        clients.WINAPP_CLIENT_ID,
+        "https://windows.cloud.microsoft",
+        "",
+    )
