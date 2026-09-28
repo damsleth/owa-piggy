@@ -352,3 +352,149 @@ def test_edit_config_discards_invalid_json(tmp_path, monkeypatch):
     monkeypatch.setattr("builtins.input", lambda _prompt: "d")
     assert "discarded" in profile_tui._action_edit_config(state, "work")
     assert read_settings(path)["OWA_REFRESH_TOKEN"] == "fake-rt"
+
+
+# --- client columns ---------------------------------------------------
+
+_NOW = 1_800_000_000.0  # fixed clock for the age checks
+_AAD = {"OWA_REFRESH_TOKEN": "fake-rt"}
+
+
+def _iso(ts):
+    import time
+
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ts))
+
+
+def test_client_columns_known_first_then_unknown_in_use():
+    records = {
+        "a": [{"name": "teams", "client_id": profile_tui.clients_mod.TEAMS_WEB_CLIENT_ID}],
+        "b": [{"name": "abcdef12-3456", "client_id": "abcdef12-3456-7890-abcd-ef1234567890"}],
+    }
+    cols = profile_tui._client_columns(records)
+    assert [label for label, _ in cols][:7] == [
+        "owa",
+        "teams",
+        "ado",
+        "halo",
+        "swodp",
+        "kova",
+        "pim",
+    ]
+    assert cols[7] == ("abcdef", "abcdef12-3456-7890-abcd-ef1234567890")
+
+
+def test_client_cell_states():
+    cell = profile_tui._client_cell
+    teams = profile_tui.clients_mod.TEAMS_WEB_CLIENT_ID
+    fresh = {
+        "name": "teams",
+        "client_id": teams,
+        "refresh_token": "t",
+        "rt_issued_at": _iso(_NOW - 60),
+    }
+    stale = {**fresh, "rt_issued_at": _iso(_NOW - 2 * 86400)}
+    assert cell(None, None, _AAD, _NOW)[:2] == ("●", profile_tui.GREEN)
+    assert cell(teams, None, _AAD, _NOW)[0] == "·"
+    assert cell(teams, fresh, _AAD, _NOW)[:2] == ("●", profile_tui.GREEN)
+    assert cell(teams, stale, _AAD, _NOW)[:2] == ("●", profile_tui.YELLOW)
+    assert cell(teams, {**fresh, "enabled": False}, _AAD, _NOW)[0] == "○"
+    assert cell(teams, {"name": "teams", "client_id": teams}, _AAD, _NOW)[1] == profile_tui.YELLOW
+    assert cell("swodp", {"name": "swodp"}, _AAD, _NOW)[:2] == ("●", profile_tui.GREEN)
+    assert cell("kova", {"name": "kova"}, _AAD, _NOW)[1] == profile_tui.YELLOW
+    # Halo's token has no 24h SPA cap: an old stamp is still healthy.
+    halo = {"name": "halo", "refresh_token": "h", "rt_issued_at": _iso(_NOW - 9 * 86400)}
+    assert cell("halo", halo, _AAD, _NOW)[1] == profile_tui.GREEN
+    assert cell(teams, fresh, {"OWA_PROVIDER": "google"}, _NOW)[0] == " "
+
+
+def test_cells_row_aligns_glyphs_under_labels():
+    cols = [("owa", None), ("teams", "t")]
+    row = profile_tui._cells_row(cols, [], _AAD, _NOW)
+    plain = (
+        row.replace(profile_tui.GREEN, "")
+        .replace(profile_tui.DIM, "")
+        .replace(profile_tui.RESET, "")
+    )
+    assert plain == "●   ·    "
+    assert len(plain) == len(profile_tui._cells_header(cols))
+    assert profile_tui.REVERSE in profile_tui._cells_row(cols, [], _AAD, _NOW, selected=1)
+
+
+def _client_profile(tmp_path, monkeypatch):
+    from owa_piggy import config as config_mod
+
+    monkeypatch.setattr(config_mod, "ROOT_DIR", tmp_path)
+    teams = profile_tui.clients_mod.TEAMS_WEB_CLIENT_ID
+    write_doc(
+        config_mod.profile_config_path("work"),
+        _AAD,
+        [
+            {
+                "name": "teams",
+                "client_id": teams,
+                "enabled": True,
+                "refresh_token": "t",
+                "capture_url": "https://teams.microsoft.com/",
+            }
+        ],
+    )
+    record = profile_tui.clients_mod.load_records("work")[0]
+    state = type("S", (), {"cooked_action": staticmethod(lambda fn: fn())})()
+    return teams, record, state
+
+
+def test_client_toggle_round_trip_keeps_token(tmp_path, monkeypatch):
+    teams, record, _ = _client_profile(tmp_path, monkeypatch)
+    msg = profile_tui._client_toggle("work", "teams", teams, record)
+    assert "disabled" in msg and "owa-teams" in msg
+    record = profile_tui.clients_mod.load_records("work")[0]
+    assert record["enabled"] is False and record["refresh_token"] == "t"
+    assert "enabled" in profile_tui._client_toggle("work", "teams", teams, record)
+    assert "profile's own token" in profile_tui._client_toggle("work", "owa", None, None)
+    assert "a adds" in profile_tui._client_toggle("work", "ado", "x", None)
+
+
+def test_client_remove_needs_confirmation(tmp_path, monkeypatch):
+    teams, record, state = _client_profile(tmp_path, monkeypatch)
+    monkeypatch.setattr("builtins.input", lambda _p: "n")
+    assert "cancelled" in profile_tui._client_remove(state, "work", "teams", teams, record)
+    monkeypatch.setattr("builtins.input", lambda _p: "y")
+    assert "removed" in profile_tui._client_remove(state, "work", "teams", teams, record)
+    assert profile_tui.clients_mod.load_records("work") == []
+
+
+def test_client_add_asks_for_org_url_with_suggestion(tmp_path, monkeypatch):
+    from owa_piggy import cli
+
+    _client_profile(tmp_path, monkeypatch)
+    seen = {}
+    monkeypatch.setattr(cli, "add_client", lambda alias, key, url: seen.update(url=url) or 0)
+    monkeypatch.setattr("builtins.input", lambda _p: "")
+    others = {"other": [{"name": "halo", "capture_url": "https://acme.haloitsm.com"}], "work": []}
+    state = type("S", (), {"cooked_action": staticmethod(lambda fn: fn())})()
+    msg = profile_tui._client_add(state, "work", "halo", "halo", None, others)
+    assert "added" in msg and seen["url"] == "https://acme.haloitsm.com"
+
+
+def test_client_edit_and_capture(tmp_path, monkeypatch):
+    from owa_piggy import capture
+
+    teams, record, state = _client_profile(tmp_path, monkeypatch)
+    calls = []
+    monkeypatch.setattr(
+        capture, "capture_bound_clients", lambda a, only: calls.append(only) or (1, [])
+    )
+    answers = iter(["https://teams.cloud.microsoft/", "y"])
+    monkeypatch.setattr("builtins.input", lambda _p: next(answers))
+    assert "captured" in profile_tui._client_edit(state, "work", "teams", teams, record)
+    assert (
+        profile_tui.clients_mod.load_records("work")[0]["capture_url"]
+        == "https://teams.cloud.microsoft"
+    )
+    monkeypatch.setattr("builtins.input", lambda _p: "")
+    assert "captured" in profile_tui._client_capture(state, "work", "teams", teams, record)
+    assert calls == [[teams], [teams]]
+    assert "declared only" in profile_tui._client_capture(
+        state, "work", "swodp", "swodp", {"name": "swodp"}
+    )

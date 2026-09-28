@@ -26,6 +26,12 @@ Releases before v0.12.0 are recorded only in the annotated git tags
 
 ### Added
 
+- Dashboard service columns: one column per client/service (owa, teams,
+  ado, halo, swodp, kova, pim, plus any other client a profile holds) with
+  its state per profile. `←`/`→` moves a cell cursor onto a service, where
+  `space` enables/disables, `a` adds (asks for the org URL when needed,
+  prefilled from another profile), `e` edits the URL, `d` removes and `r`
+  captures just that service.
 - `owa-piggy clients enable|disable <name>`: a disabled client keeps its token
   but is not minted with, not captured on reseed, and not a service.
   `clients` / `clients --json` and `debug` show it; `profiles --json` rows
