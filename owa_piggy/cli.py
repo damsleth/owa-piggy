@@ -1143,6 +1143,67 @@ def _cmd_version(args: argparse.Namespace) -> int:
     return 0
 
 
+def add_client(alias: str, client_id: str, url: str | None, *, browser: bool = False) -> int:
+    """Declare `client_id` on `alias` and sign in to it through the sidecar.
+
+    Shared by `clients add` and the dashboard's add/edit keys so the two
+    can't drift. Re-enables a client the user disabled earlier.
+    """
+    if client_id == clients.PIM_CLIENT_ID:
+        if browser:
+            from .pim_browser import sign_in
+        else:
+            from .pim_setup import sign_in
+
+        config, _ = load_config(profile_config_path(alias))
+        return sign_in(alias, config)
+    if browser:
+        print("ERROR: --browser applies only to clients add pim", file=sys.stderr)
+        return 1
+    if client_id in clients.DECLARED_SERVICES:
+        clients.declare_service(alias, client_id)
+        clients.set_client_enabled(alias, client_id, True)
+        print(f"[{alias}] {client_id}: declared", file=sys.stderr)
+        return 0
+    entry, derr = clients.declare_client(alias, client_id, capture_url=url)
+    if derr or entry is None:
+        print(f"ERROR: {derr}", file=sys.stderr)
+        return 1
+    # Adding a service the user disabled earlier means they want it back.
+    clients.set_client_enabled(alias, client_id, True)
+    name = clients.client_name(client_id)
+    print(f"[{alias}] {name}: {entry.get('capture_url')}", file=sys.stderr)
+    print(f"[{alias}] signing in to {name}...", file=sys.stderr)
+    from . import capture
+
+    ok, failed = capture.capture_bound_clients(alias, only=[client_id])
+    if not ok and client_id in clients.SESSION_SERVICES and sys.stdin.isatty():
+        # Nothing to capture silently yet: sign in once in a visible
+        # window, under CDP so the session cookies get pinned.
+        print(
+            f"[{alias}] opening Edge - sign in to {name}; it closes when done...",
+            file=sys.stderr,
+        )
+        status, _ = capture.capture_session(alias, str(entry.get("capture_url")), visible=True)
+        if status == "ok":
+            clients.save_client(
+                alias, client_id, refresh_token="", capture_url=entry.get("capture_url")
+            )
+            print(f"[{alias}] {name}: signed in", file=sys.stderr)
+            return 0
+    if not ok:
+        # The declaration stays: the sign-in is retried by the next
+        # reseed, and the user may just need to authenticate once in
+        # the sidecar (capture_bound_clients prints how).
+        print(
+            f"ERROR: [{alias}] could not capture {name} yet; "
+            f"it stays on the profile and reseed will retry.",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
 def _cmd_clients(args: argparse.Namespace) -> int:
     """`clients` - show or change the other services a profile signs in to.
 
@@ -1159,59 +1220,7 @@ def _cmd_clients(args: argparse.Namespace) -> int:
         if err or client_id is None:
             print(f"ERROR: {err}", file=sys.stderr)
             return 1
-        if client_id == clients.PIM_CLIENT_ID:
-            if getattr(args, "browser", False):
-                from .pim_browser import sign_in
-            else:
-                from .pim_setup import sign_in
-
-            config, _ = load_config()
-            return sign_in(alias, config)
-        if getattr(args, "browser", False):
-            print("ERROR: --browser applies only to clients add pim", file=sys.stderr)
-            return 1
-        if client_id in clients.DECLARED_SERVICES:
-            clients.declare_service(alias, client_id)
-            clients.set_client_enabled(alias, client_id, True)
-            print(f"[{alias}] {client_id}: declared", file=sys.stderr)
-            return 0
-        entry, derr = clients.declare_client(alias, client_id, capture_url=url)
-        if derr or entry is None:
-            print(f"ERROR: {derr}", file=sys.stderr)
-            return 1
-        # Adding a service the user disabled earlier means they want it back.
-        clients.set_client_enabled(alias, client_id, True)
-        name = clients.client_name(client_id)
-        print(f"[{alias}] {name}: {entry.get('capture_url')}", file=sys.stderr)
-        print(f"[{alias}] signing in to {name}...", file=sys.stderr)
-        from . import capture
-
-        ok, failed = capture.capture_bound_clients(alias, only=[client_id])
-        if not ok and client_id in clients.SESSION_SERVICES and sys.stdin.isatty():
-            # Nothing to capture silently yet: sign in once in a visible
-            # window, under CDP so the session cookies get pinned.
-            print(
-                f"[{alias}] opening Edge - sign in to {name}; it closes when done...",
-                file=sys.stderr,
-            )
-            status, _ = capture.capture_session(alias, str(entry.get("capture_url")), visible=True)
-            if status == "ok":
-                clients.save_client(
-                    alias, client_id, refresh_token="", capture_url=entry.get("capture_url")
-                )
-                print(f"[{alias}] {name}: signed in", file=sys.stderr)
-                return 0
-        if not ok:
-            # The declaration stays: the sign-in is retried by the next
-            # reseed, and the user may just need to authenticate once in
-            # the sidecar (capture_bound_clients prints how).
-            print(
-                f"ERROR: [{alias}] could not capture {name} yet; "
-                f"it stays on the profile and reseed will retry.",
-                file=sys.stderr,
-            )
-            return 1
-        return 0
+        return add_client(alias, client_id, url, browser=getattr(args, "browser", False))
 
     if sub in ("enable", "disable"):
         client_id = clients.client_id_for_name(args.name) or args.name
