@@ -1476,6 +1476,165 @@ def capture_halo(
         _terminate(proc)
 
 
+def _document_hosts(session: CdpSession) -> set[str]:
+    """Hosts of every top-level document this session has loaded so far.
+
+    Drains the Network.requestWillBeSent events CdpSession buffered while
+    we polled, so it has to run after Network.enable and before anything
+    else consumes the buffer."""
+    hosts: set[str] = set()
+    while True:
+        try:
+            params = session.wait_event(
+                "Network.requestWillBeSent",
+                lambda p: p.get("type") == "Document",
+                timeout=0.05,
+            )
+        except TimeoutError:
+            return hosts
+        hosts.add(urllib.parse.urlsplit(params.get("request", {}).get("url", "")).netloc)
+
+
+def _pin_session_cookies(session: CdpSession, hosts: set[str], days: int = 14) -> int:
+    """Give the session cookies of `hosts` an expiry, so they outlive Edge.
+
+    Okta (and the apps behind it) issue their sign-in cookies without an
+    expiry - "Keep me signed in" only skips MFA - and Chromium drops those
+    on every browser exit, even with session restore on (tested 2026-09-28).
+    A sidecar exits after every capture, so without this every capture
+    would start signed out. Re-setting the same cookie with `expires` makes
+    Chromium store it; the server's own session lifetime still applies,
+    and each capture re-pins whatever the server rotated.
+    """
+    pinned = 0
+    for c in session.call("Network.getAllCookies", {}).get("cookies", []):
+        domain = c.get("domain", "")
+        bare = domain.lstrip(".")
+        if not c.get("session") or not any(h == bare or h.endswith("." + bare) for h in hosts):
+            continue
+        cookie = {k: c[k] for k in ("name", "value", "path", "secure", "httpOnly") if k in c}
+        if c.get("sameSite"):
+            cookie["sameSite"] = c["sameSite"]
+        if domain.startswith("."):
+            cookie["domain"] = domain
+        else:
+            # Host-only cookie: setting it by URL keeps it host-only.
+            cookie["url"] = f"https://{domain}{c.get('path', '/')}"
+        cookie["expires"] = time.time() + days * 86400
+        if session.call("Network.setCookie", cookie).get("success"):
+            pinned += 1
+    return pinned
+
+
+def _close_cleanly(port: int, proc: subprocess.Popen[bytes], log: Callable[[str], None]) -> None:
+    """Ask Edge to quit over CDP and wait for it, so the cookie store is
+    flushed to disk. Chromium writes cookies lazily; a pinned cookie set
+    moments before a SIGTERM was lost that way on the first try."""
+    try:
+        browser = CdpSession(port, browser_ws(port, timeout=5.0))
+        with contextlib.suppress(CdpError, ConnectionError, OSError):
+            browser.call("Browser.close", {})
+        proc.wait(timeout=15)
+    except (CdpError, ConnectionError, OSError, TimeoutError, subprocess.TimeoutExpired) as e:
+        log(f"clean close failed ({e}); pinned cookies may not be on disk")
+
+
+def capture_session(
+    alias: str,
+    capture_url: str,
+    *,
+    headless: bool | None = None,
+    visible: bool = False,
+    timeout: float | None = None,
+) -> tuple[str, dict[str, str] | None]:
+    """Keep a cookie-session service (clients.SESSION_SERVICES) signed in.
+
+    Navigates the sidecar to `capture_url` and waits for the page to come to
+    rest on that host - through whatever SSO hops the app makes (Kova:
+    kova.no -> okta.redcross.no -> kova.no). Resting anywhere else is a
+    sign-in page: 'reauth'. On success the session cookies of every host the
+    chain touched are pinned (_pin_session_cookies) and Edge is closed
+    cleanly so they reach disk.
+
+    `visible=True` is the one-time interactive sign-in (`clients add` on a
+    TTY): a real window, up to five minutes for the user to get through the
+    IdP. It is also the only way in when the IdP's page will not render
+    headless (Okta's widget is blank under --headless=new).
+
+    Returns ('ok', {}), ('reauth', None) or ('error', None).
+    """
+    log = _logger(f"capture/session/{alias}")
+    host = urllib.parse.urlsplit(capture_url).netloc
+    edge_dir = _config.profile_edge_dir(alias)
+    if not host or not edge_dir.is_dir():
+        return "reauth", None
+    if timeout is None:
+        timeout = 300.0 if visible else 30.0
+    if visible:
+        headless = False
+    elif headless is None:
+        headless = _capture_headless_default()
+    port = find_free_port()
+    try:
+        proc = launch_edge(
+            edge_dir, port, headless=headless, url=capture_url, offscreen=not visible
+        )
+    except RuntimeError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return "error", None
+    session = None
+    try:
+        if headless or visible:
+            session = _open_session(port)
+        else:
+            session = _open_parked_session(port, log)
+            _park_window(session, log)
+        session.call("Network.enable", {})
+        session.call("Page.navigate", {"url": capture_url})
+        start = time.monotonic()
+        on_host_since = None
+        elsewhere_since = None
+        while time.monotonic() - start < timeout:
+            time.sleep(0.5)
+            here = (
+                session.call(
+                    "Runtime.evaluate", {"expression": "location.host", "returnByValue": True}
+                )
+                .get("result", {})
+                .get("value")
+                or ""
+            )
+            now = time.monotonic()
+            if here == host:
+                elsewhere_since = None
+                on_host_since = on_host_since or now
+                # Two seconds at rest: past the SSO callback's own redirect.
+                if now - on_host_since >= 2.0:
+                    break
+                continue
+            on_host_since = None
+            elsewhere_since = elsewhere_since or now
+            if not visible and here and now - elsewhere_since > 8.0:
+                log(f"parked on {here} (sign-in required)")
+                return "reauth", None
+        else:
+            log(f"never settled on {host} within {timeout:.0f}s")
+            return "reauth" if visible else "error", None
+        pinned = _pin_session_cookies(session, _document_hosts(session) | {host})
+        log(f"signed in on {host}; pinned {pinned} session cookies")
+        session.close()
+        session = None
+        _close_cleanly(port, proc, log)
+        return "ok", {}
+    except (ConnectionError, CdpError, OSError, TimeoutError) as e:
+        log(f"CDP failure: {e}")
+        return "error", None
+    finally:
+        if session is not None:
+            session.close()
+        _terminate(proc)
+
+
 def capture_bound_clients(
     alias: str,
     *,
@@ -1520,6 +1679,8 @@ def capture_bound_clients(
         ) -> tuple[str, dict[str, str] | None]:
             if _client_id == clients_mod.HALO_KEY:
                 return capture_halo(alias, _url, headless=headless)
+            if _client_id in clients_mod.SESSION_SERVICES:
+                return capture_session(alias, _url, headless=headless)
             return capture_silent(
                 alias,
                 headless=headless,
@@ -1535,6 +1696,13 @@ def capture_bound_clients(
             # attempt more often than not.
             status, captured = attempt()
         rt = (captured or {}).get("OWA_REFRESH_TOKEN", "")
+        if status == "ok" and client_id in clients_mod.SESSION_SERVICES:
+            # Nothing to store but the fact: rt_issued_at stamps the last
+            # capture that found the sidecar signed in.
+            clients_mod.save_client(alias, client_id, refresh_token="", capture_url=capture_url)
+            ok += 1
+            print(f"[{alias}] client {name}: session renewed", file=sys.stderr)
+            continue
         if status != "ok" or not rt:
             failed.append(name)
             print(
@@ -1547,11 +1715,15 @@ def capture_bound_clients(
                 # after a client-bound profile was folded in, since the
                 # cookies for its site live in the old profile's Edge dir.
                 # One interactive visit fixes every later rotation.
-                print(
-                    f"[{alias}]   sign in once so reseed can rotate it: "
-                    f"owa-piggy edge --profile {alias}  ->  {capture_url}",
-                    file=sys.stderr,
+                # A session service needs the sign-in to happen under
+                # CDP so its cookies get pinned; a plain `edge` window
+                # would lose them the moment it closes.
+                how = (
+                    f"owa-piggy clients add {name} --profile {alias}"
+                    if client_id in clients_mod.SESSION_SERVICES
+                    else f"owa-piggy edge --profile {alias}  ->  {capture_url}"
                 )
+                print(f"[{alias}]   sign in once so reseed can rotate it: {how}", file=sys.stderr)
             continue
         clients_mod.save_client(
             alias, client_id, refresh_token=rt, origin=entry.get("origin"), capture_url=capture_url
