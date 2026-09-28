@@ -534,3 +534,25 @@ def test_merge_edit_applies_only_what_the_user_changed():
         {"name": "teams", "refresh_token": "t2"},
         {"name": "swodp", "enabled": True},
     ]
+
+
+@pytest.mark.parametrize(
+    ("data", "msg"),
+    [
+        ([], "top level must be an object"),
+        ({"settings": {"OWA_X": 1}}, '"settings" must map strings to strings'),
+        ({"clients": [{"enabled": True}]}, '"clients" must be a list of objects with a "name"'),
+    ],
+)
+def test_validate_doc_rejects_malformed_documents(data, msg):
+    with pytest.raises(config_mod.ConfigCorruptError, match=msg):
+        config_mod.validate_doc(data)
+
+
+def test_read_doc_strict_raises_on_invalid_document(tmp_config, clean_env):
+    """Valid JSON that is not a v2 document is corrupt too, and the error
+    names the file so a hand edit is easy to find."""
+    tmp_config.parent.mkdir(parents=True, exist_ok=True)
+    tmp_config.write_text('{"settings": []}')
+    with pytest.raises(config_mod.ConfigCorruptError, match="must map strings"):
+        config_mod.read_doc(tmp_config, strict=True)
