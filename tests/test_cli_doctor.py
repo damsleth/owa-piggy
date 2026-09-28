@@ -7,6 +7,8 @@ import stat
 import subprocess
 import sys
 
+from tests.conftest import read_settings, write_doc  # noqa: F401
+
 
 def _run(*args):
     return subprocess.run(
@@ -61,8 +63,7 @@ def test_doctor_fix_repairs_known_permissions(tmp_config, clean_env):
     from owa_piggy.doctor import run_doctor
 
     profile_dir("work").mkdir(parents=True)
-    cfg = profile_dir("work") / "config"
-    cfg.write_text("OWA_REFRESH_TOKEN=x\n")
+    cfg = write_doc(profile_dir("work") / "config.json", {"OWA_REFRESH_TOKEN": "x"})
     profile_dir("work").chmod(0o755)
     cfg.chmod(0o644)
 
