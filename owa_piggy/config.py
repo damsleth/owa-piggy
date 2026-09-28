@@ -667,9 +667,11 @@ def read_doc(path: Path | None = None, *, strict: bool = False) -> dict[str, Any
     # migrate: a read of a profile that doesn't exist must not create it.
     if not cfg_path.exists() and legacy_present:
         with _locked(cfg_path):
-            if not cfg_path.exists():
+            # Both re-checks only differ from the outer test when another
+            # process migrated first while we waited on the lock.
+            if not cfg_path.exists():  # pragma: no branch
                 legacy = _legacy_doc(cfg_path.parent)
-                if legacy is not None:
+                if legacy is not None:  # pragma: no branch
                     atomic_write(cfg_path, json.dumps(legacy, indent=2) + "\n")
                     for name in (LEGACY_CONFIG_FILENAME, LEGACY_CLIENTS_FILENAME):
                         old = cfg_path.parent / name
