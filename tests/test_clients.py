@@ -19,9 +19,15 @@ def profile(tmp_path, monkeypatch):
 
     root = tmp_path / "owa-piggy"
     monkeypatch.setattr(config_mod, "ROOT_DIR", root)
-    monkeypatch.setattr(config_mod, "CONFIG_PATH", root / "profiles" / "work" / "config")
+    monkeypatch.setattr(config_mod, "CONFIG_PATH", root / "profiles" / "work" / "config.json")
     (root / "profiles" / "work").mkdir(parents=True)
     return "work"
+
+
+def _cfg(alias):
+    from owa_piggy.config import profile_config_path
+
+    return profile_config_path(alias)
 
 
 # --- store ------------------------------------------------------------
@@ -45,7 +51,7 @@ def test_save_and_load_round_trip(profile):
 
 def test_store_is_owner_only(profile):
     clients.save_client(profile, TEAMS, refresh_token="rt-1")
-    mode = clients.clients_path(profile).stat().st_mode & 0o777
+    mode = _cfg(profile).stat().st_mode & 0o777
     assert mode == 0o600
 
 
@@ -64,7 +70,7 @@ def test_saving_one_client_preserves_the_others(profile):
 
 
 def test_corrupt_store_degrades_to_empty(profile):
-    clients.clients_path(profile).write_text("{not json")
+    _cfg(profile).write_text("{not json")
     assert clients.load_clients(profile) == {}
 
 
@@ -206,8 +212,35 @@ def test_overlay_swaps_client_token_and_origin_without_mutating_config(profile):
 
 def test_store_is_valid_json_on_disk(profile):
     clients.save_client(profile, TEAMS, refresh_token="rt-1")
-    data = json.loads(clients.clients_path(profile).read_text())
-    assert list(data) == [TEAMS]
+    data = json.loads(_cfg(profile).read_text())
+    assert [(c["name"], c["client_id"], c["enabled"]) for c in data["clients"]] == [
+        ("teams", TEAMS, True)
+    ]
+
+
+def test_clients_share_the_profile_settings_file(profile):
+    from owa_piggy.config import load_config, save_config
+
+    save_config({"OWA_REFRESH_TOKEN": "fake-foci"}, _cfg(profile))
+    clients.save_client(profile, TEAMS, refresh_token="rt-1")
+    save_config({"OWA_TENANT_ID": "t"}, _cfg(profile))
+    assert load_config(_cfg(profile))[0] == {"OWA_REFRESH_TOKEN": "fake-foci", "OWA_TENANT_ID": "t"}
+    assert clients.load_clients(profile)[TEAMS]["refresh_token"] == "rt-1"
+
+
+def test_disabled_client_keeps_its_token_but_stops_routing(profile):
+    clients.save_client(profile, TEAMS, refresh_token="rt-1")
+    assert clients.set_client_enabled(profile, TEAMS, False) is True
+    assert clients.load_clients(profile) == {}
+    assert clients.load_clients(profile, include_disabled=True)[TEAMS]["refresh_token"] == "rt-1"
+    assert clients.select_for_scope(profile, "https://teams.microsoft.com/.default") == (None, None)
+    assert clients.capture_targets(profile) == []
+    # Rotation while disabled must not flip it back on.
+    clients.save_client(profile, TEAMS, refresh_token="rt-2")
+    assert clients.load_records(profile)[0]["enabled"] is False
+    assert clients.set_client_enabled(profile, TEAMS, True) is True
+    assert clients.load_clients(profile)[TEAMS]["refresh_token"] == "rt-2"
+    assert clients.set_client_enabled(profile, "nope", True) is False
 
 
 # --- services -----------------------------------------------------------
@@ -223,9 +256,18 @@ def test_services_derive_from_held_credentials(profile):
     assert clients.profile_services(profile, {}) == ["owa", "ado"]
 
 
-def test_explicit_services_are_authoritative(profile):
+def test_declared_and_disabled_services(profile):
+    """A token-less record (swodp) is a service as soon as it is declared;
+    a disabled record is not; teams routes inside owa and is never one."""
+    from owa_piggy.config import update_doc
+
     clients.save_client(profile, DEVOPS_CLIENT_ID, refresh_token="fake-rt-for-tests")
-    assert clients.profile_services(profile, {"OWA_SERVICES": "owa, swodp"}) == ["owa", "swodp"]
+    clients.save_client(profile, TEAMS, refresh_token="fake-rt-for-tests")
+    update_doc(_cfg(profile), lambda d: d["clients"].append({"name": "swodp", "enabled": True}))
+    assert clients.profile_services(profile, {}) == ["owa", "ado", "swodp"]
+    clients.set_client_enabled(profile, DEVOPS_CLIENT_ID, False)
+    assert clients.profile_services(profile, {}) == ["owa", "swodp"]
+    assert clients.capture_targets(profile) == [(TEAMS, clients.load_clients(profile)[TEAMS])]
 
 
 def test_non_aad_profiles_are_their_own_service(profile):

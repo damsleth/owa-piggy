@@ -11,6 +11,7 @@ import pytest
 
 from owa_piggy import config as config_mod
 from owa_piggy.config import load_config, parse_kv_stream, save_config
+from tests.conftest import read_settings, write_doc
 
 
 def test_parse_kv_stream_basic():
@@ -71,10 +72,37 @@ def test_save_and_load_round_trip(tmp_config, clean_env):
     assert persist is True
 
 
-def test_load_config_strips_single_quotes(tmp_config, clean_env):
-    tmp_config.parent.mkdir(parents=True, exist_ok=True)
-    tmp_config.write_text("OWA_REFRESH_TOKEN='fake-rt-for-tests'\nOWA_TENANT_ID='tid-1'\n")
+def test_load_config_migrates_legacy_kv_and_clients(tmp_config, clean_env):
+    """A pre-v2 profile (`config` KV + `clients.json`) becomes one
+    config.json on first read; the old files are kept as .v1.bak."""
+    import json
+
+    d = tmp_config.parent
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "config").write_text(
+        "OWA_REFRESH_TOKEN='fake-rt-for-tests'\nOWA_TENANT_ID='tid-1'\n"
+        'OWA_SERVICES="owa,ado,swodp"\n'
+    )
+    (d / "clients.json").write_text(
+        json.dumps(
+            {
+                "499b84ac-1321-427f-aa17-267ca6975798": {"refresh_token": "ado-rt"},
+                "halo": {"refresh_token": "halo-rt", "capture_url": "https://h.example"},
+            }
+        )
+    )
     cfg, persist = load_config()
+    doc = json.loads(tmp_config.read_text())
+    assert doc["settings"] == {"OWA_REFRESH_TOKEN": "fake-rt-for-tests", "OWA_TENANT_ID": "tid-1"}
+    assert [(c["name"], c.get("client_id"), c["enabled"]) for c in doc["clients"]] == [
+        ("devops", "499b84ac-1321-427f-aa17-267ca6975798", True),
+        ("halo", None, True),
+        ("swodp", None, True),
+    ]
+    assert sorted(p.name for p in d.iterdir() if p.name.endswith(".v1.bak")) == [
+        "clients.json.v1.bak",
+        "config.v1.bak",
+    ]
     assert cfg["OWA_REFRESH_TOKEN"] == "fake-rt-for-tests"
     assert cfg["OWA_TENANT_ID"] == "tid-1"
     assert persist is True
@@ -136,7 +164,7 @@ def test_permission_audit_reports_open_known_paths(tmp_config, clean_env):
 
     profile_dir("work").mkdir(parents=True)
     profile_edge_dir("work").mkdir()
-    (profile_dir("work") / "config").write_text("OWA_REFRESH_TOKEN=x\n")
+    write_doc(profile_dir("work") / "config.json", {"OWA_REFRESH_TOKEN": "x"})
     profile_dir("work").chmod(0o755)
     profile_edge_dir("work").chmod(0o755)
 
@@ -151,8 +179,7 @@ def test_repair_private_permissions_chmods_known_paths(tmp_config, clean_env):
     from owa_piggy.config import profile_dir, repair_private_permissions
 
     profile_dir("work").mkdir(parents=True)
-    cfg = profile_dir("work") / "config"
-    cfg.write_text("OWA_REFRESH_TOKEN=x\n")
+    cfg = write_doc(profile_dir("work") / "config.json", {"OWA_REFRESH_TOKEN": "x"})
     profile_dir("work").chmod(0o755)
     cfg.chmod(0o644)
 
@@ -166,8 +193,8 @@ def test_repair_private_permissions_chmods_known_paths(tmp_config, clean_env):
 def test_save_atomic_no_stray_tmpfile(tmp_config, clean_env):
     save_config({"OWA_REFRESH_TOKEN": "x", "OWA_TENANT_ID": "y"})
     siblings = list(tmp_config.parent.iterdir())
-    # Only the final config file; no leftover `.config.*.tmp` shrapnel.
-    assert [p.name for p in siblings] == [tmp_config.name]
+    # Only the final config file (+ its lock); no `.config.json.*.tmp` shrapnel.
+    assert sorted(p.name for p in siblings) == [".config.lock", tmp_config.name]
 
 
 def test_iso_utc_now_format():
@@ -292,10 +319,11 @@ def test_save_after_load_keeps_env_overrides_out_of_the_file(tmp_config, monkeyp
     cfg, _ = load_config()
     cfg["OWA_REAUTH_FAILS"] = "1"
     save_config(cfg)
-    text = tmp_config.read_text()
-    assert "1.FAKE-rt-file" in text and "file-client" in text
-    assert "env" not in text
-    assert 'OWA_REAUTH_FAILS="1"' in text
+    saved = read_settings(tmp_config)
+    assert saved["OWA_REFRESH_TOKEN"] == "1.FAKE-rt-file"
+    assert saved["OWA_CLIENT_ID"] == "file-client"
+    assert "env" not in tmp_config.read_text()
+    assert saved["OWA_REAUTH_FAILS"] == "1"
 
     cfg, _ = load_config()
     cfg["OWA_REFRESH_TOKEN"] = "1.FAKE-rt-captured"
@@ -308,7 +336,7 @@ def test_save_config_plain_dict_persists_env_matching_values(tmp_config, monkeyp
     # happens to equal an exported override is still the profile's own.
     monkeypatch.setenv("OWA_CLIENT_ID", "env-client")
     save_config({"OWA_REFRESH_TOKEN": "1.FAKE-rt", "OWA_CLIENT_ID": "env-client"})
-    assert 'OWA_CLIENT_ID="env-client"' in tmp_config.read_text()
+    assert read_settings(tmp_config)["OWA_CLIENT_ID"] == "env-client"
 
 
 def test_load_config_both_set_env_wins_no_persist(tmp_config, monkeypatch, clean_env):
@@ -353,25 +381,58 @@ def test_parse_kv_stream_keeps_only_known_nonempty():
 # --- save_config preserves comments / unknown lines --------------------
 
 
-def test_save_config_preserves_comments_and_unknown_lines(tmp_config, clean_env):
-    """Rewriting one known key must leave comments and unrecognized lines
-    intact, and update the known key in place (covers the line-preserve
-    branch)."""
-    tmp_config.parent.mkdir(parents=True, exist_ok=True)
-    tmp_config.write_text('# a hand-written comment\nFOO=bar\nOWA_TENANT_ID="old-tenant"\n')
+def test_save_config_keeps_other_settings_and_clients(tmp_config, clean_env):
+    """Rewriting one key leaves the other settings and the clients array
+    alone: save_config merges, it never replaces the document."""
+    clients = [{"name": "teams", "enabled": True, "refresh_token": "t"}]
+    write_doc(tmp_config, {"FOO": "bar", "OWA_TENANT_ID": "old-tenant"}, clients)
     save_config({"OWA_TENANT_ID": "fake-tenant"})
-    text = tmp_config.read_text()
-    assert "# a hand-written comment" in text
-    assert "FOO=bar" in text
-    assert 'OWA_TENANT_ID="fake-tenant"' in text
-    assert "old-tenant" not in text
+    import json
+
+    doc = json.loads(tmp_config.read_text())
+    assert doc["settings"] == {"FOO": "bar", "OWA_TENANT_ID": "fake-tenant"}
+    assert doc["clients"] == clients
+
+
+def test_corrupt_config_blocks_writes_and_reads_degrade(tmp_config, clean_env, capsys):
+    """A hand-edit typo must never be saved over (that would drop every
+    token); readers see an unconfigured profile and a warning."""
+    tmp_config.parent.mkdir(parents=True, exist_ok=True)
+    tmp_config.write_text('{"settings": {"OWA_REFRESH_TOKEN": "keep-me"},')
+    cfg, _ = load_config()
+    assert cfg == {}
+    assert "unreadable profile config" in capsys.readouterr().err
+    with pytest.raises(config_mod.ConfigCorruptError):
+        save_config({"OWA_TENANT_ID": "t"})
+    assert "keep-me" in tmp_config.read_text()
+
+
+def test_validate_doc_rejects_duplicate_client_names():
+    with pytest.raises(config_mod.ConfigCorruptError, match="duplicate"):
+        config_mod.validate_doc({"clients": [{"name": "teams"}, {"name": "teams"}]})
+
+
+def test_concurrent_writers_do_not_drop_each_other(tmp_config, clean_env):
+    """The race the v1 two-file layout had: parallel rotations of different
+    keys through the locked read-modify-write all survive."""
+    import threading
+
+    save_config({"OWA_TENANT_ID": "t"})
+    threads = [
+        threading.Thread(target=save_config, args=({f"OWA_K{i}": str(i)},)) for i in range(20)
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    saved = read_settings(tmp_config)
+    assert all(saved[f"OWA_K{i}"] == str(i) for i in range(20))
 
 
 def test_save_config_appends_new_keys(tmp_config, clean_env):
     """A key not already present in the file is appended (covers the
     new-key-append branch)."""
-    tmp_config.parent.mkdir(parents=True, exist_ok=True)
-    tmp_config.write_text('OWA_TENANT_ID="fake-tenant"\n')
+    write_doc(tmp_config, {"OWA_TENANT_ID": "fake-tenant"})
     save_config({"OWA_TENANT_ID": "fake-tenant", "OWA_REFRESH_TOKEN": "1.FAKE-rt"})
     cfg, _ = load_config()
     assert cfg["OWA_TENANT_ID"] == "fake-tenant"
@@ -440,8 +501,7 @@ def test_repair_private_permissions_skips_correct_mode(tmp_config, clean_env):
     from owa_piggy.config import profile_dir, repair_private_permissions
 
     profile_dir("work").mkdir(parents=True)
-    cfg = profile_dir("work") / "config"
-    cfg.write_text("OWA_REFRESH_TOKEN=1.FAKE-rt\n")
+    cfg = write_doc(profile_dir("work") / "config.json", {"OWA_REFRESH_TOKEN": "1.FAKE-rt"})
     # Set everything to its expected private mode up front.
     config_mod.ROOT_DIR.chmod(0o700)
     config_mod.profiles_dir().chmod(0o700)
@@ -451,3 +511,26 @@ def test_repair_private_permissions_skips_correct_mode(tmp_config, clean_env):
     repaired = repair_private_permissions()
     assert all(r["label"] != "profile work config" for r in repaired)
     assert all(r["label"] != "profile work directory" for r in repaired)
+
+
+def test_merge_edit_applies_only_what_the_user_changed():
+    base = {
+        "settings": {"OWA_REFRESH_TOKEN": "rt-1", "OWA_EMAIL": "a@x", "OWA_GONE": "1"},
+        "clients": [{"name": "teams", "refresh_token": "t1"}, {"name": "halo", "enabled": True}],
+    }
+    edited = {
+        "settings": {"OWA_REFRESH_TOKEN": "rt-1", "OWA_EMAIL": "b@x"},
+        "clients": [{"name": "teams", "refresh_token": "t1"}, {"name": "swodp", "enabled": True}],
+    }
+    # While the editor was open, both tokens rotated.
+    live = {
+        "version": 2,
+        "settings": {"OWA_REFRESH_TOKEN": "rt-2", "OWA_EMAIL": "a@x", "OWA_GONE": "1"},
+        "clients": [{"name": "teams", "refresh_token": "t2"}, {"name": "halo", "enabled": True}],
+    }
+    out = config_mod.merge_edit(base, edited, live)
+    assert out["settings"] == {"OWA_REFRESH_TOKEN": "rt-2", "OWA_EMAIL": "b@x"}
+    assert out["clients"] == [
+        {"name": "teams", "refresh_token": "t2"},
+        {"name": "swodp", "enabled": True},
+    ]

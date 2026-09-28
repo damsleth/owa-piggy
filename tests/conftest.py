@@ -60,7 +60,7 @@ def tmp_config(tmp_path, monkeypatch):
     create the single on-disk profile that main() then resolves to.
     """
     fake_root = tmp_path / "owa-piggy"
-    fake_path = fake_root / "profiles" / "default" / "config"
+    fake_path = fake_root / "profiles" / "default" / "config.json"
     from owa_piggy import config as config_mod
 
     monkeypatch.setattr(config_mod, "ROOT_DIR", fake_root)
@@ -97,3 +97,20 @@ def frozen_time(monkeypatch):
 
     monkeypatch.setattr(jwt_mod.time, "time", lambda: fixed)
     return fixed
+
+
+def write_doc(path, settings=None, clients=None):
+    """Write a v2 profile config.json at `path` (fake values only)."""
+    import json
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    doc = {"version": 2, "settings": settings or {}, "clients": clients or []}
+    path.write_text(json.dumps(doc))
+    return path
+
+
+def read_settings(path):
+    """The `settings` map of the config.json at `path`."""
+    import json
+
+    return json.loads(path.read_text())["settings"]

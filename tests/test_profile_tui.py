@@ -10,7 +10,10 @@ delete_profile) are tested end-to-end in test_profile_ops; here we
 stub them so a test never touches profiles.conf or launchd.
 """
 
+from pathlib import Path
+
 from owa_piggy import profile_tui
+from tests.conftest import read_settings, write_doc  # noqa: F401
 
 
 class FakeState:
@@ -294,8 +297,7 @@ def test_toggle_headless_pins_the_opposite_mode(tmp_path, monkeypatch):
     monkeypatch.setattr(config_mod, "ROOT_DIR", tmp_path)
     monkeypatch.delenv("OWA_CAPTURE_HEADLESS", raising=False)
     path = config_mod.profile_config_path("work")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text('OWA_REFRESH_TOKEN="fake-rt-for-tests"\n')
+    write_doc(path, {"OWA_REFRESH_TOKEN": "fake-rt-for-tests"})
 
     msg = profile_tui._action_toggle_headless("work")
     assert "visible" in msg
@@ -314,3 +316,39 @@ def test_toggle_headless_refuses_when_env_overrides(monkeypatch):
     monkeypatch.setenv("OWA_CAPTURE_HEADLESS", "0")
     msg = profile_tui._action_toggle_headless("work")
     assert "environment" in msg
+
+
+def _edit_setup(tmp_path, monkeypatch, rewrite):
+    """Point the dashboard's `c` action at a fake editor that applies
+    `rewrite(text) -> text` to the file it is handed."""
+    from owa_piggy import config as config_mod
+
+    monkeypatch.setattr(config_mod, "ROOT_DIR", tmp_path)
+    path = write_doc(
+        config_mod.profile_config_path("work"),
+        {"OWA_REFRESH_TOKEN": "fake-rt", "OWA_EMAIL": "a@x"},
+    )
+
+    def fake_call(argv):
+        target = Path(argv[1])
+        assert target != path  # never the live file
+        target.write_text(rewrite(target.read_text()))
+        return 0
+
+    monkeypatch.setattr(profile_tui.subprocess, "call", fake_call)
+    state = type("S", (), {"cooked_action": staticmethod(lambda fn: fn())})()
+    return path, state
+
+
+def test_edit_config_merges_a_valid_edit(tmp_path, monkeypatch):
+    path, state = _edit_setup(tmp_path, monkeypatch, lambda t: t.replace("a@x", "b@x"))
+    assert "edited" in profile_tui._action_edit_config(state, "work")
+    assert read_settings(path) == {"OWA_REFRESH_TOKEN": "fake-rt", "OWA_EMAIL": "b@x"}
+    assert not (path.parent / ".config.edit.json").exists()
+
+
+def test_edit_config_discards_invalid_json(tmp_path, monkeypatch):
+    path, state = _edit_setup(tmp_path, monkeypatch, lambda t: t + ",")
+    monkeypatch.setattr("builtins.input", lambda _prompt: "d")
+    assert "discarded" in profile_tui._action_edit_config(state, "work")
+    assert read_settings(path)["OWA_REFRESH_TOKEN"] == "fake-rt"

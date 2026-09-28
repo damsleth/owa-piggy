@@ -35,7 +35,7 @@ _owa_piggy() {
     audiences) compadd -- -h --help ;;
     install-owa-tools) compadd -- -h --help ;;
     version) compadd -- -h --help --json ;;
-    clients) compadd -- -h --help --profile --json add remove ;;
+    clients) compadd -- -h --help --profile --json add enable disable remove ;;
     profiles) compadd -- -h --help --json list set-default new delete schedule unschedule ;;
   esac
 }

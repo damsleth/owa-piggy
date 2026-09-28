@@ -547,16 +547,19 @@ def do_debug(
         )
     # The profile's other sign-ins: one identity, several SPAs, each with
     # its own client-bound refresh token.
-    bound = clients.load_clients(alias)
-    if bound:
-        for client_id, entry in bound.items():
-            name = clients.client_name(client_id)
-            has_rt = bool((entry or {}).get("refresh_token"))
-            issued = (entry or {}).get("rt_issued_at", "") or "unknown"
+    for record in clients.load_records(alias):
+        name = record["name"]
+        has_rt = bool(record.get("refresh_token"))
+        issued = record.get("rt_issued_at", "") or "unknown"
+        if record.get("enabled", True) is False:
+            row("..", f"client:{name}", "disabled")
+        elif clients.record_key(record) in clients.DECLARED_SERVICES:
+            row("ok", f"client:{name}", "declared (nothing to capture)")
+        else:
             row(
                 "ok" if has_rt else "no",
                 f"client:{name}",
-                f"{entry.get('capture_url', '?')} - "
+                f"{record.get('capture_url', '?')} - "
                 + (f"RT from {issued}" if has_rt else "declared, not captured yet"),
             )
 
