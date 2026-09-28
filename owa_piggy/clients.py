@@ -13,42 +13,42 @@ that owns the SPA:
   client cannot cross at all.
 
 Both are the same problem: the audience is reachable, the *client* is not.
-So a profile keeps its FOCI token in `config` (`OWA_REFRESH_TOKEN`) and any
-additional client-bound refresh tokens in a sibling `clients.json`, all
-captured through the one Edge sidecar session that profile already owns.
-`select_for_scope` then routes each audience to the client that can serve
-it, preferring a bound client when the profile has one.
+So a profile keeps its FOCI token in `settings.OWA_REFRESH_TOKEN` and any
+additional client-bound refresh tokens in the `clients` array of the same
+`config.json` (see config.py), all captured through the one Edge sidecar
+session that profile already owns. `select_for_scope` then routes each
+audience to the client that can serve it, preferring a bound client when
+the profile has one.
 
-Storage (mode 0600, atomically written, same as the config):
+Each record:
 
-    profiles/<alias>/clients.json
-    {
-      "<client id>": {
-        "refresh_token": "...",
-        "origin": "https://teams.microsoft.com",
-        "capture_url": "https://teams.microsoft.com/",
-        "rt_issued_at": "2026-08-25T17:16:35Z"
-      }
-    }
+    {"name": "teams", "client_id": "5e3ce6c0-...", "enabled": true,
+     "refresh_token": "...", "origin": "https://teams.microsoft.com",
+     "capture_url": "https://teams.microsoft.com/",
+     "rt_issued_at": "2026-08-25T17:16:35Z"}
+
+Non-AAD services (halo, kova) and declared-only services (swodp) have no
+`client_id`; their `name` is the key. In code, clients are addressed by that
+key (client id, else name), so `load_clients` still returns
+`{key: entry}` with the record's own fields. `enabled: false` keeps the
+record and its token but takes it out of routing, reseed and `services`.
 """
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable
-from pathlib import Path
+from typing import Any
 
 from .config import (
     DEVOPS_CLIENT_ID,
-    atomic_write,
     classify_profile_type,
     iso_utc_now,
-    profile_dir,
+    profile_config_path,
+    read_doc,
+    update_doc,
 )
 from .oauth import PIM_CLIENT_ID
 from .scopes import PIM_PERMISSION
-
-CLIENTS_FILENAME = "clients.json"
 
 # clients.json key for the HaloITSM service. Not an AAD client id: Halo's own
 # identity server mints the token, so the entry is keyed by service name.
@@ -61,6 +61,11 @@ HALO_KEY = "halo"
 # sidecar on demand, the way owa-swodp reads ServiceNow's.
 KOVA_KEY = "kova"
 SESSION_SERVICES: tuple[str, ...] = (KOVA_KEY,)
+
+# Services with nothing for owa-piggy to capture or mint: the record only
+# says "this user uses it" so consumers can fan out on it. owa-swodp reads
+# ServiceNow's session straight from this profile's sidecar on each call.
+DECLARED_SERVICES: tuple[str, ...] = ("swodp",)
 
 
 # Plain string maps rather than TypedDicts: every value is a string, the
@@ -104,6 +109,11 @@ KNOWN_CLIENTS: dict[str, ClientMeta] = {
         "origin": None,
         "capture_url": "https://www.kova.no",
     },
+    "swodp": {
+        "name": "swodp",
+        "origin": None,
+        "capture_url": None,
+    },
 }
 
 # Clients `setup` / `reseed` capture without being asked. Only clients whose
@@ -142,27 +152,96 @@ def client_name(client_id: str | None) -> str:
     return name or (client_id or "")
 
 
-def clients_path(alias: str) -> Path:
-    return profile_dir(alias) / CLIENTS_FILENAME
+# Record fields that describe the record rather than the credential.
+_RECORD_META = ("name", "client_id", "enabled")
+
+# Consumer-facing service name for a client whose short name differs.
+_SERVICE_NAMES = {"devops": "ado"}
+
+# Clients that route audiences inside owa-owned tools rather than being a
+# service a consumer fans out on.
+_ROUTING_ONLY = frozenset({"teams", "pim"})
 
 
-def load_clients(alias: str) -> dict[str, ClientEntry]:
-    """Bound clients for a profile, or {} when there are none.
+def record_key(record: dict[str, Any]) -> str:
+    return str(record.get("client_id") or record["name"])
 
-    A malformed store must never break token minting - the FOCI token in
-    `config` still works, so we degrade to "no bound clients" rather than
-    crashing every call until someone hand-edits the file.
+
+def new_record(key: str, entry: ClientEntry | None = None) -> dict[str, Any]:
+    """A fresh `clients[]` record for `key` (client id or service name)."""
+    name = client_name(key)
+    record: dict[str, Any] = {"name": name}
+    if name != key or key not in (HALO_KEY, *SESSION_SERVICES) and len(key) == 36:
+        record["client_id"] = key
+    record["enabled"] = True
+    record.update({k: v for k, v in (entry or {}).items() if k not in _RECORD_META})
+    return record
+
+
+def service_for(record: dict[str, Any]) -> str:
+    """The consumer service a record provides ('' when none)."""
+    name = str(record.get("name") or "")
+    if name in _ROUTING_ONLY or (record.get("client_id") and name == record["client_id"]):
+        return ""
+    return _SERVICE_NAMES.get(name, name)
+
+
+def load_records(alias: str) -> list[dict[str, Any]]:
+    """Every `clients[]` record, disabled ones included (dashboard, CLI)."""
+    return list(read_doc(profile_config_path(alias))["clients"])
+
+
+def load_clients(alias: str, *, include_disabled: bool = False) -> dict[str, ClientEntry]:
+    """Bound clients for a profile as `{key: entry}`, or {} when there are none.
+
+    Disabled records are left out unless asked for, so routing, reseed and
+    `services` honour the toggle without each checking it. A malformed file
+    degrades to "no bound clients" (read_doc warns) - the FOCI token still
+    works, so minting must not break until someone fixes the file.
     """
-    path = clients_path(alias)
-    if not path.exists():
-        return {}
-    try:
-        data = json.loads(path.read_text())
-    except (json.JSONDecodeError, OSError):
-        return {}
-    if not isinstance(data, dict):
-        return {}
-    return {cid: entry for cid, entry in data.items() if isinstance(entry, dict)}
+    return {
+        record_key(r): {k: v for k, v in r.items() if k not in _RECORD_META}
+        for r in load_records(alias)
+        if include_disabled or r.get("enabled", True) is not False
+    }
+
+
+def _put(alias: str, key: str, fields: dict[str, str], *, replace: bool) -> ClientEntry:
+    """Locked upsert of one record. `replace` swaps the credential fields
+    wholesale (keeping name/client_id/enabled); otherwise they merge."""
+
+    def apply(doc: dict[str, Any]) -> ClientEntry:
+        for record in doc["clients"]:
+            if record_key(record) == key:
+                if replace:
+                    for k in [k for k in record if k not in _RECORD_META]:
+                        del record[k]
+                record.update(fields)
+                break
+        else:
+            record = new_record(key, fields)
+            doc["clients"].append(record)
+        return {k: v for k, v in record.items() if k not in _RECORD_META}
+
+    return update_doc(profile_config_path(alias), apply)
+
+
+def declare_service(alias: str, name: str) -> ClientEntry:
+    """Record a declared-only service (see DECLARED_SERVICES)."""
+    return _put(alias, name, {}, replace=False)
+
+
+def set_client_enabled(alias: str, key: str, enabled: bool) -> bool:
+    """Toggle one record's `enabled`. False when the profile has no such client."""
+
+    def apply(doc: dict[str, Any]) -> bool:
+        for record in doc["clients"]:
+            if record_key(record) == key:
+                record["enabled"] = enabled
+                return True
+        return False
+
+    return update_doc(profile_config_path(alias), apply)
 
 
 def declare_client(
@@ -183,8 +262,7 @@ def declare_client(
     if client_id == PIM_CLIENT_ID:
         return None, f"PIM requires device sign-in: owa-piggy clients add pim --profile {alias}"
     meta = KNOWN_CLIENTS.get(client_id, {})
-    clients = load_clients(alias)
-    entry = dict(clients.get(client_id, {}))
+    entry = dict(load_clients(alias, include_disabled=True).get(client_id, {}))
     entry.setdefault("refresh_token", "")
     resolved_url = capture_url or entry.get("capture_url") or meta.get("capture_url")
     if not resolved_url:
@@ -195,9 +273,8 @@ def declare_client(
         )
     entry["capture_url"] = resolved_url
     entry["origin"] = origin or entry.get("origin") or meta.get("origin") or ""
-    clients[client_id] = {k: v for k, v in entry.items() if v or k == "refresh_token"}
-    atomic_write(clients_path(alias), json.dumps(clients, indent=2) + "\n")
-    return clients[client_id], ""
+    fields = {k: v for k, v in entry.items() if v or k == "refresh_token"}
+    return _put(alias, client_id, fields, replace=True), ""
 
 
 def forget_client(alias: str, client_id: str) -> bool:
@@ -207,12 +284,14 @@ def forget_client(alias: str, client_id: str) -> bool:
     declaration nobody can capture would otherwise cost an Edge launch and
     a capture timeout on every hourly reseed, forever.
     """
-    clients = load_clients(alias)
-    if client_id not in clients:
-        return False
-    del clients[client_id]
-    atomic_write(clients_path(alias), json.dumps(clients, indent=2) + "\n")
-    return True
+
+    def apply(doc: dict[str, Any]) -> bool:
+        kept = [r for r in doc["clients"] if record_key(r) != client_id]
+        removed = len(kept) != len(doc["clients"])
+        doc["clients"] = kept
+        return removed
+
+    return update_doc(profile_config_path(alias), apply)
 
 
 def normalize_capture_url(client_id: str, value: str | None) -> str | None:
@@ -256,6 +335,8 @@ def parse_spec(spec: str | None) -> tuple[str | None, str | None, str]:
         )
     if client_id == PIM_CLIENT_ID and url:
         return None, None, "PIM uses device sign-in and does not accept a capture URL"
+    if client_id in DECLARED_SERVICES and url:
+        return None, None, f"{name} is declared only and does not take a URL"
     if client_id not in KNOWN_CLIENTS and not url:
         return None, None, f"client {name!r} needs an explicit =<url>"
     return client_id, normalize_capture_url(client_id, url), ""
@@ -269,8 +350,13 @@ def capture_targets(alias: str) -> list[tuple[str, ClientEntry]]:
     first by the caller.
     """
     # Native PIM credentials refresh on demand. Scheduled SPA reseeds must
-    # never start an interactive device-code sign-in.
-    return [(cid, entry) for cid, entry in load_clients(alias).items() if cid != PIM_CLIENT_ID]
+    # never start an interactive device-code sign-in. Declared-only services
+    # (swodp) have no capture_url: nothing to capture.
+    return [
+        (cid, entry)
+        for cid, entry in load_clients(alias).items()
+        if cid != PIM_CLIENT_ID and entry.get("capture_url")
+    ]
 
 
 def save_client(
@@ -288,9 +374,8 @@ def save_client(
     clients one at a time, and a crash between two of them must not drop
     the tokens already persisted.
     """
-    clients = load_clients(alias)
     meta = KNOWN_CLIENTS.get(client_id, {})
-    existing = clients.get(client_id, {})
+    existing = load_clients(alias, include_disabled=True).get(client_id, {})
     entry = {
         "refresh_token": refresh_token,
         "origin": origin or existing.get("origin") or meta.get("origin") or "",
@@ -299,9 +384,7 @@ def save_client(
         ),
         "rt_issued_at": rt_issued_at or iso_utc_now(),
     }
-    clients[client_id] = {k: v for k, v in entry.items() if v}
-    atomic_write(clients_path(alias), json.dumps(clients, indent=2) + "\n")
-    return clients[client_id]
+    return _put(alias, client_id, {k: v for k, v in entry.items() if v}, replace=True)
 
 
 def audience_from_scope(scope: str | None) -> str:
@@ -349,29 +432,29 @@ def profile_services(alias: str, config: dict[str, str]) -> list[str]:
     out per service (owa-tools `-A`: `owa-ado -A` only hits profiles with
     `ado`, `owa-halo` picks the profile with `halo`).
 
-    `OWA_SERVICES="owa,ado,halo"` in the profile config is authoritative
-    when set. Without it the list is derived from the credentials the
-    profile holds, so existing profiles need no edit: `owa` for any AAD
-    profile with a FOCI token, `ado` once a devops client carries a token,
-    `halo` once a Halo entry does. Services that leave no credential behind
-    (`swodp` reads its session straight from the sidecar on each call) can
-    only be declared, which is what the explicit key is for.
+    Derived from the enabled `clients[]` records, in their order: `owa` for
+    any AAD profile, then each record's service once it has what it needs -
+    a refresh token (ado, halo), a completed capture stamp for session
+    services (kova), nothing at all for declared-only services (swodp reads
+    its session straight from the sidecar on each call). teams/pim route
+    audiences inside owa and are not services.
     """
-    explicit = [x.strip() for x in (config.get("OWA_SERVICES") or "").split(",") if x.strip()]
-    if explicit:
-        return explicit
     ptype = classify_profile_type(config)
     if ptype != "m365":
         return [ptype]
     services = ["owa"]
-    clients = load_clients(alias)
-    if (clients.get(DEVOPS_CLIENT_ID) or {}).get("refresh_token"):
-        services.append("ado")
-    if (clients.get(HALO_KEY) or {}).get("refresh_token"):
-        services.append("halo")
-    # Session services hold no token: a completed capture (stamped
-    # rt_issued_at) is what says the sidecar is signed in.
-    services += [key for key in SESSION_SERVICES if (clients.get(key) or {}).get("rt_issued_at")]
+    for record in load_records(alias):
+        service = service_for(record)
+        if not service or record.get("enabled", True) is False or service in services:
+            continue
+        if service in SESSION_SERVICES:
+            ready = bool(record.get("rt_issued_at"))
+        elif record.get("client_id") or service == HALO_KEY:
+            ready = bool(record.get("refresh_token"))
+        else:
+            ready = True
+        if ready:
+            services.append(service)
     return services
 
 

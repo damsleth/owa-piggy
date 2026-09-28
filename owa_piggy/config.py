@@ -9,10 +9,26 @@ Profile layout (since multi-tenant support landed):
       profiles.conf                     OWA_DEFAULT_PROFILE + OWA_PROFILES
       profiles/
         <alias>/
-          config                        per-profile KV (same schema as legacy)
+          config.json                   settings + bound clients (see below)
+          .config.lock                  flock for config.json read-modify-write
           cache.json                    per-profile access-token cache
           edge-profile/                 per-profile Edge sidecar userdata dir
           refresh.log                   per-profile launchd stderr
+
+`config.json` is one document per profile:
+
+    {"version": 2,
+     "settings": {"OWA_REFRESH_TOKEN": "...", "OWA_TENANT_ID": "...", ...},
+     "clients": [{"name": "teams", "client_id": "5e3c...", "enabled": true,
+                  "refresh_token": "...", "capture_url": "...", ...}, ...]}
+
+`settings` is the flat OWA_* map `load_config` returns; `clients` is the
+bound-client / service list `clients.py` owns. One file means one lock: every
+write is a locked read-modify-write (`update_doc`), so two concurrent token
+rotations (FOCI + a bound client, or two bound clients) can no longer drop
+each other's write, which the old two-file layout (`config` KV +
+`clients.json`) allowed. Those files are migrated on first read and kept as
+`*.v1.bak`.
 
 `ROOT_DIR` is mutable so tests can redirect it. `CONFIG_PATH` points at the
 *currently active* profile's config file and is rebound by
@@ -24,18 +40,28 @@ redirects the cache without any other plumbing.
 from __future__ import annotations
 
 import contextlib
+import fcntl
+import json
 import os
 import re
 import stat
 import tempfile
 import time
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, TypedDict, TypeVar
+
+_T = TypeVar("_T")
 
 ROOT_DIR = Path.home() / ".config" / "owa-piggy"
-CONFIG_PATH = ROOT_DIR / "config"
+CONFIG_FILENAME = "config.json"
+CONFIG_PATH = ROOT_DIR / CONFIG_FILENAME
+DOC_VERSION = 2
+# Pre-v2 per-profile files, migrated into config.json on first read.
+LEGACY_CONFIG_FILENAME = "config"
+LEGACY_CLIENTS_FILENAME = "clients.json"
+LOCK_FILENAME = ".config.lock"
 
 # Azure DevOps FOCI/public client id. Profiles minted against ADO carry this
 # as OWA_CLIENT_ID (see nc-ado). More stable than sniffing OWA_ORIGIN.
@@ -181,8 +207,8 @@ def profile_dir(alias: str) -> Path:
 
 
 def profile_config_path(alias: str) -> Path:
-    """Path to a specific profile's config file."""
-    return profile_dir(alias) / "config"
+    """Path to a specific profile's config.json."""
+    return profile_dir(alias) / CONFIG_FILENAME
 
 
 def profile_edge_dir(alias: str) -> Path:
@@ -212,6 +238,16 @@ def private_permission_paths() -> list[tuple[Path, int, str]]:
             [
                 (profile_dir(alias), 0o700, f"profile {alias} directory"),
                 (profile_config_path(alias), 0o600, f"profile {alias} config"),
+                (
+                    profile_dir(alias) / (LEGACY_CONFIG_FILENAME + ".v1.bak"),
+                    0o600,
+                    f"profile {alias} pre-1.3 config backup",
+                ),
+                (
+                    profile_dir(alias) / (LEGACY_CLIENTS_FILENAME + ".v1.bak"),
+                    0o600,
+                    f"profile {alias} pre-1.3 clients backup",
+                ),
                 (profile_dir(alias) / "cache.json", 0o600, f"profile {alias} cache"),
                 (profile_edge_dir(alias), 0o700, f"profile {alias} Edge sidecar directory"),
                 (profile_log_path(alias), 0o600, f"profile {alias} refresh log"),
@@ -267,7 +303,7 @@ def repair_private_permissions() -> list[PermissionRepair]:
 
 
 def set_active_profile(alias: str) -> Path:
-    """Rebind CONFIG_PATH to point at `profiles/<alias>/config`.
+    """Rebind CONFIG_PATH to point at `profiles/<alias>/config.json`.
 
     No validation - callers who need to guarantee the profile already
     exists should use `resolve_profile()` first. No directory is created;
@@ -525,6 +561,172 @@ def _resolve_profile_unchecked(cli_profile: str | None, allow_missing: bool) -> 
     )
 
 
+# --- config.json document ----------------------------------------------
+
+
+class ConfigCorruptError(ValueError):
+    """config.json exists but is not a valid v2 document. Writes refuse to
+    proceed so a hand-edit typo can never be "repaired" into an empty file
+    that drops every token."""
+
+
+def _empty_doc() -> dict[str, Any]:
+    return {"version": DOC_VERSION, "settings": {}, "clients": []}
+
+
+@contextlib.contextmanager
+def _locked(path: Path) -> Iterator[None]:
+    """Exclusive flock on `<profile dir>/.config.lock` for one
+    read-modify-write. Separate from the Edge `.owa-lock`: a token rotation
+    must never queue behind a 45s sidecar capture."""
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd = os.open(path.parent / LOCK_FILENAME, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)
+
+
+def validate_doc(data: object) -> dict[str, Any]:
+    """Return `data` as a v2 document or raise ConfigCorruptError."""
+    if not isinstance(data, dict):
+        raise ConfigCorruptError("top level must be an object")
+    settings = data.get("settings", {})
+    clients = data.get("clients", [])
+    if not isinstance(settings, dict) or not all(
+        isinstance(k, str) and isinstance(v, str) for k, v in settings.items()
+    ):
+        raise ConfigCorruptError('"settings" must map strings to strings')
+    if not isinstance(clients, list) or not all(
+        isinstance(c, dict) and isinstance(c.get("name"), str) and c["name"] for c in clients
+    ):
+        raise ConfigCorruptError('"clients" must be a list of objects with a "name"')
+    names = [c["name"] for c in clients]
+    dupes = sorted({n for n in names if names.count(n) > 1})
+    if dupes:
+        raise ConfigCorruptError(f"duplicate client name(s): {', '.join(dupes)}")
+    return {**data, "version": DOC_VERSION, "settings": settings, "clients": clients}
+
+
+def _parse_doc(path: Path) -> dict[str, Any]:
+    try:
+        return validate_doc(json.loads(path.read_text()))
+    except json.JSONDecodeError as e:
+        raise ConfigCorruptError(f"{path}: {e}") from None
+    except ConfigCorruptError as e:
+        raise ConfigCorruptError(f"{path}: {e}") from None
+
+
+def _legacy_doc(cfg_dir: Path) -> dict[str, Any] | None:
+    """Build a v2 document from the pre-v2 `config` KV + `clients.json`
+    pair in `cfg_dir`, or None when neither exists.
+
+    ponytail: one-shot migration; delete a release after 1.3.0 ships.
+    """
+    legacy_cfg = cfg_dir / LEGACY_CONFIG_FILENAME
+    legacy_clients = cfg_dir / LEGACY_CLIENTS_FILENAME
+    if not legacy_cfg.exists() and not legacy_clients.exists():
+        return None
+    from . import clients as _clients  # lazy: clients imports this module
+
+    doc = _empty_doc()
+    if legacy_cfg.exists():
+        doc["settings"] = dict(_iter_kv(legacy_cfg.read_text()))
+    declared = [s.strip() for s in doc["settings"].pop("OWA_SERVICES", "").split(",") if s.strip()]
+    raw: object = {}
+    if legacy_clients.exists():
+        with contextlib.suppress(json.JSONDecodeError, OSError):
+            raw = json.loads(legacy_clients.read_text())
+    for key, entry in raw.items() if isinstance(raw, dict) else []:
+        if isinstance(entry, dict):
+            doc["clients"].append(_clients.new_record(key, entry))
+    # OWA_SERVICES named services the credentials could not show (swodp):
+    # they become bare, token-less entries. Names the clients already
+    # provide (owa, ado for devops, halo, kova) need nothing.
+    covered = {"owa"} | {_clients.service_for(c) for c in doc["clients"]}
+    for name in declared:
+        if name not in covered:
+            doc["clients"].append({"name": name, "enabled": True})
+            covered.add(name)
+    return doc
+
+
+def read_doc(path: Path | None = None, *, strict: bool = False) -> dict[str, Any]:
+    """The profile's config.json document (empty when there is none yet).
+
+    Migrates a pre-v2 profile on first read. A corrupt file raises
+    ConfigCorruptError when `strict` (writers); readers get an empty
+    document and a warning, the same degrade-to-unconfigured the KV parser
+    had, so one bad file can't crash every other profile's status row."""
+    cfg_path = path or CONFIG_PATH
+    legacy_present = any(
+        (cfg_path.parent / n).exists() for n in (LEGACY_CONFIG_FILENAME, LEGACY_CLIENTS_FILENAME)
+    )
+    # Only lock (which creates the profile dir) when there is something to
+    # migrate: a read of a profile that doesn't exist must not create it.
+    if not cfg_path.exists() and legacy_present:
+        with _locked(cfg_path):
+            if not cfg_path.exists():
+                legacy = _legacy_doc(cfg_path.parent)
+                if legacy is not None:
+                    atomic_write(cfg_path, json.dumps(legacy, indent=2) + "\n")
+                    for name in (LEGACY_CONFIG_FILENAME, LEGACY_CLIENTS_FILENAME):
+                        old = cfg_path.parent / name
+                        if old.exists():
+                            old.rename(old.with_name(name + ".v1.bak"))
+    if not cfg_path.exists():
+        return _empty_doc()
+    try:
+        return _parse_doc(cfg_path)
+    except ConfigCorruptError as e:
+        if strict:
+            raise
+        import sys
+
+        print(f"WARNING: ignoring unreadable profile config: {e}", file=sys.stderr)
+        return _empty_doc()
+
+
+def update_doc(path: Path | None, fn: Callable[[dict[str, Any]], _T]) -> _T:
+    """Locked read-modify-write of config.json: `fn` mutates the document in
+    place and its return value is passed through. The only write path."""
+    cfg_path = path or CONFIG_PATH
+    read_doc(cfg_path, strict=True)  # migrate first (takes the lock itself)
+    with _locked(cfg_path):
+        doc = read_doc(cfg_path, strict=True) if cfg_path.exists() else _empty_doc()
+        result = fn(doc)
+        atomic_write(cfg_path, json.dumps(validate_doc(doc), indent=2) + "\n")
+    return result
+
+
+def merge_edit(
+    base: dict[str, Any], edited: dict[str, Any], live: dict[str, Any]
+) -> dict[str, Any]:
+    """Apply a hand edit (`base` -> `edited`) onto `live`, the file as it is
+    now. Only what the user changed is applied - per settings key, per
+    client record (by name) - so a token that rotated while the editor was
+    open survives unless the user edited that same key or record."""
+    settings = dict(live["settings"])
+    for k in set(base["settings"]) | set(edited["settings"]):
+        if base["settings"].get(k) != edited["settings"].get(k):
+            if k in edited["settings"]:
+                settings[k] = edited["settings"][k]
+            else:
+                settings.pop(k, None)
+    b = {c["name"]: c for c in base["clients"]}
+    e = {c["name"]: c for c in edited["clients"]}
+    changed = {n for n in set(b) | set(e) if b.get(n) != e.get(n)}
+    records = [
+        e[c["name"]] if c["name"] in changed else c
+        for c in live["clients"]
+        if c["name"] not in changed or c["name"] in e
+    ]
+    have = {c["name"] for c in records}
+    records += [c for c in edited["clients"] if c["name"] in changed and c["name"] not in have]
+    return {**live, "settings": settings, "clients": records}
+
+
 # --- Main config I/O --------------------------------------------------
 
 
@@ -584,11 +786,9 @@ def load_config(path: Path | None = None) -> tuple[dict[str, str], bool]:
     concurrently pass an explicit path so they don't race the global."""
     cfg_path = path or CONFIG_PATH
     config = _LoadedConfig()
-    file_keys: set[str] = set()
-    if cfg_path.exists():
-        for k, v in _iter_kv(cfg_path.read_text()):
-            config[k] = v
-            file_keys.add(k)
+    settings = read_doc(cfg_path)["settings"]
+    config.update(settings)
+    file_keys = set(settings)
     # Environment overrides file
     for key in ("OWA_REFRESH_TOKEN", "OWA_TENANT_ID", "OWA_CLIENT_ID", "OWA_ORIGIN"):
         if key in os.environ:
@@ -620,38 +820,20 @@ def classify_profile_type(config: dict[str, str]) -> str:
 
 
 def save_config(config: dict[str, str], path: Path | None = None) -> None:
-    """Atomically rewrite the config file.
+    """Merge `config` into the profile's settings (locked, atomic).
 
-    Refresh tokens rotate on every successful exchange, so a partial write here
-    would corrupt the only live token and force the user to reseed from the
-    browser. Write the new contents to a sibling temp file, fsync, chmod, then
-    rename over the target - rename within a filesystem is atomic on POSIX, so
-    either the old or the new file is visible, never a truncated mix.
+    Keys absent from `config` are kept, as the KV writer kept unknown lines,
+    so a caller holding a stale or partial dict can't delete state another
+    writer just persisted. Env-sourced values are never written (see
+    `_LoadedConfig`).
 
-    `path` selects the target config file, defaulting to the module-global
+    `path` selects the target config.json, defaulting to the module-global
     CONFIG_PATH. Concurrent callers persisting rotated tokens for different
-    profiles pass distinct explicit paths, so the writes never collide.
+    profiles pass distinct explicit paths, and writers on the same profile
+    serialize on its lock.
     """
-    cfg_path = path or CONFIG_PATH
     env_keys = getattr(config, "env_keys", ())
-    config = {k: v for k, v in config.items() if not (k in env_keys and v == os.environ.get(k))}
-    lines = []
-    if cfg_path.exists():
-        # Preserve existing lines, update known keys in place
-        existing_keys = set()
-        for line in cfg_path.read_text().splitlines():
-            stripped = line.strip()
-            if stripped and not stripped.startswith("#") and "=" in stripped:
-                k = stripped.split("=", 1)[0].strip()
-                if k in config:
-                    lines.append(f'{k}="{config[k]}"')
-                    existing_keys.add(k)
-                    continue
-            lines.append(line)
-        for k, v in config.items():
-            if k not in existing_keys:
-                lines.append(f'{k}="{v}"')
-    else:
-        for k, v in config.items():
-            lines.append(f'{k}="{v}"')
-    atomic_write(cfg_path, "\n".join(lines) + "\n")
+    values = {
+        k: str(v) for k, v in config.items() if not (k in env_keys and v == os.environ.get(k))
+    }
+    update_doc(path, lambda doc: doc["settings"].update(values))
