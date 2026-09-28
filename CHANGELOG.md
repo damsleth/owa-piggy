@@ -10,6 +10,13 @@ Releases before v0.12.0 are recorded only in the annotated git tags
 
 ## [Unreleased]
 
+### Removed
+
+- The one-shot pre-1.3 profile migration (`config` + `clients.json` ->
+  `config.json`). A profile that never ran 1.3.x must pass through it once;
+  until then it reads as unconfigured and prints a warning. The `*.v1.bak`
+  backups are still covered by the permission audit.
+
 ## [1.3.1] - 2026-09-30
 
 Same behavior as 1.3.0. The v1.3.0 tag failed the release workflow's
