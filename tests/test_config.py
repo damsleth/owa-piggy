@@ -72,40 +72,17 @@ def test_save_and_load_round_trip(tmp_config, clean_env):
     assert persist is True
 
 
-def test_load_config_migrates_legacy_kv_and_clients(tmp_config, clean_env):
-    """A pre-v2 profile (`config` KV + `clients.json`) becomes one
-    config.json on first read; the old files are kept as .v1.bak."""
-    import json
-
+def test_load_config_warns_on_unmigrated_pre_v2_profile(tmp_config, clean_env, capsys):
+    """The 1.3.x migration is gone: a pre-v2 profile (`config` KV only)
+    reads as unconfigured, is left untouched, and says why on stderr."""
     d = tmp_config.parent
     d.mkdir(parents=True, exist_ok=True)
-    (d / "config").write_text(
-        "OWA_REFRESH_TOKEN='fake-rt-for-tests'\nOWA_TENANT_ID='tid-1'\n"
-        'OWA_SERVICES="owa,ado,swodp"\n'
-    )
-    (d / "clients.json").write_text(
-        json.dumps(
-            {
-                "499b84ac-1321-427f-aa17-267ca6975798": {"refresh_token": "ado-rt"},
-                "halo": {"refresh_token": "halo-rt", "capture_url": "https://h.example"},
-            }
-        )
-    )
-    cfg, persist = load_config()
-    doc = json.loads(tmp_config.read_text())
-    assert doc["settings"] == {"OWA_REFRESH_TOKEN": "fake-rt-for-tests", "OWA_TENANT_ID": "tid-1"}
-    assert [(c["name"], c.get("client_id"), c["enabled"]) for c in doc["clients"]] == [
-        ("devops", "499b84ac-1321-427f-aa17-267ca6975798", True),
-        ("halo", None, True),
-        ("swodp", None, True),
-    ]
-    assert sorted(p.name for p in d.iterdir() if p.name.endswith(".v1.bak")) == [
-        "clients.json.v1.bak",
-        "config.v1.bak",
-    ]
-    assert cfg["OWA_REFRESH_TOKEN"] == "fake-rt-for-tests"
-    assert cfg["OWA_TENANT_ID"] == "tid-1"
-    assert persist is True
+    (d / "config").write_text("OWA_REFRESH_TOKEN='fake-rt-for-tests'\n")
+    cfg, _ = load_config()
+    assert cfg == {}
+    assert not tmp_config.exists()
+    assert (d / "config").exists()
+    assert "pre-1.3 profile" in capsys.readouterr().err
 
 
 def test_save_sets_0600_permissions(tmp_config, clean_env):
