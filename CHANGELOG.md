@@ -10,6 +10,8 @@ Releases before v0.12.0 are recorded only in the annotated git tags
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-09-28
+
 ### Changed
 
 - One `config.json` per profile replaces `config` (KV) + `clients.json`:
@@ -23,6 +25,11 @@ Releases before v0.12.0 are recorded only in the annotated git tags
   `swodp` into bare client records). `clients add swodp` declares one.
 - The dashboard's `c` edits a copy of `config.json`, validates it, and merges
   only the keys and client records you changed.
+- Non-headless capture drives a hidden CDP tab instead of a minimized
+  window, so Edge never appears or takes keyboard focus. Edge only allows a
+  hidden tab once an extension background page is running (uBlock Origin in
+  the sidecar is enough); without one it falls back to the minimized window
+  and hands focus back to the previous app.
 
 ### Added
 
@@ -36,7 +43,6 @@ Releases before v0.12.0 are recorded only in the annotated git tags
   but is not minted with, not captured on reseed, and not a service.
   `clients` / `clients --json` and `debug` show it; `profiles --json` rows
   gain `clients: [{name, enabled}]`.
-
 - Halo as a service on an AAD profile: `owa-piggy clients add
   halo=https://<tenant>.haloitsm.com --profile nc` signs the profile's Edge
   sidecar in to Halo through Entra SSO (clicking the profile's own tile on
@@ -49,24 +55,14 @@ Releases before v0.12.0 are recorded only in the annotated git tags
   expiry so they survive Edge exiting - Okta's "Keep me signed in" does not
   make them persistent. Reseed revisits Kova, re-pins, and closes Edge
   cleanly so the cookie store reaches disk. Nothing is stored in
-  clients.json but the timestamp; `owa-kova` reads the session from the
+  `config.json` but the timestamp; `owa-kova` reads the session from the
   sidecar.
 - `profiles --json` rows carry `services` (`owa`, plus `ado`/`halo` for bound
-  credentials that hold a token)
-  and `edge_dir`, the sidecar a consumer may drive under the same
+  credentials that hold a token) and `edge_dir`, the sidecar a consumer may drive under the same
   `<edge_dir>/.owa-lock` flock capture takes.
 - A pinned-headless profile whose headless capture fails three runs in a row
   while the non-headless fallback works skips headless for a day, without
   touching the pin.
-
-### Changed
-
-- Non-headless capture drives a hidden CDP tab instead of a minimized
-  window, so Edge never appears or takes keyboard focus. Edge only allows a
-  hidden tab once an extension background page is running (uBlock Origin in
-  the sidecar is enough); without one it falls back to the minimized window
-  and hands focus back to the previous app.
-
 
 ### Fixed
 
