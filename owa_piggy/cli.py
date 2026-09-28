@@ -1171,6 +1171,20 @@ def _cmd_clients(args: argparse.Namespace) -> int:
         from . import capture
 
         ok, failed = capture.capture_bound_clients(alias, only=[client_id])
+        if not ok and client_id in clients.SESSION_SERVICES and sys.stdin.isatty():
+            # Nothing to capture silently yet: sign in once in a visible
+            # window, under CDP so the session cookies get pinned.
+            print(
+                f"[{alias}] opening Edge - sign in to {name}; it closes when done...",
+                file=sys.stderr,
+            )
+            status, _ = capture.capture_session(alias, str(entry.get("capture_url")), visible=True)
+            if status == "ok":
+                clients.save_client(
+                    alias, client_id, refresh_token="", capture_url=entry.get("capture_url")
+                )
+                print(f"[{alias}] {name}: signed in", file=sys.stderr)
+                return 0
         if not ok:
             # The declaration stays: the sign-in is retried by the next
             # reseed, and the user may just need to authenticate once in

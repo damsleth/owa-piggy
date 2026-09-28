@@ -579,3 +579,84 @@ def test_edge_lock_is_exclusive_and_released(monkeypatch, tmp_path):
     # Released, so the next caller gets its turn.
     capture._release_edge_lock(4242)
     os.close(capture._acquire_edge_lock(tmp_path))
+
+
+# --- session services (Kova) ------------------------------------------------
+
+
+class _CookieSession:
+    def __init__(self, cookies):
+        self.cookies = cookies
+        self.set = []
+
+    def call(self, method, params=None):
+        if method == "Network.getAllCookies":
+            return {"cookies": self.cookies}
+        if method == "Network.setCookie":
+            self.set.append(params)
+            return {"success": True}
+        return {}
+
+
+def test_pin_session_cookies_only_touches_session_cookies_of_the_chain():
+    """Okta and the app issue expiry-less cookies Chromium drops on exit;
+    pinning gives exactly those an expiry, host-only ones by URL."""
+    s = _CookieSession(
+        [
+            {
+                "name": "idx",
+                "value": "v1",
+                "domain": "okta.redcross.no",
+                "path": "/",
+                "session": True,
+            },
+            {
+                "name": "ARRAffinity",
+                "value": "v2",
+                "domain": ".www.kova.no",
+                "path": "/",
+                "session": True,
+            },
+            {
+                "name": "DT",
+                "value": "v3",
+                "domain": "okta.redcross.no",
+                "path": "/",
+                "session": False,
+            },
+            {
+                "name": "ESTSAUTH",
+                "value": "v4",
+                "domain": ".login.microsoftonline.com",
+                "session": True,
+            },
+        ]
+    )
+    n = capture._pin_session_cookies(s, {"www.kova.no", "okta.redcross.no"})
+    assert n == 2
+    idx, arr = s.set
+    assert (idx["name"], idx["url"]) == ("idx", "https://okta.redcross.no/")
+    assert "domain" not in idx
+    assert (arr["name"], arr["domain"]) == ("ARRAffinity", ".www.kova.no")
+    assert all(c["expires"] > 0 for c in s.set)
+
+
+def test_bound_client_rotation_renews_a_session_service(monkeypatch, tmp_config, clean_env):
+    from owa_piggy import clients
+    from owa_piggy.config import set_active_profile
+
+    set_active_profile("work")
+    clients.declare_client("work", clients.KOVA_KEY)
+    assert clients.profile_services("work", {}) == ["owa"]
+    seen = []
+    monkeypatch.setattr(capture, "capture_silent", lambda *a, **kw: 1 / 0)
+    monkeypatch.setattr(
+        capture,
+        "capture_session",
+        lambda alias, url, headless=None: seen.append(url) or ("ok", {}),
+    )
+
+    assert capture.capture_bound_clients("work") == (1, [])
+    assert seen == ["https://www.kova.no"]
+    assert clients.load_clients("work")[clients.KOVA_KEY]["rt_issued_at"]
+    assert clients.profile_services("work", {}) == ["owa", "kova"]
