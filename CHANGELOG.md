@@ -10,6 +10,14 @@ Releases before v0.12.0 are recorded only in the annotated git tags
 
 ## [Unreleased]
 
+### Fixed
+
+- `reseed` that fell back to interactive sign-in now captures the profile's
+  bound clients (Teams, ...) in that same still-open window, before it
+  closes. Previously the window closed after the first client and each bound
+  client started over in a headless sidecar, where Teams' sign-in cannot
+  finish, so it waited out the 60s timeout twice.
+
 ### Removed
 
 - The one-shot pre-1.3 profile migration (`config` + `clients.json` ->

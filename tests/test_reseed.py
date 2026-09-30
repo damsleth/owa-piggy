@@ -611,3 +611,41 @@ def test_pinned_fallback_counts_a_strike_and_success_clears_it(monkeypatch, tmp_
     assert reseed_mod._do_reseed_capture("brkh", {**_PINNED, "OWA_HEADLESS_FAILS": "2"}) == 0
     assert calls == [True]
     assert saved["OWA_HEADLESS_FAILS"] == ""
+
+
+def test_interactive_fallback_captures_bound_clients_before_window_closes(
+    monkeypatch, tmp_config, clean_env
+):
+    """When reseed falls back to interactive sign-in, the bound clients are
+    captured in that same still-open window. Closing it first left Teams to a
+    fresh headless sidecar that cannot finish the SPA sign-in and just waited
+    out its timeout twice."""
+    from owa_piggy import clients as clients_mod
+
+    events = []
+    _mock_capture_reseed(monkeypatch, [("headless_blocked", None)])
+    monkeypatch.setattr(reseed_mod.sys.stdin, "isatty", lambda: True, raising=False)
+    monkeypatch.setattr(
+        clients_mod, "capture_targets", lambda alias: [("teams-id", {"capture_url": "https://t/"})]
+    )
+
+    def fake_signin(alias, email, **kw):
+        events.append("window-open")
+        kw["on_session"](object())
+        events.append("window-closed")
+        return {"OWA_REFRESH_TOKEN": "rt", "OWA_TENANT_ID": "tid"}
+
+    def fake_in_session(alias, session):
+        events.append("bound-in-window")
+        return {"teams-id"}
+
+    monkeypatch.setattr(capture_mod, "capture_signin", fake_signin)
+    monkeypatch.setattr(capture_mod, "capture_bound_clients_in_session", fake_in_session)
+    monkeypatch.setattr(
+        capture_mod, "capture_bound_clients", lambda *a, **kw: events.append("headless-bound")
+    )
+
+    rc = reseed_mod._do_reseed_capture("brkh", {"OWA_AUTH_MODE": "capture", "OWA_EMAIL": "a@b.no"})
+
+    assert rc == 0
+    assert events == ["window-open", "bound-in-window", "window-closed"]
