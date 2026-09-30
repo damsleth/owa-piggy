@@ -660,3 +660,29 @@ def test_bound_client_rotation_renews_a_session_service(monkeypatch, tmp_config,
     assert seen == ["https://www.kova.no"]
     assert clients.load_clients("work")[clients.KOVA_KEY]["rt_issued_at"]
     assert clients.profile_services("work", {}) == ["owa", "kova"]
+
+
+def test_bound_clients_in_session_navigates_the_open_window(monkeypatch, tmp_config, clean_env):
+    from owa_piggy import clients
+    from owa_piggy.config import set_active_profile
+
+    set_active_profile("work")
+    clients.save_client(
+        "work", "teams-id", refresh_token="old", capture_url="https://teams.example/"
+    )
+    calls = []
+
+    class FakeSession:
+        def call(self, method, params=None, **kw):
+            calls.append((method, params))
+
+    monkeypatch.setattr(capture, "_capture_token_response", lambda *a, **kw: {"x": 1})
+    monkeypatch.setattr(
+        capture, "_build_config", lambda *a, **kw: {"OWA_REFRESH_TOKEN": "fake-rt-for-tests"}
+    )
+
+    done = capture.capture_bound_clients_in_session("work", FakeSession())
+
+    assert done == {"teams-id"}
+    assert calls == [("Page.navigate", {"url": "https://teams.example/"})]
+    assert clients.load_clients("work")["teams-id"]["refresh_token"] == "fake-rt-for-tests"
