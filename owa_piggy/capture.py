@@ -919,9 +919,16 @@ def capture_signin(
     user_agent: str | None = None,
     capture_url: str | None = None,
     expected_client_id: str | None = None,
+    on_session: Callable[[CdpSession], None] | None = None,
 ) -> dict[str, str]:
     """Visible Edge for first-time setup. Returns a config dict on
     success, or raises RuntimeError with a user-facing message.
+
+    `on_session(session)` runs once the token is captured and MSAL has
+    persisted, while the signed-in window is still open and the user is
+    still at the keyboard. `reseed` uses it to capture the profile's bound
+    clients (Teams, ...) here: a fresh headless sidecar cannot complete
+    those SPAs' sign-in, so the window must outlive the first client.
 
     The Edge profile dir is created if missing so subsequent
     `capture_silent` calls reuse the same session cookies. We do not
@@ -1007,6 +1014,8 @@ def capture_signin(
             # never writes a long-lived cache. Surface this so subsequent
             # silent reseeds don't look mysteriously broken.
             log("MSAL did not persist localStorage; silent reseed unlikely to work for this tenant")
+        if on_session is not None:
+            on_session(session)
     except (ConnectionError, CdpError, OSError) as e:
         # User force-closed Edge mid-auth, or the WS dropped for some
         # other reason. Surface a friendly RuntimeError instead of a raw
@@ -1731,6 +1740,54 @@ def capture_bound_clients(
         ok += 1
         print(f"[{alias}] client {name}: refresh token rotated", file=sys.stderr)
     return ok, failed
+
+
+def capture_bound_clients_in_session(
+    alias: str, session: CdpSession, *, timeout: int = 120
+) -> set[str]:
+    """Capture each plain-SPA bound client in an already-open, signed-in
+    interactive session, before the caller closes it.
+
+    Navigates the visible tab to every client's `capture_url` (the user can
+    answer any extra prompt there) and stores the token that client mints.
+    Halo and cookie-session services need their own flows and are left for
+    `capture_bound_clients`. Returns the client ids attempted, successful or
+    not, so the caller does not re-run them headless, where the same SPA
+    would just wait out its timeout again. Best-effort: never raises for a
+    single client.
+    """
+    from . import clients as clients_mod
+
+    log = _logger(f"capture/signin/{alias}")
+    attempted: set[str] = set()
+    for client_id, entry in clients_mod.capture_targets(alias):
+        if client_id == clients_mod.HALO_KEY or client_id in clients_mod.SESSION_SERVICES:
+            continue
+        attempted.add(client_id)
+        name = clients_mod.client_name(client_id)
+        url = entry["capture_url"]
+        print(f"[{alias}] client {name}: capturing in the open window...", file=sys.stderr)
+        try:
+            session.call("Page.navigate", {"url": url})
+            resp = _capture_token_response(
+                session,
+                deadline=time.monotonic() + timeout,
+                log=log,
+                tick=_ticker(alias),
+                expected_client_id=client_id,
+            )
+            rt = _build_config(resp, email=None, mode="capture")["OWA_REFRESH_TOKEN"]
+        except (TimeoutError, RuntimeError, ConnectionError, CdpError, OSError) as e:
+            print(
+                f"[{alias}] client {name}: not captured ({e}); keeping the previous token",
+                file=sys.stderr,
+            )
+            continue
+        clients_mod.save_client(
+            alias, client_id, refresh_token=rt, origin=entry.get("origin"), capture_url=url
+        )
+        print(f"[{alias}] client {name}: refresh token rotated", file=sys.stderr)
+    return attempted
 
 
 def _build_config(

@@ -259,6 +259,7 @@ def _do_reseed_capture(alias: str, config: dict[str, str]) -> int:
     # Local import: keeps the CDP/capture machinery off the import path
     # for the legacy reseed users that don't need it.
     from . import capture
+    from . import clients as clients_mod
 
     print(f"[{alias}] reseed via network capture (OWA_AUTH_MODE=capture)", file=sys.stderr)
     # Env override wins so an operator can experiment with a UA without
@@ -278,6 +279,7 @@ def _do_reseed_capture(alias: str, config: dict[str, str]) -> int:
     )
     headless = _headless_pref(config)
     fell_back = False
+    interactive_done: set[str] = set()
     # Filter the capture to the profile's own client: the SPA's start-up
     # burst can carry other clients' tokens, and a DevOps/Teams profile
     # must not end up persisting one of those as its refresh token.
@@ -367,6 +369,9 @@ def _do_reseed_capture(alias: str, config: dict[str, str]) -> int:
                     user_agent=user_agent,
                     capture_url=capture_url,
                     expected_client_id=client_id,
+                    on_session=lambda session: interactive_done.update(
+                        capture.capture_bound_clients_in_session(alias, session)
+                    ),
                 )
                 status = "ok"
             except (RuntimeError, TimeoutError, ConnectionError, KeyboardInterrupt) as e:
@@ -432,7 +437,16 @@ def _do_reseed_capture(alias: str, config: dict[str, str]) -> int:
     # Same identity, other sign-ins: rotate each extra client the profile
     # declares (Teams, an ADO org, ...). Failures there don't fail the
     # reseed - the FOCI token above is what most audiences use.
-    capture.capture_bound_clients(alias, user_agent=user_agent, headless=_headless_pref(config))
+    # Bound clients already taken in the interactive window are not retried
+    # headless: a fresh sidecar cannot finish their sign-in and would only
+    # wait out the timeout twice.
+    remaining = [
+        cid for cid, _ in clients_mod.capture_targets(alias) if cid not in interactive_done
+    ]
+    if remaining:
+        capture.capture_bound_clients(
+            alias, user_agent=user_agent, headless=_headless_pref(config), only=remaining
+        )
     return 0
 
 
