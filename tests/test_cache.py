@@ -51,11 +51,13 @@ def test_min_remaining_threshold(tmp_config, clean_env):
     assert get_cached_token(TID, CID, SCOPE, min_remaining_seconds=0) == "fake-at"
 
 
-def test_min_remaining_floor_at_exact_boundary(tmp_config, clean_env):
+def test_min_remaining_floor_at_exact_boundary(tmp_config, clean_env, monkeypatch):
     """The 60s floor is a strict `<=`: a token whose exp is exactly
-    now+60 is NOT served, but now+61 IS. Uses real-time offsets because
-    the cache module's time is not frozen."""
-    now = int(time.time())
+    now+60 is NOT served, but now+61 IS. The clock is frozen: with a live
+    clock, crossing a second boundary mid-test pushed now+61 inside the
+    floor and failed the release gate at random."""
+    now = 1_900_000_000
+    monkeypatch.setattr(time, "time", lambda: float(now))
     store_token(TID, CID, SCOPE, "at-boundary", now + 60)
     assert get_cached_token(TID, CID, SCOPE) is None
     store_token(TID, CID, SCOPE, "at-just-over", now + 61)
