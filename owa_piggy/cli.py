@@ -792,7 +792,7 @@ def _mint_and_emit(args: argparse.Namespace, *, mode: str) -> int:
     try:
         if provider in OPAQUE_PROVIDERS:
             # Opaque bearer, no JWT exp: expires_in is all there is.
-            exp = time.time() + int(result.get("expires_in") or 0)
+            exp: object = time.time() + int(result.get("expires_in") or 0)
         else:
             exp = decode_jwt_segment(access_token.split(".")[1]).get("exp")
         if isinstance(exp, (int, float)):
