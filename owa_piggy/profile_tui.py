@@ -439,7 +439,11 @@ def _action_edit_config(state: PickerState, current: str) -> str:
                     return "edit discarded; config unchanged."
                 if edited == base:
                     return "no changes."
-                update_doc(path, lambda live, e=edited: live.update(merge_edit(base, e, live)))
+
+                def apply(live: dict[str, Any], e: dict[str, Any] = edited) -> None:
+                    live.update(merge_edit(base, e, live))
+
+                update_doc(path, apply)
                 return f"edited {current!r} config."
         finally:
             tmp.unlink(missing_ok=True)
