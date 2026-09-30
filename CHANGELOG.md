@@ -12,7 +12,7 @@ Releases before v0.12.0 are recorded only in the annotated git tags
 
 ## [1.3.1] - 2026-09-30
 
-Same runtime code as 1.3.0. The v1.3.0 tag failed the release workflow's
+Same behavior as 1.3.0. The v1.3.0 tag failed the release workflow's
 core-coverage gate, so it never reached PyPI or GitHub Releases; 1.3.1 is
 the first published 1.3 build.
 
@@ -20,6 +20,8 @@ the first published 1.3 build.
 
 - Tests cover the config.json validation errors and the pre-1.3 migration's
   edge branches, restoring the 100% branch gate on the token core.
+- `mypy owa_piggy` is clean again (two annotation-only fixes in the token
+  cache write and the dashboard's `c` edit).
 
 ## [1.3.0] - 2026-09-28
 
