@@ -105,8 +105,61 @@ def _record_reauth_fail(config: dict[str, str]) -> int:
     total = _reauth_fails(config) + 1
     config["OWA_REAUTH_FAILS"] = str(total)
     config["OWA_REAUTH_FAILS_AT"] = (config.get("OWA_RT_ISSUED_AT") or "").strip()
+    # OWA_REAUTH_FAILS_AT is the RT stamp, not a clock time; this is the
+    # wall-clock time of the attempt, so `status` can say when it last failed.
+    config["OWA_REAUTH_LAST_AT"] = iso_utc_now()
     save_config(config)
     return total
+
+
+def reseed_health(config: dict[str, str]) -> dict[str, object]:
+    """Reseed health of one profile, read from the counter reseed keeps.
+
+    Token expiry is not reseed health: a profile whose sidecar session died
+    still holds a valid RT for up to 24h after its last good reseed, so
+    `status` alone reports it healthy while the hourly agent is already
+    failing. This is the other half, for scripts (JSON `reseed` object).
+
+    state: "ok" (capture profile, no failure recorded against the current
+    RT), "needs_signin" (1..max-1 consecutive unattended failures; retries
+    continue), "backed_off" (>= max: scheduled reseed no longer tries, only
+    an interactive `setup` clears it), "unknown" (not a capture profile, so
+    there is no counter to read). last_attempt_at is only the last
+    *failed* attempt (null for counts recorded before it was stamped);
+    last_success_at is the RT issue time, which every successful reseed
+    restamps.
+    """
+    fails = _reauth_fails(config)
+    if (config.get("OWA_AUTH_MODE") or "").strip() != "capture":
+        state = "unknown"
+    elif fails >= _MAX_REAUTH_FAILS:
+        state = "backed_off"
+    elif fails:
+        state = "needs_signin"
+    else:
+        state = "ok"
+    last = (config.get("OWA_REAUTH_LAST_AT") or "").strip() if fails else ""
+    return {
+        "state": state,
+        "fails": fails,
+        "max_fails": _MAX_REAUTH_FAILS,
+        "last_attempt_at": last or None,
+        "last_success_at": (config.get("OWA_RT_ISSUED_AT") or "").strip() or None,
+    }
+
+
+def reseed_health_line(health: dict[str, object]) -> str:
+    """Stable one-line form of reseed_health for the human `status` output."""
+    state, fails, cap = health["state"], health["fails"], health["max_fails"]
+    text = {
+        "ok": "ok",
+        "needs_signin": f"needs sign-in ({fails}/{cap})",
+        "backed_off": f"backed off ({fails}/{cap}, interactive sign-in needed)",
+        "unknown": "unknown",
+    }[str(state)]
+    if health["last_attempt_at"]:
+        text += f" last failed {health['last_attempt_at']}"
+    return text
 
 
 def _headless_pinned(config: dict[str, str]) -> bool:
