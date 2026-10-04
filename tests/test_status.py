@@ -250,3 +250,41 @@ def test_debug_google_profile_with_opaque_token(monkeypatch, tmp_config, clean_e
     assert "exchange succeeded" in out
     assert "access token exp" in out
     assert "n/a (google provider)" in out
+
+
+def test_status_reports_reseed_health_despite_valid_token(
+    monkeypatch, tmp_config, clean_env, make_jwt, capsys
+):
+    """The gap: a valid RT/AT with a failing sidecar must not read healthy."""
+    from owa_piggy.config import save_config, set_active_profile
+
+    set_active_profile("work")
+    save_config(
+        {
+            "OWA_REFRESH_TOKEN": "1.AQ_fake",
+            "OWA_TENANT_ID": "tid",
+            "OWA_AUTH_MODE": "capture",
+            "OWA_RT_ISSUED_AT": "2026-08-18T00:00:00Z",
+            "OWA_REAUTH_FAILS": "2",
+            "OWA_REAUTH_FAILS_AT": "2026-08-18T00:00:00Z",
+            "OWA_REAUTH_LAST_AT": "2026-08-18T05:00:00Z",
+        }
+    )
+    monkeypatch.setattr(
+        "owa_piggy.token_flow.exchange_token",
+        lambda *_a: {
+            "access_token": make_jwt(
+                {"exp": 9_999_999_999, "aud": "https://graph.microsoft.com", "scp": "User.Read"}
+            )
+        },
+    )
+
+    report = status_mod.status_report("work")
+    assert report["state"] == "ok"
+    assert report["reseed"]["state"] == "needs_signin"
+    assert report["reseed"]["fails"] == 2
+
+    assert status_mod.do_status("work") == 0
+    assert "reseed:       needs sign-in (2/3) last failed 2026-08-18T05:00:00Z" in (
+        capsys.readouterr().out
+    )

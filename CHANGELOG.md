@@ -10,6 +10,17 @@ Releases before v0.12.0 are recorded only in the annotated git tags
 
 ## [Unreleased]
 
+### Added
+
+- `status` reports per-profile reseed health, separate from token expiry. A
+  profile whose Edge sidecar session died keeps a valid refresh token for up
+  to 24h, so `status` used to look healthy while the hourly reseed was
+  already failing. `status --json` gains a `reseed` object (`state` is `ok`,
+  `needs_signin`, `backed_off` or `unknown`, plus `fails`, `max_fails`,
+  `last_attempt_at`, `last_success_at`); human `status` gains a `reseed:`
+  line. Additive: existing fields and the single-profile stdout contract are
+  unchanged. Failed unattended reseeds now also stamp `OWA_REAUTH_LAST_AT`.
+
 ### Fixed
 
 - `reseed` that fell back to interactive sign-in now captures the profile's

@@ -649,3 +649,47 @@ def test_interactive_fallback_captures_bound_clients_before_window_closes(
 
     assert rc == 0
     assert events == ["window-open", "bound-in-window", "window-closed"]
+
+
+def test_reseed_health_reads_the_reauth_counter():
+    """Token expiry is not reseed health: the counter is, and it is tied to
+    the RT it was observed against (a fresh RT orphans it back to ok)."""
+    base = {"OWA_AUTH_MODE": "capture", "OWA_RT_ISSUED_AT": "2026-08-18T00:00:00Z"}
+    h = reseed_mod.reseed_health(base)
+    assert (h["state"], h["fails"], h["last_attempt_at"]) == ("ok", 0, None)
+    assert h["last_success_at"] == "2026-08-18T00:00:00Z"
+
+    two = {
+        **base,
+        "OWA_REAUTH_FAILS": "2",
+        "OWA_REAUTH_FAILS_AT": "2026-08-18T00:00:00Z",
+        "OWA_REAUTH_LAST_AT": "2026-08-19T05:00:00Z",
+    }
+    h = reseed_mod.reseed_health(two)
+    assert (h["state"], h["fails"], h["max_fails"]) == ("needs_signin", 2, 3)
+    assert h["last_attempt_at"] == "2026-08-19T05:00:00Z"
+    assert (
+        reseed_mod.reseed_health_line(h) == "needs sign-in (2/3) last failed 2026-08-19T05:00:00Z"
+    )
+
+    three = {**two, "OWA_REAUTH_FAILS": "3"}
+    assert reseed_mod.reseed_health(three)["state"] == "backed_off"
+
+    # A reseed restamps RT_ISSUED_AT, orphaning the counter.
+    renewed = {**three, "OWA_RT_ISSUED_AT": "2026-08-20T00:00:00Z"}
+    h = reseed_mod.reseed_health(renewed)
+    assert (h["state"], h["fails"], h["last_attempt_at"]) == ("ok", 0, None)
+
+    assert reseed_mod.reseed_health({"OWA_REAUTH_FAILS": "2"})["state"] == "unknown"
+
+
+def test_reauth_failure_stamps_last_attempt(monkeypatch, tmp_config, clean_env):
+    _, saved = _mock_capture_reseed(monkeypatch, [("reauth", None)])
+    config = {
+        "OWA_AUTH_MODE": "capture",
+        "OWA_EMAIL": "me@example.com",
+        "OWA_RT_ISSUED_AT": "2026-08-18T00:00:00Z",
+    }
+    reseed_mod._do_reseed_capture("une", config)
+    assert saved["OWA_REAUTH_LAST_AT"].endswith("Z")
+    assert reseed_mod.reseed_health(saved)["last_attempt_at"] == saved["OWA_REAUTH_LAST_AT"]
