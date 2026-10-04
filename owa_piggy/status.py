@@ -43,6 +43,7 @@ from .launchd import (
     is_scheduled as launchd_is_scheduled,
 )
 from .oauth import CLIENT_ID, PIM_CLIENT_ID
+from .reseed import reseed_health, reseed_health_line
 from .scopes import KNOWN_AUDIENCES, resolve_audience
 from .scripts import find_reseed_script
 from .token_flow import exchange_fresh
@@ -114,6 +115,8 @@ def _probe_profile(
         "payload": None,
         "decode_failed": False,
         "scheduled": launchd_is_scheduled(alias),
+        # Taken before the PIM swap below rebinds `config`.
+        "reseed": reseed_health(config),
     }
     if _profile_is_disabled(alias):
         probe["disabled"] = True
@@ -221,6 +224,7 @@ def _status_json(probe: dict[str, Any]) -> dict[str, Any]:
             "expires_at": probe["rt_expires_at"],
             "minutes_remaining": None,
         },
+        "reseed": probe["reseed"],
         "hints": [],
     }
     if probe["disabled"]:
@@ -315,6 +319,12 @@ def _status_human(probe: dict[str, Any], multi: bool = False, verbose: bool = Fa
         print("status:       disabled")
         return 0
 
+    # Reseed health goes to the same stream as the header: stdout in
+    # multi-profile mode, stderr when a single failing profile must keep
+    # its strict `no valid token` stdout. Healthy blocks always get it on
+    # stdout below.
+    reseed_line = f"reseed:       {reseed_health_line(probe['reseed'])}"
+
     if probe["resolve_error"]:
         print(f"ERROR: {probe['resolve_error']}", file=sys.stderr)
         return 1
@@ -322,11 +332,13 @@ def _status_human(probe: dict[str, Any], multi: bool = False, verbose: bool = Fa
     info = probe["info"]
     if not info["rt_present"] or not info["tid_present"] or not info["rt_shape_ok"]:
         print("no valid token")
+        print(reseed_line, file=label_stream)
         return 1
 
     result = probe["result"]
     if not result or not result.get("access_token"):
         print("no valid token")
+        print(reseed_line, file=label_stream)
         # Send the AAD error to the same stream as the [profile=...]
         # label so single-profile mode keeps its strict stdout contract
         # (stdout == 'no valid token') while multi-profile output stays
@@ -337,6 +349,7 @@ def _status_human(probe: dict[str, Any], multi: bool = False, verbose: bool = Fa
 
     if probe["decode_failed"] or probe["payload"] is None:
         print("no valid token")
+        print(reseed_line, file=label_stream)
         return 1
 
     payload = probe["payload"]
@@ -401,6 +414,7 @@ def _status_human(probe: dict[str, Any], multi: bool = False, verbose: bool = Fa
         print(f"audience:     {audience_line}")
         print(f"scopes:       {scopes_line}")
     print(f"scheduled:    {scheduled_state}")
+    print(reseed_line)
     return 0
 
 

@@ -126,7 +126,7 @@ owa-piggy remaining                    # minutes left on current token
 owa-piggy token --json | jq .scope     # inspect granted scopes
 eval $(owa-piggy token --env)          # export ACCESS_TOKEN= / EXPIRES_IN=
 owa-piggy status                       # compact ISO8601 health summary
-owa-piggy status --json                # machine-readable health, no token values
+owa-piggy status --json                # machine-readable health (incl. reseed.state), no token values
 owa-piggy profiles list                # non-interactive list (safe in scripts)
 owa-piggy profiles list --json         # machine-readable profile registry
 owa-piggy debug                        # full setup diagnostics
