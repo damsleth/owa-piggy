@@ -247,32 +247,32 @@ def _build_parser() -> argparse.ArgumentParser:
         "captured token belongs to this account",
     )
     p_setup.add_argument(
-        "--from-trough",
+        "--from-trau",
         metavar="<url>",
         default=None,
-        dest="from_trough",
-        help="seed from a tailnet-side trough appliance "
+        dest="from_trau",
+        help="seed from a tailnet-side trau appliance "
         "(e.g. http://100.x.y.z:8765). Pulls the "
         "freshest FOCI RT from its store. Honors "
-        "OWA_TROUGH_URL as a default. Mutually "
+        "OWA_TRAU_URL as a default. Mutually "
         "exclusive with --email.",
     )
     p_setup.add_argument(
-        "--trough-tenant",
+        "--trau-tenant",
         metavar="<tid>",
         default=None,
-        dest="trough_tenant",
-        help="filter trough RTs by AAD tenant id GUID; "
+        dest="trau_tenant",
+        help="filter trau RTs by AAD tenant id GUID; "
         "use when multiple tenants are present in "
-        "the trough store",
+        "the trau store",
     )
     p_setup.add_argument(
-        "--trough-sub",
+        "--trau-sub",
         metavar="<oid>",
         default=None,
-        dest="trough_sub",
-        help="filter trough RTs by AAD user object id; "
-        "narrower than --trough-tenant for shared "
+        dest="trau_sub",
+        help="filter trau RTs by AAD user object id; "
+        "narrower than --trau-tenant for shared "
         "tenants",
     )
     p_setup.add_argument(
@@ -313,7 +313,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="seed this profile via Google OAuth consent "
         "(a real app registration you own, not a "
         "piggybacked client - opens a browser once). "
-        "Mutually exclusive with --email/--from-trough.",
+        "Mutually exclusive with --email/--from-trau.",
     )
     p_setup.add_argument(
         "--google-client-id",
@@ -869,11 +869,11 @@ def _cmd_setup(args: argparse.Namespace) -> int:
         )
         return 1
     email = getattr(args, "email", None)
-    trough_url = getattr(args, "from_trough", None) or os.environ.get("OWA_TROUGH_URL") or None
+    trau_url = getattr(args, "from_trau", None) or os.environ.get("OWA_TRAU_URL") or None
     google = getattr(args, "google", False)
-    if sum(bool(x) for x in (email, trough_url, google)) > 1:
+    if sum(bool(x) for x in (email, trau_url, google)) > 1:
         print(
-            "ERROR: --email, --from-trough and --google are mutually "
+            "ERROR: --email, --from-trau and --google are mutually "
             "exclusive (pick one capture source).",
             file=sys.stderr,
         )
@@ -886,9 +886,9 @@ def _cmd_setup(args: argparse.Namespace) -> int:
         email=email,
         audience=None,
         full_banner=True,
-        trough_url=trough_url,
-        trough_tenant=getattr(args, "trough_tenant", None),
-        trough_sub=getattr(args, "trough_sub", None),
+        trau_url=trau_url,
+        trau_tenant=getattr(args, "trau_tenant", None),
+        trau_sub=getattr(args, "trau_sub", None),
         user_agent=(getattr(args, "user_agent", None) or os.environ.get("OWA_USER_AGENT") or None),
         sharepoint_tenant=getattr(args, "sharepoint_tenant", None),
         with_client=getattr(args, "with_client", None),

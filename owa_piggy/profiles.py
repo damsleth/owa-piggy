@@ -92,9 +92,9 @@ def create_profile(
     email: str | None = None,
     audience: str | None = None,
     full_banner: bool = False,
-    trough_url: str | None = None,
-    trough_tenant: str | None = None,
-    trough_sub: str | None = None,
+    trau_url: str | None = None,
+    trau_tenant: str | None = None,
+    trau_sub: str | None = None,
     user_agent: str | None = None,
     sharepoint_tenant: str | None = None,
     google: bool = False,
@@ -124,7 +124,7 @@ def create_profile(
     # followed by more questions. Only on a TTY, and only for what the
     # caller did not already specify: a piped or flag-driven setup must
     # stay exactly as non-interactive as it was.
-    interactive = sys.stdin.isatty() and not google and not trough_url
+    interactive = sys.stdin.isatty() and not google and not trau_url
     # `ask_email=False` says the caller already put the question to the user
     # and a blank answer was a real answer (the TUI's add-profile flow treats
     # blank as "use the paste flow"). Re-asking would override their choice.
@@ -146,9 +146,9 @@ def create_profile(
         config,
         alias,
         email=email,
-        trough_url=trough_url,
-        trough_tenant=trough_tenant,
-        trough_sub=trough_sub,
+        trau_url=trau_url,
+        trau_tenant=trau_tenant,
+        trau_sub=trau_sub,
         user_agent=user_agent,
         google=google,
         google_client_id=google_client_id,

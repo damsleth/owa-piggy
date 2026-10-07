@@ -59,9 +59,9 @@ complete -c owa-piggy -n '__fish_seen_subcommand_from setup' -o h
 complete -c owa-piggy -n '__fish_seen_subcommand_from setup' -l help
 complete -c owa-piggy -n '__fish_seen_subcommand_from setup' -l profile
 complete -c owa-piggy -n '__fish_seen_subcommand_from setup' -l email
-complete -c owa-piggy -n '__fish_seen_subcommand_from setup' -l from-trough
-complete -c owa-piggy -n '__fish_seen_subcommand_from setup' -l trough-tenant
-complete -c owa-piggy -n '__fish_seen_subcommand_from setup' -l trough-sub
+complete -c owa-piggy -n '__fish_seen_subcommand_from setup' -l from-trau
+complete -c owa-piggy -n '__fish_seen_subcommand_from setup' -l trau-tenant
+complete -c owa-piggy -n '__fish_seen_subcommand_from setup' -l trau-sub
 complete -c owa-piggy -n '__fish_seen_subcommand_from setup' -l user-agent
 complete -c owa-piggy -n '__fish_seen_subcommand_from setup' -l sharepoint-tenant
 complete -c owa-piggy -n '__fish_seen_subcommand_from setup' -l with-client
