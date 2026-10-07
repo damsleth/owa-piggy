@@ -115,9 +115,9 @@ def interactive_setup(
     alias: str = "default",
     *,
     email: str | None = None,
-    trough_url: str | None = None,
-    trough_tenant: str | None = None,
-    trough_sub: str | None = None,
+    trau_url: str | None = None,
+    trau_tenant: str | None = None,
+    trau_sub: str | None = None,
     user_agent: str | None = None,
     google: bool = False,
     google_client_id: str | None = None,
@@ -137,21 +137,21 @@ def interactive_setup(
     cache is encrypted, since the localStorage paste path can no longer
     read the RT in plaintext there.
 
-    When `trough_url` is set, route to the tailnet-capture path: pull
-    the freshest FOCI refresh token for `trough_tenant` (or `trough_sub`,
-    or the most recent overall) from a trough appliance's HTTP API and
+    When `trau_url` is set, route to the tailnet-capture path: pull
+    the freshest FOCI refresh token for `trau_tenant` (or `trau_sub`,
+    or the most recent overall) from a trau appliance's HTTP API and
     seed the profile non-interactively. This is the consumer half of the
-    iPhone-routed-through-trough flow - no browser involvement on this
+    iPhone-routed-through-trau flow - no browser involvement on this
     machine.
     """
-    # Persist the UA up front so all three branches (trough/email/paste)
+    # Persist the UA up front so all three branches (trau/email/paste)
     # write it alongside any tokens they capture; reseed.py later reads
     # OWA_USER_AGENT to keep silent refresh runs UA-consistent with the
     # original sign-in.
     if user_agent:
         config["OWA_USER_AGENT"] = user_agent
-    if trough_url is not None:
-        return _trough_setup(config, alias, trough_url, tenant=trough_tenant, sub=trough_sub)
+    if trau_url is not None:
+        return _trau_setup(config, alias, trau_url, tenant=trau_tenant, sub=trau_sub)
     if email is not None:
         return _capture_setup(config, alias, email, user_agent=user_agent)
     if google:
@@ -331,22 +331,22 @@ def _google_setup(
     return True
 
 
-def _trough_setup(
+def _trau_setup(
     config: dict[str, str],
     alias: str,
-    trough_url: str,
+    trau_url: str,
     *,
     tenant: str | None = None,
     sub: str | None = None,
 ) -> bool:
-    """Seed the profile from a tailnet-side trough appliance.
+    """Seed the profile from a tailnet-side trau appliance.
 
     Imported lazily so a `setup` invocation that does not touch the
     network adapter does not pay the import cost.
     """
-    from . import trough
+    from . import trau
 
-    print(f"owa-piggy setup [profile={alias}, trough={trough_url}]\n", file=sys.stderr)
+    print(f"owa-piggy setup [profile={alias}, trau={trau_url}]\n", file=sys.stderr)
     filt = []
     if tenant:
         filt.append(f"tenant={tenant}")
@@ -355,10 +355,10 @@ def _trough_setup(
     if filt:
         print(f"Filtering by {' '.join(filt)}.", file=sys.stderr)
     else:
-        print("No tenant/sub filter - taking the freshest FOCI RT in the trough.", file=sys.stderr)
+        print("No tenant/sub filter - taking the freshest FOCI RT in the trau.", file=sys.stderr)
 
     try:
-        rt, tid, info = trough.fetch_foci(trough_url, tenant=tenant, sub=sub)
+        rt, tid, info = trau.fetch_foci(trau_url, tenant=tenant, sub=sub)
     except RuntimeError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return False
