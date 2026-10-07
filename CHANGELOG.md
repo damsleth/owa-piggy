@@ -21,6 +21,14 @@ Releases before v0.12.0 are recorded only in the annotated git tags
   line. Additive: existing fields and the single-profile stdout contract are
   unchanged. Failed unattended reseeds now also stamp `OWA_REAUTH_LAST_AT`.
 
+### Changed
+
+- **Breaking:** the tailnet capture appliance is renamed from trough to trau
+  (Norwegian for trough), and its options follow: `setup --from-trau`,
+  `--trau-tenant`, `--trau-sub` and `OWA_TRAU_URL` replace the `trough`
+  spellings, which no longer work. The module is now `owa_piggy/trau.py`.
+  Changelog entries below use the new name.
+
 ### Fixed
 
 - `reseed` that fell back to interactive sign-in now captures the profile's
@@ -482,14 +490,14 @@ SharePoint feature ships under 0.15.1.)
   (they were stable noise - OWA always mints the same scope set).
 - `status --json` output unchanged (always carries audience).
 
-## [0.14.0] - trough seeding and User-Agent spoofing
+## [0.14.0] - trau seeding and User-Agent spoofing
 
-- `setup`: seed from a tailnet-side trough appliance (`--from-trough <url>`,
-  `--trough-tenant`, `--trough-sub`, `OWA_TROUGH_URL`).
+- `setup`: seed from a tailnet-side trau appliance (`--from-trau <url>`,
+  `--trau-tenant`, `--trau-sub`, `OWA_TRAU_URL`).
 - `capture`/`reseed`: spoof the Edge sidecar User-Agent
   (`setup --user-agent <ua>`, `OWA_USER_AGENT`); persisted per-profile and
   re-applied on every silent reseed.
-- New module `owa_piggy/trough.py` (stdlib only, lazily imported).
+- New module `owa_piggy/trau.py` (stdlib only, lazily imported).
 
 ## [0.13.0] - single shared launchd reseed agent
 

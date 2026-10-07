@@ -1,14 +1,14 @@
-"""Fetch FOCI refresh tokens from a tailnet-side trough appliance.
+"""Fetch FOCI refresh tokens from a tailnet-side trau appliance.
 
-trough (https://github.com/damsleth/trough) is a network capture
+trau (https://github.com/damsleth/trau) is a network capture
 appliance: a Tailscale exit node that MITMs M365 traffic from devices
 routed through it and stores every JWT or refresh token it sees. This
 module pulls the freshest FOCI refresh token for a given tenant from a
-trough's tailnet-only HTTP API and returns it in the shape
+trau's tailnet-only HTTP API and returns it in the shape
 ``interactive_setup`` expects.
 
 Opt-in plumbing - imported only when the user invokes
-``owa-piggy setup --from-trough <url>``. No other owa-piggy code path
+``owa-piggy setup --from-trau <url>``. No other owa-piggy code path
 imports this module, so a vanilla install pays nothing for it.
 """
 
@@ -28,13 +28,13 @@ def _http_get_json(url: str, *, timeout: float) -> Any:
             return json.loads(resp.read())
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", "replace")[:200]
-        raise RuntimeError(f"trough HTTP {e.code} from {url}: {body}") from e
+        raise RuntimeError(f"trau HTTP {e.code} from {url}: {body}") from e
     except urllib.error.URLError as e:
-        raise RuntimeError(f"trough unreachable at {url}: {e.reason}") from e
+        raise RuntimeError(f"trau unreachable at {url}: {e.reason}") from e
 
 
 def fetch_foci(
-    trough_url: str,
+    trau_url: str,
     *,
     tenant: str | None = None,
     sub: str | None = None,
@@ -42,16 +42,16 @@ def fetch_foci(
     limit: int = 50,
 ) -> tuple[str, str, dict[str, Any]]:
     """Return ``(refresh_token, tid, info)`` for the freshest FOCI RT in the
-    trough matching the filter.
+    trau matching the filter.
 
-    Filters are applied client-side because trough's HTTP API does not
+    Filters are applied client-side because trau's HTTP API does not
     index by tid or sub. ``info`` carries diagnostic context (capture
     host, age, payload-reported lifetime) so the caller can print it.
 
-    Raises ``RuntimeError`` if the trough is unreachable, returns no
+    Raises ``RuntimeError`` if the trau is unreachable, returns no
     tokens, or has none that match the filter.
     """
-    base = trough_url.rstrip("/")
+    base = trau_url.rstrip("/")
     qs = urllib.parse.urlencode(
         {
             "foci": "true",
@@ -91,10 +91,10 @@ def fetch_foci(
             criteria.append(f"sub={sub}")
         filt = " ".join(criteria) if criteria else "(no filter)"
         raise RuntimeError(
-            f"no FOCI refresh token in trough matched {filt}; inspected {len(tokens)} candidate(s)"
+            f"no FOCI refresh token in trau matched {filt}; inspected {len(tokens)} candidate(s)"
         )
 
-    # Trough already returns last_seen DESC, but be defensive.
+    # Trau already returns last_seen DESC, but be defensive.
     matches.sort(key=lambda m: m[0].get("last_seen") or 0, reverse=True)
     top, payload, tid, sub_oid = matches[0]
     info: dict[str, Any] = {
