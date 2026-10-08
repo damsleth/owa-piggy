@@ -65,6 +65,20 @@ TOKEN_PATH_SUFFIX = "/oauth2/v2.0/token"
 # redirect chain redeems its auth code at ~3s.
 _STARTUP_BURST_WINDOW = 10.0
 
+# Removes cached access tokens - MSAL's and Teams' own - so a reload has to
+# go back to /token; capture_silent explains why both. Refresh tokens and
+# id tokens stay, or the app would no longer know who is signed in.
+_WIPE_ACCESS_TOKENS_JS = r"""(() => {
+    let n = 0;
+    for (const k of Object.keys(localStorage)) {
+        if (k.includes('|accesstoken|') || /^tmp\.auth\.v1\..+\.Token\./.test(k)) {
+            localStorage.removeItem(k);
+            n++;
+        }
+    }
+    return n;
+})()"""
+
 # Edge binaries we know about. macOS first since this tool is macOS-first;
 # the Linux paths exist for the rare dev who runs the test suite on Linux.
 _EDGE_CANDIDATES = (
@@ -1293,20 +1307,7 @@ def capture_silent(
         # re-redeems its RT within ~2s of the reload.
         wipe = session.call(
             "Runtime.evaluate",
-            {
-                "expression": r"""(() => {
-                const ks = Object.keys(localStorage);
-                let n = 0;
-                for (const k of ks) {
-                    if (k.includes('|accesstoken|') || /^tmp\.auth\.v1\..+\.Token\./.test(k)) {
-                        localStorage.removeItem(k);
-                        n++;
-                    }
-                }
-                return n;
-            })()""",
-                "returnByValue": True,
-            },
+            {"expression": _WIPE_ACCESS_TOKENS_JS, "returnByValue": True},
         )
         wiped = (wipe.get("result", {}) or {}).get("value", 0)
         log(f"wiped {wiped} accesstoken cache entries")
