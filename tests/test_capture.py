@@ -10,6 +10,7 @@ token response into the profile-config KV dict.
 
 import json
 import os
+import re
 
 import pytest
 
@@ -394,6 +395,32 @@ def test_silent_timeout_before_session_does_not_blame_the_tenant(monkeypatch, tm
     err = capsys.readouterr().err
     assert "never came up on CDP port" in err
     assert "OWA_CAPTURE_HEADLESS=0" not in err
+
+
+def test_wipe_drops_access_tokens_and_keeps_the_session():
+    """The forced-refresh wipe, evaluated in Python: the JS regex is plain
+    enough to mean the same in `re`. Teams' own AT cache must go (left in
+    place, it never calls /token); refresh/id tokens must stay."""
+    js = capture._WIPE_ACCESS_TOKENS_JS
+    teams_at = re.compile(re.search(r"\|\| /(.+?)/\.test", js).group(1))
+
+    def wiped(k):
+        return "|accesstoken|" in k or bool(teams_at.search(k))
+
+    oid, tid = "11111111-1111", "22222222-2222"
+    gone = [
+        f"tmp.auth.v1.{oid}.Token.HTTPS://GRAPH.MICROSOFT.COM",
+        f"tmp.auth.v1.{oid}.Token.6BC3B958-689B-49F5-9006-36D165F30E00",
+        f"msal.2|{oid}.{tid}|login.windows.net|accesstoken|5e3ce6c0|{tid}|scope",
+    ]
+    kept = [
+        f"msal.2|{oid}.{tid}|login.windows.net|refreshtoken|5e3ce6c0|||",
+        f"msal.2|{oid}.{tid}|login.windows.net|idtoken|5e3ce6c0|{tid}||",
+        f"tmp.auth.v1.{oid}.Discover.SKYPE-TOKEN",
+        f"tmp.auth.v1.{oid}.LoginValidation.LoginValidation",
+        "msal.2.token.keys.5e3ce6c0",
+    ]
+    assert [k for k in gone + kept if wiped(k)] == gone
 
 
 def test_ticker_names_the_client_not_the_endpoint(capsys):
