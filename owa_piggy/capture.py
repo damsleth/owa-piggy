@@ -1241,13 +1241,6 @@ def capture_silent(
         # bodies are still alive. The reload is what frees them, which is how
         # a token we had already seen turned into a 60s wait for one that
         # never came again.
-        #
-        # It also rescues apps the wipe cannot force at all. Teams keeps no
-        # accesstoken entries in localStorage, so there is nothing to remove
-        # and the reload gives it no reason to re-acquire: it serves what it
-        # already has and never touches /token again. Its start-up burst is
-        # the only exchange on offer, and this is the only place we can see
-        # it.
         burst = None
         with contextlib.suppress(TimeoutError):
             burst = _capture_token_response(
@@ -1275,14 +1268,21 @@ def capture_silent(
         # encrypted-cache mode the values are opaque AES-GCM blobs but the
         # keys are still readable, so the substring filter on key names works
         # regardless.
+        #
+        # Teams keeps its access tokens out of MSAL's cache, in its own
+        # `tmp.auth.v1.<oid>.Token.<resource>` entries. Leave those and Teams
+        # serves them across the reload and never calls /token, so any
+        # profile whose Teams tokens are still fresh (someone just used Teams
+        # in `owa-piggy edge`) waits out the whole timeout. Removed, it
+        # re-redeems its RT within ~2s of the reload.
         wipe = session.call(
             "Runtime.evaluate",
             {
-                "expression": """(() => {
+                "expression": r"""(() => {
                 const ks = Object.keys(localStorage);
                 let n = 0;
                 for (const k of ks) {
-                    if (k.includes('|accesstoken|')) {
+                    if (k.includes('|accesstoken|') || /^tmp\.auth\.v1\..+\.Token\./.test(k)) {
                         localStorage.removeItem(k);
                         n++;
                     }
