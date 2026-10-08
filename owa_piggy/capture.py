@@ -881,12 +881,28 @@ def _logger(prefix: str) -> Callable[[str], None]:
     return lambda msg: print(f"[{prefix}] {msg}", file=sys.stderr)
 
 
-def _ticker(alias: str) -> Callable[[int], None]:
+def _client_label(client_id: str | None) -> str:
+    """Short name of the client a capture is waiting on, for stderr.
+
+    Every client - OWA, Teams, DevOps - redeems at the same /token endpoint,
+    so naming the endpoint says nothing about which token a reseed is stuck
+    on. No filter means the profile's own client, which is OWA unless the
+    profile set OWA_CLIENT_ID (and then the caller passes that id)."""
+    from . import clients as clients_mod
+    from .oauth import CLIENT_ID
+
+    if not client_id or client_id == CLIENT_ID:
+        return "owa"
+    return clients_mod.client_name(client_id)
+
+
+def _ticker(alias: str, client_id: str | None = None) -> Callable[[int], None]:
     """Heartbeat printer for the wait-for-/token loop. Always on (not
     gated by OWA_CAPTURE_DEBUG) so a watching user sees the operation
     is alive, not hung."""
+    label = _client_label(client_id)
     return lambda elapsed: print(
-        f"[{alias}] still waiting for /oauth2/v2.0/token response ({elapsed}s elapsed)...",
+        f"[{alias}] still waiting for {label} token ({elapsed}s elapsed)...",
         file=sys.stderr,
     )
 
@@ -1155,7 +1171,7 @@ def capture_silent(
     if capture_url is None:
         capture_url = _capture_url()
     log = _logger(f"capture/silent/{alias}")
-    tick = _ticker(alias)
+    tick = _ticker(alias, expected_client_id)
     edge_dir = _config.profile_edge_dir(alias)
     if not edge_dir.is_dir():
         log(f"no Edge profile dir at {edge_dir}; cannot reseed silently")
@@ -1339,8 +1355,8 @@ def capture_silent(
             print(f"[{alias}] Edge never came up on CDP port {port}: {e}", file=sys.stderr)
         else:
             print(
-                f"[{alias}] timed out after {timeout}s waiting for "
-                f"/oauth2/v2.0/token."
+                f"[{alias}] timed out after {timeout}s waiting for the "
+                f"{_client_label(expected_client_id)} token."
                 + (
                     " Tenant may require non-headless Edge - try OWA_CAPTURE_HEADLESS=0."
                     if headless
@@ -1773,7 +1789,7 @@ def capture_bound_clients_in_session(
                 session,
                 deadline=time.monotonic() + timeout,
                 log=log,
-                tick=_ticker(alias),
+                tick=_ticker(alias, client_id),
                 expected_client_id=client_id,
             )
             rt = _build_config(resp, email=None, mode="capture")["OWA_REFRESH_TOKEN"]
