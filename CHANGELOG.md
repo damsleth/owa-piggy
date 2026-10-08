@@ -10,6 +10,8 @@ Releases before v0.12.0 are recorded only in the annotated git tags
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-10-08
+
 ### Added
 
 - `status` reports per-profile reseed health, separate from token expiry. A
@@ -28,9 +30,17 @@ Releases before v0.12.0 are recorded only in the annotated git tags
   `--trau-tenant`, `--trau-sub` and `OWA_TRAU_URL` replace the `trough`
   spellings, which no longer work. The module is now `owa_piggy/trau.py`.
   Changelog entries below use the new name.
+- The capture heartbeat and timeout name the client being rotated
+  (`still waiting for teams token`) instead of the `/oauth2/v2.0/token`
+  endpoint, which every client shares.
 
 ### Fixed
 
+- Teams bound-client reseed no longer times out when Teams' own tokens are
+  still fresh (e.g. right after using Teams in `owa-piggy edge`). Teams
+  caches access tokens under `tmp.auth.v1.<oid>.Token.*` rather than MSAL's
+  `|accesstoken|` keys, so the forced-refresh wipe removed nothing and Teams
+  never called `/token`; the wipe now clears those entries too.
 - `reseed` that fell back to interactive sign-in now captures the profile's
   bound clients (Teams, ...) in that same still-open window, before it
   closes. Previously the window closed after the first client and each bound
