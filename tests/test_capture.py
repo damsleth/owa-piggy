@@ -396,6 +396,22 @@ def test_silent_timeout_before_session_does_not_blame_the_tenant(monkeypatch, tm
     assert "OWA_CAPTURE_HEADLESS=0" not in err
 
 
+def test_ticker_names_the_client_not_the_endpoint(capsys):
+    """Every client redeems at /oauth2/v2.0/token, so the heartbeat names the
+    client being rotated instead."""
+    capture._ticker("dno", "5e3ce6c0-2b1f-4285-8d4b-75ee78787346")(5)
+    capture._ticker("dno")(10)
+    capture._ticker("dno", "9199bf20-a13f-4107-85dc-02114787ef48")(15)
+    capture._ticker("dno", "00000000-0000-0000-0000-00000000beef")(20)
+    lines = capsys.readouterr().err.splitlines()
+    assert lines == [
+        "[dno] still waiting for teams token (5s elapsed)...",
+        "[dno] still waiting for owa token (10s elapsed)...",
+        "[dno] still waiting for owa token (15s elapsed)...",
+        "[dno] still waiting for 00000000-0000-0000-0000-00000000beef token (20s elapsed)...",
+    ]
+
+
 # --- _settle_host ---------------------------------------------------------
 
 
