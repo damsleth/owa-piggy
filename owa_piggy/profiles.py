@@ -35,16 +35,18 @@ from .setup import interactive_setup, prompt_for_clients, prompt_for_email
 
 
 def promote_default_if_missing() -> dict[str, Any]:
-    """Promote a remaining profile when the registry has no default."""
+    """Promote a remaining enabled profile when the registry has no default.
+
+    Only an enabled one: falling back to any on-disk profile re-registered
+    a profile the user had disabled, the moment the last enabled one was
+    deleted. With none left enabled the default stays empty."""
     reg = load_profiles_conf()
     if reg["OWA_DEFAULT_PROFILE"]:
         return reg
-    remaining = list_profiles()
-    if remaining:
-        promoted = (reg["OWA_PROFILES"] or remaining)[0]
-        reg["OWA_DEFAULT_PROFILE"] = promoted
-        if promoted not in reg["OWA_PROFILES"]:
-            reg["OWA_PROFILES"].append(promoted)
+    remaining = set(list_profiles())
+    enabled = [a for a in reg["OWA_PROFILES"] if a in remaining]
+    if enabled:
+        reg["OWA_DEFAULT_PROFILE"] = enabled[0]
         save_profiles_conf(reg)
     return reg
 
@@ -155,9 +157,11 @@ def create_profile(
         google_client_secret=google_client_secret,
     ):
         return 1
+    # Register before seeding: capture_bound_clients refuses an alias the
+    # registry does not list, which a brand-new profile is until here.
+    ensure_profile_registered(alias, make_default_if_first=True)
     if not google:
         _seed_bound_clients(alias, with_client, user_agent=user_agent)
-    ensure_profile_registered(alias, make_default_if_first=True)
     print(f"\n\tOWA-PIGGY 🐽  CONFIGURED [{alias}]", file=sys.stderr)
     # The app-reg-free banner is about the MSAL piggyback trick specifically -
     # a Google profile uses a real app registration, so it doesn't apply.
@@ -206,7 +210,10 @@ def _seed_bound_clients(
         if not derr:
             defaulted.append(client_id)
 
-    targets = requested + defaulted
+    # Every declared client, not only the ones added just now: a re-setup
+    # may have signed in as another account, and a client left holding the
+    # old account's token would keep minting for that user under this alias.
+    targets = [cid for cid, _ in clients_mod.capture_targets(alias)]
     if not targets:
         return
     names = ", ".join(clients_mod.client_name(c) for c in targets)

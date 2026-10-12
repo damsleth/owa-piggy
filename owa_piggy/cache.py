@@ -67,10 +67,10 @@ def get_cached_token(
     The 60s floor avoids handing out a token that will expire between
     the check and the caller's subsequent HTTP request."""
     entry = load_cache().get(_key(tenant_id, client_id, scope))
-    if not entry:
+    if not isinstance(entry, dict):
         return None
-    exp = entry.get("exp", 0)
-    if exp <= time.time() + min_remaining_seconds:
+    exp = entry.get("exp")
+    if not isinstance(exp, (int, float)) or exp <= time.time() + min_remaining_seconds:
         return None
     token = entry.get("access_token")
     return token if isinstance(token, str) and token else None
@@ -78,7 +78,8 @@ def get_cached_token(
 
 def get_cached_exp(tenant_id: str, client_id: str, scope: str) -> float | None:
     """Return the cached `exp` (unix seconds) for the triple, or None."""
-    exp = (load_cache().get(_key(tenant_id, client_id, scope)) or {}).get("exp")
+    entry = load_cache().get(_key(tenant_id, client_id, scope))
+    exp = entry.get("exp") if isinstance(entry, dict) else None
     return exp if isinstance(exp, (int, float)) else None
 
 

@@ -53,6 +53,23 @@ def test_refresh_posts_public_client_grant_and_drops_id_token(monkeypatch):
     assert "client_secret" not in seen["body"]
 
 
+def test_refresh_malformed_200_returns_none(monkeypatch, capsys):
+    resp = _FakeResp(None)
+    resp._payload = b"{truncated"
+    monkeypatch.setattr(oauth_halo.urllib.request, "urlopen", lambda req, timeout: resp)
+    assert oauth_halo.refresh_access_token("norconsult", "fake-rt-for-tests") is None
+    assert "malformed response" in capsys.readouterr().err
+
+
+def test_refresh_http_error_with_non_object_body_returns_none(monkeypatch, capsys):
+    def fake_urlopen(req, timeout):
+        raise urllib.error.HTTPError(req.full_url, 502, "bad", {}, io.BytesIO(b"[1]"))
+
+    monkeypatch.setattr(oauth_halo.urllib.request, "urlopen", fake_urlopen)
+    assert oauth_halo.refresh_access_token("norconsult", "fake-rt-for-tests") is None
+    assert "HTTP 502" in capsys.readouterr().err
+
+
 def test_refresh_http_error_returns_none(monkeypatch, capsys):
     def fake_urlopen(req, timeout):
         body = io.BytesIO(b'{"error":"invalid_grant"}')

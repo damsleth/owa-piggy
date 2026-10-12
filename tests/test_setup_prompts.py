@@ -142,6 +142,27 @@ def test_prompts_feed_the_same_path_as_the_flags(monkeypatch, tmp_config, clean_
     assert calls[0]["email"] == "me@corp.example"
 
 
+def test_a_new_profile_is_registered_before_its_clients_are_captured(
+    monkeypatch, tmp_config, clean_env
+):
+    """capture_bound_clients refuses an alias the registry omits, so with
+    another profile already registered, seeding before registering would
+    silently capture nothing for the new one."""
+    from owa_piggy.config import ensure_profile_registered, profile_is_disabled
+
+    ensure_profile_registered("existing")
+    monkeypatch.setattr(profiles, "interactive_setup", lambda *a, **k: True)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+    seen = []
+    monkeypatch.setattr(
+        profiles,
+        "_seed_bound_clients",
+        lambda alias, *a, **k: seen.append(profile_is_disabled(alias)),
+    )
+    assert profiles.create_profile("work") == 0
+    assert seen == [False]
+
+
 def test_tui_add_flow_keeps_its_own_blank_email_answer(monkeypatch, tmp_config, clean_env):
     """The TUI asks for the email itself, where blank means "paste flow".
     create_profile must not treat that as "nobody asked" and ask again."""

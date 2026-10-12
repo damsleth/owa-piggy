@@ -15,6 +15,7 @@ Verified live against norconsult.haloitsm.com on 2026-09-25: 200 with a
 
 from __future__ import annotations
 
+import http.client
 import json
 import sys
 import urllib.error
@@ -69,12 +70,20 @@ def refresh_access_token(host: str, refresh_token: str) -> dict[str, Any] | None
         try:
             err = json.loads(body)
             detail = f"{err.get('error', '?')}: {err.get('error_description', '')}"
-        except json.JSONDecodeError:
+        except (ValueError, AttributeError):  # not JSON, or not a JSON object
             detail = f"HTTP {e.code}"
         print(f"ERROR: Halo token exchange failed ({detail})", file=sys.stderr)
         return None
     except (urllib.error.URLError, TimeoutError) as e:
         print(f"ERROR: Halo token exchange failed ({getattr(e, 'reason', e)})", file=sys.stderr)
+        return None
+    except (ValueError, http.client.HTTPException) as e:
+        # A 200 with a malformed or truncated body; the shape check below
+        # covers valid JSON that is not a token object.
+        print(
+            f"ERROR: Halo token exchange returned a malformed response ({type(e).__name__})",
+            file=sys.stderr,
+        )
         return None
     if not isinstance(tokens, dict) or not tokens.get("access_token"):
         print("ERROR: Halo token exchange returned no access_token", file=sys.stderr)

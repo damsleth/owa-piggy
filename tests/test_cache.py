@@ -120,6 +120,18 @@ def test_non_dict_cache_returns_empty(tmp_config, clean_env):
     assert load_cache() == {}
 
 
+def test_malformed_entries_are_a_miss(tmp_config, clean_env):
+    # A hand-edited or half-written entry must read as a miss, not raise.
+    from owa_piggy.cache import _key
+
+    tmp_config.parent.mkdir(parents=True, exist_ok=True)
+    cache_path = tmp_config.parent / "cache.json"
+    for entry in ("a string", None, [1], {"exp": "soon", "access_token": "at"}, {}):
+        cache_path.write_text(json.dumps({_key(TID, CID, SCOPE): entry}))
+        assert get_cached_token(TID, CID, SCOPE) is None
+        assert get_cached_exp(TID, CID, SCOPE) is None
+
+
 def test_store_overwrites_previous(tmp_config, clean_env):
     future = int(time.time()) + 3600
     store_token(TID, CID, SCOPE, "old-at", future)

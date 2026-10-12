@@ -73,3 +73,13 @@ def test_google_setup_consent_error_surfaces(tmp_config, clean_env, monkeypatch,
 
     assert ok is False
     assert "user denied access" in capsys.readouterr().err
+
+
+def test_setup_refuses_to_switch_provider_in_place(tmp_config, clean_env, capsys):
+    google_profile = {"OWA_PROVIDER": "google", "OWA_REFRESH_TOKEN": "fake-rt-for-tests"}
+    assert setup_mod.interactive_setup(dict(google_profile), "mixed") is False
+    assert "is a Google profile" in capsys.readouterr().err
+
+    ms_profile = {"OWA_REFRESH_TOKEN": "fake-rt-for-tests", "OWA_TENANT_ID": "t"}
+    assert setup_mod.interactive_setup(dict(ms_profile), "mixed", google=True) is False
+    assert "is a Microsoft profile" in capsys.readouterr().err
