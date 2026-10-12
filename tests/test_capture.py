@@ -684,6 +684,19 @@ def test_pin_session_cookies_only_touches_session_cookies_of_the_chain():
     assert all(c["expires"] > 0 for c in s.set)
 
 
+def test_bound_clients_of_a_disabled_profile_are_not_captured(monkeypatch, tmp_config, clean_env):
+    from owa_piggy import clients
+    from owa_piggy.config import ensure_profile_registered, set_active_profile
+
+    set_active_profile("work")
+    clients.declare_client("work", clients.KOVA_KEY)
+    ensure_profile_registered("other")  # registry exists and omits "work"
+    monkeypatch.setattr(capture, "capture_silent", lambda *a, **kw: pytest.fail("launched"))
+    monkeypatch.setattr(capture, "capture_session", lambda *a, **kw: pytest.fail("launched"))
+
+    assert capture.capture_bound_clients("work") == (0, [])
+
+
 def test_bound_client_rotation_renews_a_session_service(monkeypatch, tmp_config, clean_env):
     from owa_piggy import clients
     from owa_piggy.config import set_active_profile

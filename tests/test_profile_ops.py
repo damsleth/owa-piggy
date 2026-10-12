@@ -155,6 +155,23 @@ def test_delete_profile_skips_promotion_when_disabled(monkeypatch, tmp_config, c
     assert load_profiles_conf()["OWA_DEFAULT_PROFILE"] == ""
 
 
+def test_delete_last_enabled_profile_does_not_enable_a_disabled_one(
+    monkeypatch, tmp_config, clean_env
+):
+    _make_profile_dir("work")
+    _make_profile_dir("parked")
+    ensure_profile_registered("work")
+    ensure_profile_registered("parked")
+    profiles.disable_profile("parked")
+    _stub_launchd(monkeypatch, installed=False)
+
+    ok, _ = profiles.delete_profile("work")
+    assert ok is True
+    reg = load_profiles_conf()
+    assert reg["OWA_DEFAULT_PROFILE"] == ""
+    assert "parked" not in reg["OWA_PROFILES"]
+
+
 def test_delete_profile_returns_error_when_unregister_fails(monkeypatch, tmp_config, clean_env):
     _make_profile_dir("work")
     ensure_profile_registered("work")

@@ -41,6 +41,26 @@ def test_refresh_access_token_success(monkeypatch):
     assert result == {"access_token": "AT", "expires_in": 3600}
 
 
+@pytest.mark.parametrize("body", [b"{truncated", b'["not", "an", "object"]'])
+def test_refresh_access_token_malformed_200_returns_none(monkeypatch, capsys, body):
+    resp = _FakeResp(None)
+    resp._payload = body
+    monkeypatch.setattr(oauth_google.urllib.request, "urlopen", lambda req, timeout=None: resp)
+    assert oauth_google.refresh_access_token("cid", "secret", "RT") is None
+    assert "malformed token response" in capsys.readouterr().err
+
+
+def test_refresh_access_token_http_error_with_non_object_body(monkeypatch, capsys):
+    import io
+
+    def raise_http_error(req, timeout=None):
+        raise urllib.error.HTTPError(oauth_google.TOKEN_URL, 502, "bad", {}, fp=io.BytesIO(b"[1]"))
+
+    monkeypatch.setattr(oauth_google.urllib.request, "urlopen", raise_http_error)
+    assert oauth_google.refresh_access_token("cid", "secret", "RT") is None
+    assert "HTTP 502" in capsys.readouterr().err
+
+
 def test_refresh_access_token_http_error_returns_none(monkeypatch, capsys):
     import io
 

@@ -40,6 +40,7 @@ from .config import (
     load_profiles_conf,
     profile_config_path,
     profile_edge_dir,
+    profile_is_disabled,
     resolve_profile,
     set_active_profile,
     validate_alias,
@@ -380,6 +381,15 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p_clients.add_argument("--json", action="store_true", help="print clients as JSON")
     clients_sub = p_clients.add_subparsers(dest="clients_command", metavar="<subcommand>")
+    # The subcommands accept --profile too, on either side of the verb. A
+    # child default of None would overwrite the parent's value (argparse
+    # merges subparser defaults last), so `clients --profile work remove
+    # teams` hit the default profile; SUPPRESS leaves the parent's alone.
+    child_profile: dict[str, Any] = {
+        "metavar": "<alias>",
+        "default": argparse.SUPPRESS,
+        "help": "target a specific profile",
+    }
 
     p_cl_add = clients_sub.add_parser("add", help="sign in to another service under this identity")
     p_cl_add.add_argument(
@@ -387,9 +397,7 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="<name[=org-or-url]>",
         help="pim, teams, or devops=<org name or full URL>",
     )
-    p_cl_add.add_argument(
-        "--profile", metavar="<alias>", default=None, help="target a specific profile"
-    )
+    p_cl_add.add_argument("--profile", **child_profile)
     p_cl_add.add_argument(
         "--browser", action="store_true", help="PIM: interactive browser sign-in with PKCE"
     )
@@ -399,15 +407,11 @@ def _build_parser() -> argparse.ArgumentParser:
         p_cl_tg.add_argument(
             "name", metavar="<name>", help="teams, devops, halo, ... or a client id"
         )
-        p_cl_tg.add_argument(
-            "--profile", metavar="<alias>", default=None, help="target a specific profile"
-        )
+        p_cl_tg.add_argument("--profile", **child_profile)
 
     p_cl_rm = clients_sub.add_parser("remove", help="forget a service and its token")
     p_cl_rm.add_argument("name", metavar="<name>", help="teams, devops, or a client id")
-    p_cl_rm.add_argument(
-        "--profile", metavar="<alias>", default=None, help="target a specific profile"
-    )
+    p_cl_rm.add_argument("--profile", **child_profile)
 
     p_profiles = sub.add_parser("profiles", help="list / manage profiles")
     p_profiles.add_argument("--json", action="store_true", help="print profiles as JSON")
@@ -657,6 +661,9 @@ def _mint_and_emit(args: argparse.Namespace, *, mode: str) -> int:
 
         # Rotation belongs in clients.json, not the profile config - the
         # FOCI token there is a different token for a different client.
+        # Keep the issue stamp: rotation does not extend an SPA token's 24h
+        # lifetime (same rule as OWA_RT_ISSUED_AT), and the dashboard reads
+        # the stamp to flag a client whose reseed has stopped working.
         def token_sink(new_rt: str, _bound_id: str = bound_id) -> None:
             clients.save_client(
                 alias,
@@ -664,6 +671,7 @@ def _mint_and_emit(args: argparse.Namespace, *, mode: str) -> int:
                 refresh_token=new_rt,
                 origin=entry.get("origin"),
                 capture_url=entry.get("capture_url"),
+                rt_issued_at=entry.get("rt_issued_at"),
             )
 
     # Access-token cache short-circuit. Modes that only need the AT (or
@@ -688,7 +696,14 @@ def _mint_and_emit(args: argparse.Namespace, *, mode: str) -> int:
     # A Halo token is only usable against its own tenant, so tell the
     # consumer where: OWA_TENANT_ID holds the Halo host for that provider.
     emit_extra = {"host": tenant_id} if provider == "halo" else None
-    if tenant_id and not getattr(args, "no_cache", False):
+    # An exported OWA_REFRESH_TOKEN may belong to another account than the
+    # one this profile's cache holds tokens for: keep it out of the cache
+    # both ways. A bound-client overlay is a plain dict (no env_keys), so
+    # its disk-sourced token still caches.
+    env_rt = "OWA_REFRESH_TOKEN" in getattr(config, "env_keys", ())
+    # Google profiles have no tenant; their tokens are stored under the
+    # empty-tenant key, so look them up there too.
+    if (tenant_id or provider == "google") and not env_rt and not getattr(args, "no_cache", False):
         cached_at = get_cached_token(tenant_id, client_id, scope)
         if cached_at:
             return _emit(
@@ -768,10 +783,11 @@ def _mint_and_emit(args: argparse.Namespace, *, mode: str) -> int:
         if rc == 0:
             config, persist = load_config()
             # Reload dropped the bound-client overlay; reapply it (reseed
-            # rotated that client's token too, so re-read the entry).
+            # rotated that client's token too, so re-read the entry; the
+            # sink's closure reads `entry`, so it keeps the new stamp).
             if bound_id and bound_entry is not None:
-                refreshed = clients.load_clients(alias).get(bound_id, bound_entry)
-                config = clients.overlay_config(config, bound_id, refreshed)
+                entry = clients.load_clients(alias).get(bound_id, bound_entry)
+                config = clients.overlay_config(config, bound_id, entry)
             result, info = exchange_fresh(
                 config, scope, persist=persist, capture_stderr=True, token_sink=token_sink
             )
@@ -795,7 +811,7 @@ def _mint_and_emit(args: argparse.Namespace, *, mode: str) -> int:
             exp: object = time.time() + int(result.get("expires_in") or 0)
         else:
             exp = decode_jwt_segment(access_token.split(".")[1]).get("exp")
-        if isinstance(exp, (int, float)):
+        if isinstance(exp, (int, float)) and not env_rt:
             store_token(info["tid"], info["cid"], scope, access_token, exp)
     except Exception:
         pass
@@ -1149,6 +1165,11 @@ def add_client(alias: str, client_id: str, url: str | None, *, browser: bool = F
     Shared by `clients add` and the dashboard's add/edit keys so the two
     can't drift. Re-enables a client the user disabled earlier.
     """
+    # The dashboard calls this directly, past _resolve_and_activate's gate,
+    # and the PIM and session-service paths open a sign-in of their own.
+    if profile_is_disabled(alias):
+        print(f"ERROR: profile {alias!r} is disabled; enable it first", file=sys.stderr)
+        return 1
     if client_id == clients.PIM_CLIENT_ID:
         if browser:
             from .pim_browser import sign_in
@@ -1156,7 +1177,10 @@ def add_client(alias: str, client_id: str, url: str | None, *, browser: bool = F
             from .pim_setup import sign_in
 
         config, _ = load_config(profile_config_path(alias))
-        return sign_in(alias, config)
+        rc = sign_in(alias, config)
+        if rc == 0:
+            clients.set_client_enabled(alias, client_id, True)
+        return rc
     if browser:
         print("ERROR: --browser applies only to clients add pim", file=sys.stderr)
         return 1
@@ -1460,12 +1484,23 @@ def _do_profiles_delete(
     # Destructive gating: alias is valid and exists. Require explicit
     # consent when not on a TTY so a machine invocation can't wipe
     # a profile without saying so.
-    if not yes and not sys.stdin.isatty():
+    # --json (which --agent implies) is machine output too: a prompt would
+    # land in the JSON on stdout, so it needs --yes like a non-TTY does.
+    if not yes and (as_json or not sys.stdin.isatty()):
         return _fail(
             "confirmation_required",
             "profiles delete is destructive; pass --yes to confirm "
             "(and --force if deleting the default profile)",
         )
+    if not yes:
+        # On a TTY, ask: the config and the Edge sidecar (its signed-in
+        # session) are gone for good once this returns.
+        try:
+            answer = input(f"delete profile {alias!r} and its Edge sidecar? [y/N] ")
+        except (EOFError, KeyboardInterrupt):
+            answer = ""
+        if answer.strip().lower() not in ("y", "yes"):
+            return _fail("cancelled", "delete cancelled")
     ok, err = delete_profile(
         alias,
         uninstall_launchd=True,
