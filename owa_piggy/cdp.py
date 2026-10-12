@@ -214,7 +214,13 @@ class CdpSession:
                 if remaining <= 0:
                     raise TimeoutError(f"no reply to {method} within {timeout}s")
                 self._sock.settimeout(remaining)
-                msg: dict[str, Any] = json.loads(_recv_frame(self._sock))
+                try:
+                    frame = _recv_frame(self._sock)
+                except socket.timeout as e:
+                    # Only an alias of TimeoutError from 3.10; on 3.9 it would
+                    # slip past callers catching TimeoutError.
+                    raise TimeoutError(f"no reply to {method} within {timeout}s") from e
+                msg: dict[str, Any] = json.loads(frame)
                 if msg.get("id") == msg_id:
                     if "error" in msg:
                         raise CdpError(method, msg["error"])
