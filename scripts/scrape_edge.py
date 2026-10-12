@@ -422,7 +422,9 @@ def main():
             time.sleep(0.5)
             continue
 
-        print(f"ERROR: unexpected result shape: {v}", file=sys.stderr)
+        # Keys only: a result with an `rt` but no `tid` lands here, and this
+        # line goes to the launchd log.
+        print(f"ERROR: unexpected result shape: keys={sorted(v)}", file=sys.stderr)
         return EXIT_ERROR
 
     # Timeout. If the last state we saw was a stale cache, the session likely

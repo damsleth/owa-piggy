@@ -149,6 +149,34 @@ def test_events_during_call_are_buffered_for_wait_event():
         s.close()
 
 
+def test_call_timeout_is_a_total_deadline_despite_streaming_events():
+    """A page that keeps emitting events must not keep a call with no reply
+    waiting past its timeout (each frame used to reset the socket timeout)."""
+    import json
+    import time
+
+    s, edge = _session_pair()
+    stop = threading.Event()
+
+    def chatter():
+        while not stop.is_set():
+            cdp._send_frame(edge, 0x1, json.dumps({"method": "Page.lifecycleEvent"}))
+            time.sleep(0.02)
+
+    t = threading.Thread(target=chatter, daemon=True)
+    t.start()
+    try:
+        start = time.monotonic()
+        with pytest.raises(TimeoutError):
+            s.call("Runtime.evaluate", timeout=0.3)
+        assert time.monotonic() - start < 2
+    finally:
+        stop.set()
+        t.join()
+        edge.close()
+        s.close()
+
+
 def test_wait_event_timeout_never_splits_a_frame():
     """A frame whose payload lands after the wait window must still be read
     whole by the next wait - not parsed from mid-payload."""
