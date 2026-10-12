@@ -148,6 +148,31 @@ def test_open_edge_delegates_to_capture(monkeypatch):
     assert "opened Edge" in msg and "work" in msg
 
 
+def test_open_edge_passes_service_url(monkeypatch):
+    from owa_piggy import capture as capture_mod
+
+    calls = []
+    monkeypatch.setattr(
+        capture_mod, "open_edge", lambda alias, **kw: calls.append(kw) or ("proc", "/tmp/x")
+    )
+    msg = profile_tui._action_open_edge("work", url="https://windows.cloud.microsoft")
+    assert calls == [{"url": "https://windows.cloud.microsoft"}]
+    assert "at https://windows.cloud.microsoft" in msg
+
+
+def test_service_url_follows_the_cell():
+    winapp = {"name": "winapp", "capture_url": "https://windows.cloud.microsoft"}
+    assert profile_tui._service_url({}, "winapp-id", winapp) == "https://windows.cloud.microsoft"
+    # Declared services and records without a URL have nothing to open.
+    assert profile_tui._service_url({}, "swodp", {"name": "swodp"}) == ""
+    assert profile_tui._service_url({}, "teams-id", None) == ""
+    # The profile column opens its capture app; "" lets open_edge pick OWA.
+    assert profile_tui._service_url({"OWA_CAPTURE_URL": "https://x.example"}, None, None) == (
+        "https://x.example"
+    )
+    assert profile_tui._service_url({}, None, None) == ""
+
+
 def test_open_edge_surfaces_launch_failure(monkeypatch):
     from owa_piggy import capture as capture_mod
 
