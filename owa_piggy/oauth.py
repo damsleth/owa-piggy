@@ -206,8 +206,12 @@ def exchange_token(
     )
     try:
         with _OPENER.open(req, timeout=EXCHANGE_TIMEOUT) as resp:
-            payload: dict[str, Any] = json.loads(resp.read())
-            return payload
+            payload = json.loads(resp.read())
+        if not isinstance(payload, dict):
+            # Valid JSON that is not a token object; callers .get() on it.
+            print("ERROR: token exchange returned a non-object response", file=_err_stream())
+            return None
+        return payload
     except urllib.error.HTTPError as e:
         err_body = e.read().decode("utf-8", errors="replace")
         try:

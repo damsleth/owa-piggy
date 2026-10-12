@@ -204,9 +204,16 @@ class CdpSession:
                 }
             ),
         )
-        self._sock.settimeout(timeout)
+        # A total deadline, not a per-read one: a page streaming events would
+        # otherwise reset the socket timeout on every frame and never let a
+        # missing reply time out.
+        deadline = time.monotonic() + timeout
         try:
             while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(f"no reply to {method} within {timeout}s")
+                self._sock.settimeout(remaining)
                 msg: dict[str, Any] = json.loads(_recv_frame(self._sock))
                 if msg.get("id") == msg_id:
                     if "error" in msg:

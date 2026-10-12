@@ -144,6 +144,18 @@ def interactive_setup(
     iPhone-routed-through-trau flow - no browser involvement on this
     machine.
     """
+    # Switching provider in place is refused: save_config merges, so the
+    # old provider's OWA_PROVIDER / OWA_CLIENT_ID would survive next to the
+    # new refresh token and send every exchange to the wrong endpoint.
+    was_google = (config.get("OWA_PROVIDER") or "").strip() == "google"
+    if config.get("OWA_REFRESH_TOKEN") and was_google != google:
+        kind = "a Google" if was_google else "a Microsoft"
+        print(
+            f"ERROR: profile {alias!r} is {kind} profile; set the other provider up "
+            f"under a new alias, or `owa-piggy profiles delete {alias}` first.",
+            file=sys.stderr,
+        )
+        return False
     # Persist the UA up front so all three branches (trau/email/paste)
     # write it alongside any tokens they capture; reseed.py later reads
     # OWA_USER_AGENT to keep silent refresh runs UA-consistent with the

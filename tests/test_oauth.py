@@ -299,6 +299,12 @@ def test_exchange_token_success(monkeypatch):
     assert out == {"access_token": "fake-access-token", "expires_in": 3600}
 
 
+def test_exchange_token_non_object_200_returns_none(monkeypatch, capsys):
+    monkeypatch.setattr(oauth._OPENER, "open", lambda req, timeout=None: _FakeResp(b"[1]"))
+    assert oauth.exchange_token("1.FAKE-rt", "fake-tenant", oauth.CLIENT_ID, "scope") is None
+    assert "non-object response" in capsys.readouterr().err
+
+
 def test_exchange_token_aadsts700084(monkeypatch):
     body = json.dumps(
         {

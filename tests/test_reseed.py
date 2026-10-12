@@ -692,4 +692,7 @@ def test_reauth_failure_stamps_last_attempt(monkeypatch, tmp_config, clean_env):
     }
     reseed_mod._do_reseed_capture("une", config)
     assert saved["OWA_REAUTH_LAST_AT"].endswith("Z")
-    assert reseed_mod.reseed_health(saved)["last_attempt_at"] == saved["OWA_REAUTH_LAST_AT"]
+    # Only the counter is persisted; save_config merges it into the rest.
+    assert set(saved) == {"OWA_REAUTH_FAILS", "OWA_REAUTH_FAILS_AT", "OWA_REAUTH_LAST_AT"}
+    merged = {**config, **saved}
+    assert reseed_mod.reseed_health(merged)["last_attempt_at"] == saved["OWA_REAUTH_LAST_AT"]
