@@ -332,19 +332,38 @@ def _action_reseed(state: PickerState, current: str) -> str:
     return f"reseed succeeded for {current!r}." if rc == 0 else f"reseed failed for {current!r}."
 
 
-def _action_open_edge(current: str) -> str:
+def _action_open_edge(current: str, url: str | None = None) -> str:
     """Open a normal Edge window against <current>'s sidecar userdata dir
     and leave it running. No cooked-mode drop: open_edge is detached and
     returns immediately, so there's nothing to wait on - we stay in the
     picker and just report what happened on the status line.
+
+    `url` is what `b` passes: a service's own page instead of OWA. Opening
+    it in the sidecar rather than the default browser is the point - that
+    is the window signed in as this profile, and a sign-in there is what
+    the next reseed reads.
     """
     from .capture import open_edge
 
     try:
-        open_edge(current)
+        open_edge(current, url=url)
     except RuntimeError as e:
         return f"edge launch failed for {current!r}: {e}"
-    return f"opened Edge for {current!r}; sign in, CLOSE Edge, then reseed (r)."
+    where = f" at {url}" if url else ""
+    return f"opened Edge for {current!r}{where}; sign in, CLOSE Edge, then reseed (r)."
+
+
+def _service_url(config: dict[str, str], key: str | None, record: dict[str, Any] | None) -> str:
+    """The page `b` opens for the highlighted cell. Pure.
+
+    The profile's own column (key None) is its capture app - OWA unless
+    OWA_CAPTURE_URL moved it, and "" lets open_edge default to OWA. A
+    service opens its capture_url; one without (declared services, PIM)
+    has no page to open and returns "" too, which the caller reports.
+    """
+    if key is None:
+        return config.get("OWA_CAPTURE_URL", "").strip()
+    return str((record or {}).get("capture_url", "") or "")
 
 
 def _profile_config(alias: str) -> dict[str, str]:
@@ -836,7 +855,8 @@ def run_dashboard(
       r                reseed highlighted profile        (re-probes)
       R                reseed every profile               (re-probes)
       e                open Edge for highlighted profile's sidecar session
-      h                pin capture mode: headless <-> visible (offscreen)
+      b                open the highlighted service's page in that sidecar
+      h              pin capture mode: headless <-> visible (offscreen)
       c                edit the highlighted profile's config in $EDITOR
       g                refresh token health (re-probe)
       q / esc          quit
@@ -844,6 +864,8 @@ def run_dashboard(
     With the cell cursor on a service column, `space` enables/disables that
     service, `a` adds it, `e` edits its URL, `d` removes it and `r` captures
     it (the `_client_*` actions); every other key keeps its profile meaning.
+    `b` follows the cell cursor too: the service's capture URL, or the
+    profile's own app on the profile column.
 
     Probing is network-bound (one live AAD exchange per profile, run
     concurrently by `_probe_all`), so the screen paints a "probing..."
@@ -916,7 +938,7 @@ def run_dashboard(
                 "enter set default\r\n"
                 "  a add  ·  d delete  ·  l schedule  ·  u unschedule  ·  r reseed  ·  "
                 "R reseed all  ·  g refresh\r\n"
-                "  e edge  ·  h headless/visible  ·  c edit config  ·  q quit"
+                "  e edge  ·  b browser  ·  h headless/visible  ·  c edit config  ·  q quit"
                 f"{RESET}\r\n\r\n"
             )
         else:
@@ -924,7 +946,7 @@ def run_dashboard(
             sys.stdout.write(
                 f"  {DIM}"
                 f"service {label}:  space enable/disable  ·  a add  ·  e edit URL  ·  "
-                "d remove  ·  r capture\r\n"
+                "d remove  ·  r capture  ·  b browser\r\n"
                 "  up/down  navigate  ·  left/right  services  ·  enter set default  ·  "
                 "g refresh\r\n"
                 "  l/u schedule  ·  h headless/visible  ·  c edit config  ·  q quit"
@@ -1098,6 +1120,20 @@ def run_dashboard(
 
             if ch == "e":
                 state.message = _action_open_edge(current) or ""
+                draw()
+                continue
+
+            if ch == "b":
+                label, key, record = "profile", None, None
+                records_by_alias, columns = load_clients_view(profiles)  # clamps state.col
+                if state.col:
+                    label, key = columns[state.col - 1]
+                    record = _find_record(records_by_alias[current], key)
+                url = _service_url(_profile_config(current), key, record)
+                if key is not None and not url:
+                    state.message = f"{label} on {current!r} has no URL to open."
+                else:
+                    state.message = _action_open_edge(current, url=url or None)
                 draw()
                 continue
 
