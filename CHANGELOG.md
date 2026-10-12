@@ -10,6 +10,50 @@ Releases before v0.12.0 are recorded only in the annotated git tags
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-10-12
+
+### Added
+
+- Dashboard `b` key: opens the highlighted service's page (its capture URL,
+  or the profile's own app on the profile column) in that profile's
+  signed-in sidecar Edge.
+
+### Changed
+
+- `profiles delete` on a TTY now asks before deleting, as documented.
+  `profiles delete --json` (and `--agent`) needs `--yes`, like a non-TTY
+  call, so a prompt never lands in the JSON output.
+- `setup` refuses to switch an existing profile between Google and
+  Microsoft; set the other provider up under a new alias.
+- `setup` re-captures every declared client, not only newly added ones.
+- Bound-client token rotation keeps the client's `rt_issued_at`, the same
+  rule as the profile token, so the dashboard's 24h warning stays accurate.
+
+### Fixed
+
+- `clients --profile <alias> <verb>` targeted the default profile: the
+  subcommand's own `--profile` default overwrote the parent's.
+- Disabled profiles stay inert: the dashboard's per-service capture and add
+  paths no longer launch Edge or sign in for them, and deleting the last
+  enabled profile no longer re-enables a disabled one as the new default.
+- A new profile's clients were not captured during setup when another
+  profile was already registered.
+- Interactive reseed validates the signed-in account before saving bound
+  clients' tokens.
+- The reauth-failure counter no longer writes back a refresh token that a
+  concurrent call had rotated.
+- An exported `OWA_REFRESH_TOKEN` neither reads nor writes the profile's
+  access-token cache.
+- Changing a client's sign-in host drops its old refresh token, so a Halo
+  token is never sent to a different Halo host.
+- Re-signing in to a disabled PIM client re-enables it.
+- Google profiles now use the access-token cache.
+- `scrape_edge.py` no longer prints a captured refresh token in its
+  unexpected-result error.
+- Malformed or non-object token and error responses (AAD, Google, Halo) and
+  malformed cache entries fail cleanly instead of raising.
+- A CDP command times out on schedule even while the page streams events.
+
 ## [1.4.0] - 2026-10-08
 
 ### Added
