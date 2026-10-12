@@ -118,6 +118,19 @@ def test_declare_keeps_an_existing_token(profile):
     assert clients.load_clients(profile)[TEAMS]["refresh_token"] == "rt-1"
 
 
+def test_declare_drops_the_token_when_the_sign_in_host_changes(profile):
+    # Halo exchanges at its capture_url's host: the old host's token must
+    # not be sent to a new one. Same host, other path keeps it.
+    halo = clients.HALO_KEY
+    clients.save_client(profile, halo, refresh_token="rt-a", capture_url="https://a.haloitsm.com")
+    clients.declare_client(profile, halo, capture_url="https://a.haloitsm.com/portal")
+    assert clients.load_clients(profile)[halo]["refresh_token"] == "rt-a"
+    clients.declare_client(profile, halo, capture_url="https://b.haloitsm.com")
+    entry = clients.load_clients(profile)[halo]
+    assert entry["refresh_token"] == ""
+    assert "rt_issued_at" not in entry
+
+
 # --- --with-client parsing --------------------------------------------
 
 

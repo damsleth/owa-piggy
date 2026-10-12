@@ -38,6 +38,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Any
+from urllib.parse import urlsplit
 
 from .config import (
     DEVOPS_CLIENT_ID,
@@ -281,6 +282,13 @@ def declare_client(
             f"(its sign-in URL is org-specific). Pass "
             f"--with-client {client_name(client_id)}=<url>"
         )
+    old_url = entry.get("capture_url") or ""
+    if old_url and urlsplit(old_url).netloc != urlsplit(resolved_url).netloc:
+        # A new sign-in host means a new issuer for Halo, whose exchange
+        # goes to the capture_url's host: keeping the old token would send
+        # it there. Drop it; the next capture mints one at the new host.
+        entry["refresh_token"] = ""
+        entry.pop("rt_issued_at", None)
     entry["capture_url"] = resolved_url
     entry["origin"] = origin or entry.get("origin") or meta.get("origin") or ""
     fields = {k: v for k, v in entry.items() if v or k == "refresh_token"}
@@ -496,8 +504,6 @@ def overlay_halo(config: dict[str, str], entry: ClientEntry) -> dict[str, str]:
     scope) cache key apply unchanged. The host comes from the entry's
     capture_url: the same URL the sidecar signs in at.
     """
-    from urllib.parse import urlsplit
-
     from .oauth_halo import HALO_CLIENT_ID
 
     overlaid = dict(config)

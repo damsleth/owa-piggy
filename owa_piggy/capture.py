@@ -1044,6 +1044,9 @@ def capture_signin(
             # never writes a long-lived cache. Surface this so subsequent
             # silent reseeds don't look mysteriously broken.
             log("MSAL did not persist localStorage; silent reseed unlikely to work for this tenant")
+        # Validate the account before on_session: its callback saves bound
+        # clients' tokens, which must not happen for the wrong user.
+        config = _build_config(token_response, email=email, mode="capture")
         if on_session is not None:
             on_session(session)
     except (ConnectionError, CdpError, OSError) as e:
@@ -1056,7 +1059,7 @@ def capture_signin(
             session.close()
         _terminate(proc)
 
-    return _build_config(token_response, email=email, mode="capture")
+    return config
 
 
 def _is_login_host(host: str) -> bool:
@@ -1688,6 +1691,11 @@ def capture_bound_clients(
     """
     from . import clients as clients_mod
 
+    # Disabled profiles are inert (AGENTS.md); the dashboard's per-service
+    # capture reaches here without going through do_reseed's gate.
+    if _config.profile_is_disabled(alias):
+        print(f"[{alias}] profile is disabled; not capturing its clients", file=sys.stderr)
+        return 0, []
     targets = clients_mod.capture_targets(alias)
     if only:
         targets = [(cid, entry) for cid, entry in targets if cid in set(only)]

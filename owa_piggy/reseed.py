@@ -108,7 +108,11 @@ def _record_reauth_fail(config: dict[str, str]) -> int:
     # OWA_REAUTH_FAILS_AT is the RT stamp, not a clock time; this is the
     # wall-clock time of the attempt, so `status` can say when it last failed.
     config["OWA_REAUTH_LAST_AT"] = iso_utc_now()
-    save_config(config)
+    # Persist only the counter: `config` was loaded before the capture ran,
+    # and saving all of it would put back a refresh token that a concurrent
+    # `token` call rotated in the meantime.
+    keys = ("OWA_REAUTH_FAILS", "OWA_REAUTH_FAILS_AT", "OWA_REAUTH_LAST_AT")
+    save_config({k: config[k] for k in keys})
     return total
 
 
