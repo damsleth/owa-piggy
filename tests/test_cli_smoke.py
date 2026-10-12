@@ -704,6 +704,34 @@ def test_cache_hit_env_mode(monkeypatch, capsys, tmp_config, clean_env, make_jwt
         pytest.fail("EXPIRES_IN line missing")
 
 
+def test_env_refresh_token_neither_reads_nor_writes_the_profile_cache(
+    monkeypatch, capsys, tmp_config, clean_env, make_jwt
+):
+    """An exported OWA_REFRESH_TOKEN may be another account: it must not be
+    served the profile's cached token, nor leave its own in that cache."""
+    import time as _time
+
+    from owa_piggy.cache import get_cached_token, store_token
+    from owa_piggy.config import save_config
+    from owa_piggy.oauth import CLIENT_ID
+    from owa_piggy.scopes import resolve_audience
+
+    save_config({"OWA_REFRESH_TOKEN": "1.AQ_fake-disk", "OWA_TENANT_ID": "tid"})
+    scope, _ = resolve_audience()
+    future = int(_time.time()) + 1800
+    disk_at = make_jwt({"exp": future, "who": "disk"})
+    env_at = make_jwt({"exp": future, "who": "env"})
+    store_token("tid", CLIENT_ID, scope, disk_at, future)
+    monkeypatch.setenv("OWA_REFRESH_TOKEN", "1.AQ_fake-env")
+    monkeypatch.setattr(
+        "owa_piggy.token_flow.exchange_token", lambda *a, **k: {"access_token": env_at}
+    )
+
+    assert _run(monkeypatch, ["token"]) == 0
+    assert env_at in capsys.readouterr().out
+    assert get_cached_token("tid", CLIENT_ID, scope) == disk_at
+
+
 def test_cache_hit_decode_mode(monkeypatch, capsys, tmp_config, clean_env, make_jwt):
     """decode on a cache hit decodes the cached AT, doesn't re-mint."""
     import time as _time
@@ -990,6 +1018,72 @@ def test_profiles_delete_rejects_bad_alias(monkeypatch, capsys, tmp_config, clea
     rc = _run(monkeypatch, ["profiles", "delete", "../escape"])
     assert rc != 0
     assert "invalid profile alias" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["clients", "--profile", "work", "remove", "teams"],
+        ["clients", "remove", "teams", "--profile", "work"],
+        ["clients", "--profile", "work", "add", "teams"],
+        ["clients", "--profile", "work", "disable", "teams"],
+    ],
+)
+def test_clients_profile_flag_works_on_either_side_of_the_verb(argv):
+    assert cli_mod._build_parser().parse_args(argv).profile == "work"
+
+
+def test_add_client_refuses_a_disabled_profile(monkeypatch, capsys, tmp_config, clean_env):
+    # The dashboard calls add_client directly; it must not sign in for a
+    # profile that is switched off.
+    from owa_piggy import clients
+    from owa_piggy.config import ensure_profile_registered, profile_dir
+
+    profile_dir("parked").mkdir(parents=True, exist_ok=True)
+    ensure_profile_registered("other")
+    monkeypatch.setattr("owa_piggy.pim_setup.sign_in", lambda *a: pytest.fail("signed in"))
+    assert cli_mod.add_client("parked", clients.PIM_CLIENT_ID, None) == 1
+    assert "is disabled" in capsys.readouterr().err
+
+
+def test_profiles_delete_json_on_tty_needs_yes_and_never_prompts(
+    monkeypatch, capsys, tmp_config, clean_env
+):
+    from owa_piggy.config import ensure_profile_registered, profile_dir
+
+    for alias in ("work", "spare"):
+        profile_dir(alias).mkdir(parents=True, exist_ok=True)
+        ensure_profile_registered(alias)
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True, raising=False)
+    monkeypatch.setattr("builtins.input", lambda *_: pytest.fail("prompted under --json"))
+    assert cli_mod._do_profiles_delete("spare", yes=False, as_json=True) == 1
+    assert json.loads(capsys.readouterr().out)["ok"] is False
+    assert profile_dir("spare").exists()
+
+
+@pytest.mark.parametrize("answer", ["", "n", EOFError])
+def test_profiles_delete_on_tty_asks_and_declining_keeps_profile(
+    monkeypatch, capsys, tmp_config, clean_env, answer
+):
+    from owa_piggy.config import ensure_profile_registered, profile_dir
+
+    for alias in ("work", "spare"):
+        profile_dir(alias).mkdir(parents=True, exist_ok=True)
+        ensure_profile_registered(alias)
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True, raising=False)
+
+    def fake_input(_prompt):
+        if answer is EOFError:
+            raise EOFError
+        return answer
+
+    monkeypatch.setattr("builtins.input", fake_input)
+    monkeypatch.setattr(
+        cli_mod, "delete_profile", lambda *a, **k: pytest.fail("declined delete must not run")
+    )
+    assert cli_mod._do_profiles_delete("spare", force=False, yes=False) == 1
+    assert profile_dir("spare").exists()
+    assert "delete cancelled" in capsys.readouterr().err
 
 
 class _TTYStringIO(io.StringIO):

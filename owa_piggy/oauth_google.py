@@ -9,6 +9,7 @@ scraping. `run_local_consent_flow` is the one-time interactive seed;
 
 from __future__ import annotations
 
+import http.client
 import http.server
 import json
 import secrets
@@ -167,8 +168,11 @@ def _exchange(
     )
     try:
         with urllib.request.urlopen(req, timeout=EXCHANGE_TIMEOUT) as resp:
-            tokens: dict[str, Any] = json.loads(resp.read())
-            return tokens
+            tokens = json.loads(resp.read())
+    except (ValueError, http.client.HTTPException) as e:
+        # A 200 with a malformed or truncated body. JSONDecodeError and
+        # UnicodeDecodeError are ValueErrors; IncompleteRead is HTTPException.
+        raise ConsentError(f"malformed token response ({type(e).__name__})") from None
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace")
         try:
@@ -176,9 +180,12 @@ def _exchange(
             raise ConsentError(
                 f"{err.get('error', '?')}: {err.get('error_description', '')}"
             ) from None
-        except json.JSONDecodeError:
+        except (ValueError, AttributeError):  # not JSON, or not a JSON object
             raise ConsentError(f"HTTP {e.code}: {body[:200]}") from None
     except urllib.error.URLError as e:
         raise ConsentError(str(e.reason)) from None
     except TimeoutError:
         raise ConsentError(f"token exchange timed out after {EXCHANGE_TIMEOUT}s") from None
+    if not isinstance(tokens, dict):
+        raise ConsentError("malformed token response (not a JSON object)")
+    return tokens
