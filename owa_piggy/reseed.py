@@ -504,6 +504,16 @@ def _do_reseed_capture(alias: str, config: dict[str, str]) -> int:
         capture.capture_bound_clients(
             alias, user_agent=user_agent, headless=_headless_pref(config), only=remaining
         )
+    # Once per profile, after every Edge of this reseed is down - pruning
+    # between the main capture and the bound clients would make Teams
+    # re-download what the prune just threw away. Never fails the reseed.
+    try:
+        freed = capture.prune_storage(_config.profile_edge_dir(alias))
+    except (OSError, RuntimeError) as e:
+        print(f"[{alias}] storage prune skipped: {e}", file=sys.stderr)
+    else:
+        if freed:
+            print(f"[{alias}] pruned {freed >> 20} MB of browser storage", file=sys.stderr)
     return 0
 
 
