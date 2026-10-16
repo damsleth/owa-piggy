@@ -79,6 +79,28 @@ _WIPE_ACCESS_TOKENS_JS = r"""(() => {
     return n;
 })()"""
 
+# Ceiling for the HTTP cache, passed as --disk-cache-size to every Edge we
+# start. Uncapped, Chromium sizes it off free disk and the sidecars had grown
+# 400-870 MB each; Code Cache is sized off the same value and shrinks with
+# it. A warm reseed's working set is ~30 MB, so the cap costs no extra
+# download, and Chromium trims an oversized cache down to it on the next run
+# (measured: 791 -> 104 MB in one 20s launch).
+_DISK_CACHE_BYTES = 100 * 1024 * 1024
+
+# Storage the cache cap does not reach: Service Worker CacheStorage and
+# WebStorage (partitioned CacheStorage/IndexedDB) are quota-managed, and the
+# component updater keeps its downloads in component_crx_cache. All of it is
+# regenerable, none of it holds sign-in state (cookies and Local Storage live
+# elsewhere). Edge is killed seconds after /token lands, so a service worker
+# never reaches the activate step that would drop its old cache versions, and
+# the pile only grows. Pruned past _PRUNE_THRESHOLD_BYTES rather than every
+# run: a wiped Teams profile re-downloads ~35 MB on its next reseed (12s vs
+# 8s), then settles back to ~3 MB per run. The threshold sits well above a
+# warm Teams profile's ~200 MB, so a prune is a once-in-weeks cost, not an
+# hourly one.
+_PRUNE_DIRS = ("Default/Service Worker", "Default/WebStorage", "component_crx_cache")
+_PRUNE_THRESHOLD_BYTES = 500 * 1024 * 1024
+
 # Edge binaries we know about. macOS first since this tool is macOS-first;
 # the Linux paths exist for the rare dev who runs the test suite on Linux.
 _EDGE_CANDIDATES = (
@@ -374,6 +396,7 @@ def launch_edge(
         # long-running browser survives an in-place update, which a sidecar
         # that lives for seconds does not need.
         "--disable-features=MacAppCodeSignClone",
+        f"--disk-cache-size={_DISK_CACHE_BYTES}",
         "--remote-debugging-address=127.0.0.1",
         f"--remote-debugging-port={port}",
         f"--user-data-dir={edge_dir}",
@@ -497,6 +520,7 @@ def open_edge(alias: str, *, url: str | None = None) -> tuple[subprocess.Popen[b
         binary,
         "--no-first-run",
         "--no-default-browser-check",
+        f"--disk-cache-size={_DISK_CACHE_BYTES}",
         f"--user-data-dir={edge_dir}",
         url or OWA_URL,
     ]
@@ -528,6 +552,43 @@ def _terminate(proc: subprocess.Popen[bytes] | None) -> None:
         # Only after Edge is actually down: releasing while it still holds
         # the profile dir hands the next caller the same forwarding trap.
         _release_edge_lock(proc.pid)
+
+
+def _tree_bytes(path: Path) -> int:
+    total = 0
+    for root, _, files in os.walk(path):
+        for name in files:
+            with contextlib.suppress(OSError):
+                total += os.lstat(os.path.join(root, name)).st_size
+    return total
+
+
+def prune_storage(edge_dir: Path) -> int:
+    """Delete `_PRUNE_DIRS` under `edge_dir` once together they pass
+    `_PRUNE_THRESHOLD_BYTES`. Returns the bytes freed (0 when under the
+    threshold or skipped). See `_PRUNE_DIRS` for why these and why a
+    threshold.
+
+    Taken under the profile flock so no capture Edge can start mid-delete,
+    and skipped while any browser holds the dir: `open_edge` windows take
+    no flock, and ripping storage out from under a session the user is
+    driving is exactly the regression this must not cause. The size scan
+    is a stat walk (~0.1s on a 1.2 GB, 6k-file profile)."""
+    dirs = [edge_dir / d for d in _PRUNE_DIRS]
+    size = sum(_tree_bytes(d) for d in dirs)
+    if size < _PRUNE_THRESHOLD_BYTES:
+        return 0
+    fd = _acquire_edge_lock(edge_dir)
+    try:
+        if _singleton_pid(edge_dir) is not None:
+            return 0
+        for d in dirs:
+            # A leftover file is harmless (Chromium rebuilds a damaged
+            # storage DB); the re-scan below reports what actually went.
+            shutil.rmtree(d, ignore_errors=True)
+    finally:
+        os.close(fd)
+    return size - sum(_tree_bytes(d) for d in dirs)
 
 
 # --- Pure helpers (unit-tested) --------------------------------------------
