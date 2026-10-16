@@ -10,6 +10,22 @@ Releases before v0.12.0 are recorded only in the annotated git tags
 
 ## [Unreleased]
 
+## [1.4.2] - 2026-10-16
+
+### Fixed
+
+- Sidecar Edge profiles no longer grow without bound (7 profiles had
+  reached 13.6 GB). Every Edge launch caps the HTTP and code cache at
+  100 MB; Chromium trims an existing oversized cache on the next run.
+  Reseeds pull no extra data, since their working set is ~30 MB.
+- A reseed now deletes the profile's Service Worker, WebStorage and
+  component-download storage once together they pass 500 MB. Cookies and
+  Local Storage are kept, so sign-in is unaffected. The next reseed
+  re-downloads about 35 MB for a Teams profile, then returns to normal.
+  The prune is skipped while an Edge window is open on the profile.
+- CDP timeouts raise `TimeoutError` instead of `socket.timeout` on
+  Python 3.9.
+
 ## [1.4.1] - 2026-10-12
 
 ### Added
