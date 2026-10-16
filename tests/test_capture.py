@@ -339,6 +339,8 @@ def test_offscreen_launch_keeps_renderer_hot(monkeypatch, tmp_path):
     capture._release_edge_lock(_FakeProc.pid)
     # Every killed Edge would otherwise leak a ~1.1 GB app-bundle clone.
     assert "--disable-features=MacAppCodeSignClone" in seen["args"]
+    # Uncapped, the HTTP cache grew to ~0.9 GB per sidecar.
+    assert f"--disk-cache-size={capture._DISK_CACHE_BYTES}" in seen["args"]
     assert "--disable-backgrounding-occluded-windows" in seen["args"]
     assert "--disable-renderer-backgrounding" in seen["args"]
 
@@ -742,3 +744,29 @@ def test_bound_clients_in_session_navigates_the_open_window(monkeypatch, tmp_con
     assert done == {"teams-id"}
     assert calls == [("Page.navigate", {"url": "https://teams.example/"})]
     assert clients.load_clients("work")["teams-id"]["refresh_token"] == "fake-rt-for-tests"
+
+
+def test_prune_storage_threshold_keeps_signin_state(monkeypatch, tmp_path):
+    """Regenerable storage goes only past the threshold, never while a browser
+    holds the dir, and never cookies or Local Storage (the sign-in state)."""
+    sw = tmp_path / "Default" / "Service Worker" / "CacheStorage"
+    sw.mkdir(parents=True)
+    (sw / "blob").write_bytes(b"x" * 64)
+    keep = [tmp_path / "Default" / "Cookies", tmp_path / "Default" / "Local Storage" / "db"]
+    for f in keep:
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_bytes(b"k")
+
+    monkeypatch.setattr(capture, "_PRUNE_THRESHOLD_BYTES", 65)
+    assert capture.prune_storage(tmp_path) == 0
+    assert sw.exists()
+
+    monkeypatch.setattr(capture, "_PRUNE_THRESHOLD_BYTES", 64)
+    monkeypatch.setattr(capture, "_singleton_pid", lambda d: 4242)  # live user window
+    assert capture.prune_storage(tmp_path) == 0
+    assert sw.exists()
+
+    monkeypatch.setattr(capture, "_singleton_pid", lambda d: None)
+    assert capture.prune_storage(tmp_path) == 64
+    assert not (tmp_path / "Default" / "Service Worker").exists()
+    assert all(f.exists() for f in keep)
