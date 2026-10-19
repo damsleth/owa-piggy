@@ -34,10 +34,14 @@ def test_no_prompt_without_a_tty(monkeypatch):
     setup.offer_companions()
 
 
+def _human_at_terminal(monkeypatch):
+    for stream in (setup.sys.stdin, setup.sys.stdout, setup.sys.stderr):
+        monkeypatch.setattr(stream, "isatty", lambda: True, raising=False)
+
+
 def test_offers_only_missing_companions(monkeypatch):
     calls, prompts = [], []
-    monkeypatch.setattr(setup.sys.stdin, "isatty", lambda: True, raising=False)
-    monkeypatch.setattr(setup.sys.stderr, "isatty", lambda: True, raising=False)
+    _human_at_terminal(monkeypatch)
     monkeypatch.delenv("OWA_PIGGY_NO_COMPANIONS", raising=False)
     monkeypatch.setattr(
         setup.shutil, "which", lambda b: "/bin/uv" if b in ("uv", "owa-tui") else None
@@ -48,3 +52,25 @@ def test_offers_only_missing_companions(monkeypatch):
     setup.offer_companions()
     assert len(prompts) == 1 and "owa-tools" in prompts[0]  # owa-tui already on PATH
     assert calls == [["uv", "tool", "install", "owa-tools"]]  # Enter takes the Y default
+
+
+def test_first_run_offer_is_made_once(monkeypatch):
+    prompts = []
+    _human_at_terminal(monkeypatch)
+    monkeypatch.delenv("OWA_PIGGY_NO_COMPANIONS", raising=False)
+    monkeypatch.setattr(setup.shutil, "which", lambda b: "/bin/uv" if b == "uv" else None)
+    monkeypatch.setattr(builtins, "input", lambda p="": prompts.append(p) or "n")
+    setup.offer_companions(once=True)
+    setup.offer_companions(once=True)
+    assert len(prompts) == 2  # owa-tools + owa-tui on the first run, nothing after
+
+
+def test_piped_stdout_never_prompts(monkeypatch):
+    """`owa-tools` runs `owa-piggy token` with the user's stdin but piped output."""
+    _human_at_terminal(monkeypatch)
+    monkeypatch.setattr(setup.sys.stdout, "isatty", lambda: False, raising=False)
+    monkeypatch.setattr(
+        builtins, "input", lambda *_: (_ for _ in ()).throw(AssertionError("prompted"))
+    )
+    monkeypatch.setattr(setup.shutil, "which", lambda _b: None)
+    setup.offer_companions(once=True)

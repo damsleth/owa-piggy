@@ -1607,6 +1607,8 @@ def _dispatch(raw: list[str]) -> int:
     if handler is None:
         parser.print_help()
         return 1
+    if command != "setup":  # setup offers once it has signed in
+        offer_companions(once=True)
     return handler(args)
 
 

@@ -10,6 +10,16 @@ Releases before v0.12.0 are recorded only in the annotated git tags
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-10-19
+
+### Changed
+
+- The owa-tools / owa-tui offer now comes on the first interactive run of
+  any command, not only after `setup`, and only once (marker:
+  `~/.config/owa-piggy/.companions-offered`; the curl installer sets it).
+  It needs stdin, stdout and stderr on a terminal, so `$(owa-piggy token)`
+  and owa-tools' subprocess calls never prompt.
+
 ## [1.5.0] - 2026-10-19
 
 ### Added

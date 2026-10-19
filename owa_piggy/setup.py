@@ -503,13 +503,24 @@ def companion_install_cmd(pkg: str, prefix: str | None = None) -> list[str]:
     return next((cmd for cmd in (uv, pipx, brew) if shutil.which(cmd[0])), [])
 
 
-def offer_companions() -> None:
+def offer_companions(*, once: bool = False) -> None:
     """Offer each companion CLI that is not on PATH yet. Silent unless a human
-    is at the terminal, and OWA_PIGGY_NO_COMPANIONS=1 turns it off."""
+    is at the terminal: owa-tools runs `owa-piggy token` with stdin inherited
+    but stdout/stderr piped, and `$(owa-piggy token)` pipes stdout.
+    OWA_PIGGY_NO_COMPANIONS=1 turns it off. `once` is the first-run offer on
+    any command, skipped after it has been made one time."""
     if os.environ.get("OWA_PIGGY_NO_COMPANIONS") or not (
-        sys.stdin.isatty() and sys.stderr.isatty()
+        sys.stdin.isatty() and sys.stdout.isatty() and sys.stderr.isatty()
     ):
         return
+    marker = _config.ROOT_DIR / ".companions-offered"
+    if once and marker.exists():
+        return
+    try:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.touch()
+    except OSError:
+        pass  # unwritable config dir: we ask again next run
     for pkg, binary, default, blurb in COMPANIONS:
         if shutil.which(binary):
             continue
