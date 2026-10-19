@@ -66,6 +66,9 @@ main() {
     fi
   done
 
+  # The questions above were owa-piggy's first-run offer; don't repeat it.
+  mkdir -p "$HOME/.config/owa-piggy" && touch "$HOME/.config/owa-piggy/.companions-offered"
+
   say "==> adding the tool bin dir to PATH"
   if [ "$backend" = uv ]; then uv tool update-shell || true; else pipx ensurepath || true; fi
 
