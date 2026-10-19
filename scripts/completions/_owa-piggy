@@ -13,7 +13,7 @@ _owa_piggy() {
     'edge:open a normal Edge window using a profile'\''s sidecar session'
     'tui:interactive token-health dashboard (profiles + freshness)'
     'audiences:list all known FOCI-accessible audiences'
-    'install-owa-tools:install the companion owa-tools suite via Homebrew'
+    'install-owa-tools:install the companion owa-tools suite (brew, pipx or uv)'
     'version:print version information'
     'clients:list / add / remove the other services a profile signs in to'
     'profiles:list / manage profiles'

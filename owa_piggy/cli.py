@@ -57,6 +57,7 @@ from .scopes import (
     resolve_audience,
     templated_audience_name,
 )
+from .setup import companion_install_cmd, offer_companions
 from .sharepoint import derive_sharepoint_tenant
 from .status import do_debug, do_status, do_status_all, status_all_report, status_report
 from .token_flow import exchange_fresh
@@ -367,7 +368,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("audiences", help="list all known FOCI-accessible audiences")
 
-    sub.add_parser("install-owa-tools", help="install the companion owa-tools suite via Homebrew")
+    sub.add_parser(
+        "install-owa-tools", help="install the companion owa-tools suite (brew, pipx or uv)"
+    )
 
     p_version = sub.add_parser("version", help="print version information")
     p_version.add_argument("--json", action="store_true", help="print version information as JSON")
@@ -920,6 +923,8 @@ def _cmd_setup(args: argparse.Namespace) -> int:
             or None
         ),
     )
+    if setup_rc == 0:
+        offer_companions()
     return setup_rc
 
 
@@ -1132,23 +1137,19 @@ def _cmd_audiences(_args: argparse.Namespace) -> int:
 
 
 def _cmd_install_owa_tools(args: argparse.Namespace) -> int:
-    """Hand off to Homebrew to install the companion owa-tools suite.
-
-    Pure convenience shim - the canonical install path is documented as
-    `brew install damsleth/tap/owa-tools`, but typing that from memory is
-    annoying enough that a one-shot subcommand earns its keep.
-    """
-    cmd = ["brew", "install", "damsleth/tap/owa-tools"]
-    print(f"$ {' '.join(cmd)}", file=sys.stderr)
-    try:
-        return subprocess.call(cmd)
-    except FileNotFoundError:
+    """Install the companion owa-tools suite the way owa-piggy itself was
+    installed (brew, pipx or uv), so `brew upgrade` or `uv tool upgrade`
+    keeps the two in step."""
+    cmd = companion_install_cmd("owa-tools")
+    if not cmd:
         print(
-            "ERROR: brew not found on PATH. Install Homebrew first "
-            "(https://brew.sh) or run `pipx install owa-tools` instead.",
+            "ERROR: none of uv, pipx or brew is on PATH. Install one, or run "
+            "`curl -fsSL https://owa-piggy.dv.ms/install.sh | bash`.",
             file=sys.stderr,
         )
         return 1
+    print(f"$ {' '.join(cmd)}", file=sys.stderr)
+    return subprocess.call(cmd)
 
 
 def _cmd_version(args: argparse.Namespace) -> int:

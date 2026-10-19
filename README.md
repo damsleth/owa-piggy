@@ -27,16 +27,29 @@ brew install damsleth/tap/owa-piggy
 PyPI:
 
 ```bash
-pipx install owa-piggy
+pipx install owa-piggy     # or: uv tool install owa-piggy
 ```
+
+No Homebrew? One line installs owa-piggy with uv (or pipx), asks whether to
+add owa-tools (recommended) and owa-tui (optional), and puts them on PATH:
+
+```bash
+curl -fsSL https://owa-piggy.dv.ms/install.sh | bash
+```
+
+Unattended: `OWA_TOOLS=1 OWA_TUI=0 bash` takes the answers from the
+environment. The script is [`install.sh`](install.sh) in this repo.
 
 Bleeding edge (main): `brew install --HEAD damsleth/tap/owa-piggy`
 
 Then pull in the rest of the suite with one shortcut:
 
 ```bash
-owa-piggy install-owa-tools           # brew install damsleth/tap/owa-tools
+owa-piggy install-owa-tools           # brew, pipx or uv, matching how owa-piggy was installed
 ```
+
+A successful interactive `owa-piggy setup` also offers owa-tools and owa-tui
+if they are not on PATH yet. `OWA_PIGGY_NO_COMPANIONS=1` turns that off.
 
 ## Quickstart
 
@@ -95,7 +108,7 @@ Bare `owa-piggy` is shorthand for `owa-piggy token` - the access token goes to s
 | `profiles set-default A` | make `A` the default profile; `--json` emits an action envelope     |
 | `profiles delete A`      | remove profile `A`'s config + Edge sidecar dir; `--force` to override default-pointer guard, `--yes` to bypass TTY confirmation (required in non-TTY), `--json` for action envelope |
 | `tui`                    | interactive dashboard: profile list + live per-profile token freshness in one screen, with reseed / toggle / set-default / edge actions; falls back to a plain status table when not a TTY. Bare `profiles` on a TTY opens the same screen - `tui` is the explicit name for it |
-| `install-owa-tools`      | shorthand for `brew install damsleth/tap/owa-tools` (the companion suite) |
+| `install-owa-tools`      | install the companion owa-tools suite with brew, pipx or uv (whichever installed owa-piggy) |
 | `version`                | print version information; `--json` emits `{"tool": ..., "version": ...}` |
 
 Top-level flags: `--version`, `--help`. Per-command options (`--profile <alias>`, `--audience <name>`, `--scope <explicit>`) are accepted on the bare invocation too, because it's rewritten to `owa-piggy token <opts>`. `--audience` is validated against the known list at parse time, so typos error out with the full audience set instead of silently using the default. Per-command help: `owa-piggy <command> --help`.

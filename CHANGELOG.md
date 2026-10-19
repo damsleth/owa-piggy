@@ -10,6 +10,21 @@ Releases before v0.12.0 are recorded only in the annotated git tags
 
 ## [Unreleased]
 
+### Added
+
+- `curl -fsSL https://owa-piggy.dv.ms/install.sh | bash` installs
+  owa-piggy with uv (or pipx), asks about owa-tools (recommended) and
+  owa-tui (optional), and adds the tool directory to PATH. `OWA_TOOLS` and
+  `OWA_TUI` answer the questions without a terminal.
+- A successful interactive `setup` offers owa-tools and owa-tui when they
+  are not on PATH. It stays silent without a TTY, and
+  `OWA_PIGGY_NO_COMPANIONS=1` turns it off.
+
+### Changed
+
+- `install-owa-tools` installs with whichever of brew, pipx or uv installed
+  owa-piggy, instead of always brew.
+
 ## [1.4.2] - 2026-10-16
 
 ### Fixed
