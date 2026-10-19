@@ -13,6 +13,9 @@ accounts where the legacy localStorage scrape returns an opaque blob).
 
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess
 import sys
 
 from . import config as _config
@@ -467,3 +470,61 @@ def prompt_for_email(alias: str) -> str | None:
         if not email or "@" in email:
             return email or None
         print("  enter an email address, or leave blank for the paste flow.", file=sys.stderr)
+
+
+# --- Companion CLIs ----------------------------------------------------------
+#
+# owa-piggy only brokers tokens; the CLIs people (and agent skills) actually
+# use live in owa-tools, with owa-tui as an optional dashboard. A fresh
+# install has neither, so a successful interactive setup offers them once,
+# installed the same way owa-piggy itself was.
+
+COMPANIONS = (
+    # (package, binary that proves it is on PATH, default answer, blurb)
+    ("owa-tools", "owa-cal", True, "owa-tools (owa-cal, owa-mail, owa-teams, ...; recommended)"),
+    ("owa-tui", "owa-tui", False, "owa-tui (terminal UI; nice to have)"),
+)
+
+
+def companion_install_cmd(pkg: str, prefix: str | None = None) -> list[str]:
+    """The command that installs `pkg` next to this owa-piggy: brew for a
+    Homebrew keg, pipx or uv for their tool venvs, else whichever of them is
+    on PATH. Empty when there is none."""
+    prefix = sys.prefix if prefix is None else prefix
+    brew = ["brew", "install", f"damsleth/tap/{pkg}"]
+    pipx = ["pipx", "install", pkg]
+    uv = ["uv", "tool", "install", pkg]
+    if "/Cellar/" in prefix:
+        return brew
+    if "/pipx/venvs/" in prefix:
+        return pipx
+    if "/uv/tools/" in prefix:
+        return uv
+    return next((cmd for cmd in (uv, pipx, brew) if shutil.which(cmd[0])), [])
+
+
+def offer_companions() -> None:
+    """Offer each companion CLI that is not on PATH yet. Silent unless a human
+    is at the terminal, and OWA_PIGGY_NO_COMPANIONS=1 turns it off."""
+    if os.environ.get("OWA_PIGGY_NO_COMPANIONS") or not (
+        sys.stdin.isatty() and sys.stderr.isatty()
+    ):
+        return
+    for pkg, binary, default, blurb in COMPANIONS:
+        if shutil.which(binary):
+            continue
+        cmd = companion_install_cmd(pkg)
+        if not cmd:
+            print(
+                f"  {pkg}: install with `uv tool install {pkg}` or `pipx install {pkg}`.",
+                file=sys.stderr,
+            )
+            continue
+        if not _ask(f"Install {blurb}?", default=default):
+            continue
+        print(f"$ {' '.join(cmd)}", file=sys.stderr)
+        if subprocess.call(cmd) == 0 and not shutil.which(binary) and cmd[0] != "brew":
+            fix = "uv tool update-shell" if cmd[0] == "uv" else "pipx ensurepath"
+            print(
+                f"  {binary} is not on PATH yet: run `{fix}` and open a new shell.", file=sys.stderr
+            )
