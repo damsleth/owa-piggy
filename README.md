@@ -48,8 +48,10 @@ Then pull in the rest of the suite with one shortcut:
 owa-piggy install-owa-tools           # brew, pipx or uv, matching how owa-piggy was installed
 ```
 
-A successful interactive `owa-piggy setup` also offers owa-tools and owa-tui
-if they are not on PATH yet. `OWA_PIGGY_NO_COMPANIONS=1` turns that off.
+The first time you run any owa-piggy command in a terminal, it offers
+owa-tools and owa-tui if they are not on PATH yet, once. A successful
+interactive `setup` checks again. Scripts and piped output never see the
+question, and `OWA_PIGGY_NO_COMPANIONS=1` turns it off.
 
 ## Quickstart
 
