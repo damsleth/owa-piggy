@@ -10,6 +10,12 @@ Releases before v0.12.0 are recorded only in the annotated git tags
 
 ## [Unreleased]
 
+### Changed
+
+- The curl installer installs owa-tools by default and only asks about
+  owa-tui; `OWA_TOOLS=0` installs owa-piggy alone. The README leads with
+  the suite install.
+
 ## [1.6.0] - 2026-10-19
 
 ### Changed
