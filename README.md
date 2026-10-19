@@ -18,40 +18,34 @@ contract (output classes, exit codes - documented in `owa_piggy/conventions.py`)
 
 ## Install
 
-Homebrew (recommended):
+Most people want the whole suite: owa-tools (`owa-cal`, `owa-mail`,
+`owa-teams`, ... - the CLIs agent skills use) brings owa-piggy along.
+
+```bash
+brew install damsleth/tap/owa-tools                  # Homebrew
+curl -fsSL https://owa-piggy.dv.ms/install.sh | bash   # no Homebrew: uv or pipx, adds to PATH
+```
+
+The curl installer installs owa-piggy and owa-tools, asks whether to add
+owa-tui (optional terminal UI), and puts them on PATH. `OWA_TOOLS=0` installs
+owa-piggy only, and `OWA_TUI=1|0` answers the question without a terminal.
+The script is [`install.sh`](install.sh) in this repo.
+
+Just the token broker:
 
 ```bash
 brew install damsleth/tap/owa-piggy
+uv tool install owa-piggy                            # or: pipx install owa-piggy
 ```
-
-PyPI:
-
-```bash
-pipx install owa-piggy     # or: uv tool install owa-piggy
-```
-
-No Homebrew? One line installs owa-piggy with uv (or pipx), asks whether to
-add owa-tools (recommended) and owa-tui (optional), and puts them on PATH:
-
-```bash
-curl -fsSL https://owa-piggy.dv.ms/install.sh | bash
-```
-
-Unattended: `OWA_TOOLS=1 OWA_TUI=0 bash` takes the answers from the
-environment. The script is [`install.sh`](install.sh) in this repo.
 
 Bleeding edge (main): `brew install --HEAD damsleth/tap/owa-piggy`
 
-Then pull in the rest of the suite with one shortcut:
-
-```bash
-owa-piggy install-owa-tools           # brew, pipx or uv, matching how owa-piggy was installed
-```
-
-The first time you run any owa-piggy command in a terminal, it offers
-owa-tools and owa-tui if they are not on PATH yet, once. A successful
-interactive `setup` checks again. Scripts and piped output never see the
-question, and `OWA_PIGGY_NO_COMPANIONS=1` turns it off.
+Started with owa-piggy alone? `owa-piggy install-owa-tools` adds the suite
+with brew, pipx or uv, matching how owa-piggy was installed. The first time
+you run any owa-piggy command in a terminal, it also offers owa-tools and
+owa-tui if they are not on PATH yet, once. A successful interactive `setup`
+checks again. Scripts and piped output never see the question, and
+`OWA_PIGGY_NO_COMPANIONS=1` turns it off.
 
 ## Quickstart
 

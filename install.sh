@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # owa-piggy installer: curl -fsSL https://owa-piggy.dv.ms/install.sh | bash
 #
-# Installs owa-piggy and, if you want them, the owa-tools CLI suite
-# (recommended) and owa-tui (optional) from PyPI, with uv (preferred) or
-# pipx. Homebrew users: `brew install damsleth/tap/owa-tools` instead.
+# Installs the owa suite from PyPI with uv (preferred) or pipx: owa-piggy
+# (token broker) and owa-tools (owa-cal, owa-mail, ...), plus owa-tui if you
+# want it. Homebrew users: `brew install damsleth/tap/owa-tools` instead.
 #
-# Non-interactive: OWA_TOOLS=1|0 OWA_TUI=1|0 (defaults: tools yes, tui no).
+# OWA_TOOLS=0 installs owa-piggy only. OWA_TUI=1|0 answers the owa-tui
+# question without a terminal (default: no).
 # Prompts read /dev/tty, because under `curl | bash` stdin is this script.
 
 set -euo pipefail
@@ -46,7 +47,7 @@ main() {
   fi
 
   local pkgs=()
-  if ask OWA_TOOLS "Install owa-tools (owa-cal, owa-mail, owa-teams, ...; recommended, several agent skills need it)?" y; then
+  if [ "${OWA_TOOLS:-1}" = 1 ]; then
     pkgs+=(owa-tools)
   fi
   if ask OWA_TUI "Install owa-tui (terminal UI; nice to have)?" n; then
