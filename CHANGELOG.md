@@ -10,6 +10,8 @@ Releases before v0.12.0 are recorded only in the annotated git tags
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-10-19
+
 ### Added
 
 - `curl -fsSL https://owa-piggy.dv.ms/install.sh | bash` installs
