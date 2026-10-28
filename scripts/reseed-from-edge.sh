@@ -104,6 +104,8 @@ launch_edge() {
     --disable-gpu
     --no-first-run
     --no-default-browser-check
+    # no "Restore pages" bubble after a killed capture Edge
+    --hide-crash-restore-bubble
     # no ~1.1 GB app-bundle clone in $TMPDIR per launch (leaks on SIGKILL)
     --disable-features=MacAppCodeSignClone
     --remote-debugging-address=127.0.0.1

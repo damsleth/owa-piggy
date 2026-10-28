@@ -387,6 +387,9 @@ def launch_edge(
         "--disable-gpu",
         "--no-first-run",
         "--no-default-browser-check",
+        # Capture Edges are routinely killed mid-run, so every next launch
+        # would otherwise greet the user with a "Restore pages" bubble.
+        "--hide-crash-restore-bubble",
         # Edge copies its whole app bundle (~1.1 GB) into
         # $TMPDIR/../X/com.microsoft.edgemac.code_sign_clone/ on every launch
         # and only deletes it on a clean exit. Any capture Edge that gets
@@ -520,6 +523,7 @@ def open_edge(alias: str, *, url: str | None = None) -> tuple[subprocess.Popen[b
         binary,
         "--no-first-run",
         "--no-default-browser-check",
+        "--hide-crash-restore-bubble",
         f"--disk-cache-size={_DISK_CACHE_BYTES}",
         f"--user-data-dir={edge_dir}",
         url or OWA_URL,
