@@ -10,11 +10,18 @@ Releases before v0.12.0 are recorded only in the annotated git tags
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-10-28
+
 ### Changed
 
 - The curl installer installs owa-tools by default and only asks about
   owa-tui; `OWA_TOOLS=0` installs owa-piggy alone. The README leads with
   the suite install.
+- Edge's "Restore pages" bubble is hidden in sidecar windows.
+- GitHub Actions pins bumped to the latest releases (checkout v7,
+  setup-python v7, setup-uv v10, upload-artifact v7, download-artifact v8,
+  pypi-publish v1.14.3, action-gh-release v3). Dev dependencies were
+  already current.
 
 ## [1.6.0] - 2026-10-19
 
