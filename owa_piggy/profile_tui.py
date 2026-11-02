@@ -698,6 +698,7 @@ KNOWN_COLUMNS: tuple[tuple[str, str | None], ...] = (
     ("swodp", "swodp"),
     ("kova", clients_mod.KOVA_KEY),
     ("pim", clients_mod.PIM_CLIENT_ID),
+    ("mscloud", clients_mod.MSCLOUD_CLIENT_ID),
 )
 
 # SPA-bound AAD refresh tokens die 24h after issue; reseed renews them

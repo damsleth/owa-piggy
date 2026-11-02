@@ -12,7 +12,7 @@ _owa_piggy() {
     'reseed:fetch a fresh refresh token headlessly from the Edge sidecar'
     'edge:open a normal Edge window using a profile'\''s sidecar session'
     'tui:interactive token-health dashboard (profiles + freshness)'
-    'audiences:list all known FOCI-accessible audiences'
+    'audiences:list all audiences'
     'install-owa-tools:install the companion owa-tools suite (brew, pipx or uv)'
     'version:print version information'
     'clients:list / add / remove the other services a profile signs in to'

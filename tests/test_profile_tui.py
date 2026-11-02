@@ -397,7 +397,7 @@ def test_client_columns_known_first_then_unknown_in_use():
         "b": [{"name": "abcdef12-3456", "client_id": "abcdef12-3456-7890-abcd-ef1234567890"}],
     }
     cols = profile_tui._client_columns(records)
-    assert [label for label, _ in cols][:7] == [
+    assert [label for label, _ in cols][:8] == [
         "owa",
         "teams",
         "ado",
@@ -405,8 +405,9 @@ def test_client_columns_known_first_then_unknown_in_use():
         "swodp",
         "kova",
         "pim",
+        "mscloud",
     ]
-    assert cols[7] == ("abcdef", "abcdef12-3456-7890-abcd-ef1234567890")
+    assert cols[8] == ("abcdef", "abcdef12-3456-7890-abcd-ef1234567890")
 
 
 def test_client_cell_states():

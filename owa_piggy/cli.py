@@ -114,7 +114,7 @@ examples:
   owa-piggy profiles new work --email me@x.org     # network-capture setup (Okta etc.)
   owa-piggy profiles set-default work              # change the default pointer
   owa-piggy profiles delete personal               # remove a profile
-  owa-piggy audiences                              # list all FOCI audiences
+  owa-piggy audiences                              # list all audiences
 
 machine surface (uniform across the owa suite):
   owa-piggy schema [<command>]                     # JSON command schema
@@ -366,7 +366,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_tui = sub.add_parser("tui", help="interactive token-health dashboard (profiles + freshness)")
     _add_common_options(p_tui)
 
-    sub.add_parser("audiences", help="list all known FOCI-accessible audiences")
+    sub.add_parser("audiences", help="list all audiences")
 
     sub.add_parser(
         "install-owa-tools", help="install the companion owa-tools suite (brew, pipx or uv)"

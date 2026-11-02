@@ -48,6 +48,10 @@ KNOWN_AUDIENCES = {
     "powerbi": ("https://analysis.windows.net/powerbi/api", "Power BI"),
     "flow": ("https://service.flow.microsoft.com", "Power Automate"),
     "devops": ("https://app.vssps.visualstudio.com", "Azure DevOps"),
+    "mscloud": (
+        "7c0a6aea-533c-458c-9f81-15568f10f6e4",
+        "MS Cloud / Windows 365 (windows365.microsoft.com; send cpc-data-boundary)",
+    ),
 }
 
 # A profile bound to a non-default client (OWA_CLIENT_ID) can only reach the
