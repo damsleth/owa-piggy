@@ -288,9 +288,9 @@ def test_non_aad_profiles_are_their_own_service(profile):
 
 
 def test_windows_app_client_has_a_name():
-    assert clients.client_name(clients.WINAPP_CLIENT_ID) == "winapp"
-    assert clients.parse_spec("winapp") == (
-        clients.WINAPP_CLIENT_ID,
+    assert clients.client_name(clients.MSCLOUD_CLIENT_ID) == "mscloud"
+    assert clients.parse_spec("mscloud") == (
+        clients.MSCLOUD_CLIENT_ID,
         "https://windows.cloud.microsoft",
         "",
     )

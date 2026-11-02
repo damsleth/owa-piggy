@@ -80,9 +80,9 @@ ClientEntry = dict[str, str]
 # Teams audience), so routing an audience to it never costs reach.
 TEAMS_WEB_CLIENT_ID = "5e3ce6c0-2b1f-4285-8d4b-75ee78787346"
 
-# Windows App web client. Named so `clients` lists it as `winapp` rather than
-# its id; it mints no audience we route to yet.
-WINAPP_CLIENT_ID = "451f2815-40fe-44bb-b8a6-3a2e55cf40c4"
+# Windows App web client (windows.cloud.microsoft). Named so `clients` lists
+# it as `mscloud` rather than its id; serves the `mscloud` audience.
+MSCLOUD_CLIENT_ID = "451f2815-40fe-44bb-b8a6-3a2e55cf40c4"
 
 
 KNOWN_CLIENTS: dict[str, ClientMeta] = {
@@ -97,8 +97,8 @@ KNOWN_CLIENTS: dict[str, ClientMeta] = {
         "capture_url": "https://teams.microsoft.com/",
     },
     # Windows App (windows.cloud.microsoft, the Windows 365 / AVD web client).
-    WINAPP_CLIENT_ID: {
-        "name": "winapp",
+    MSCLOUD_CLIENT_ID: {
+        "name": "mscloud",
         "origin": None,
         "capture_url": "https://windows.cloud.microsoft",
     },
@@ -145,6 +145,7 @@ AUDIENCE_CLIENT: dict[str, str] = {
     "https://presence.teams.microsoft.com": TEAMS_WEB_CLIENT_ID,
     "https://uis.teams.microsoft.com": TEAMS_WEB_CLIENT_ID,
     "https://app.vssps.visualstudio.com": DEVOPS_CLIENT_ID,
+    "7c0a6aea-533c-458c-9f81-15568f10f6e4": MSCLOUD_CLIENT_ID,
 }
 
 
