@@ -10,6 +10,12 @@ Releases before v0.12.0 are recorded only in the annotated git tags
 
 ## [Unreleased]
 
+### Added
+
+- `reseed --visual` signs in through a visible Edge window instead of
+  headlessly, also past the unattended back-off: the way back in for a
+  capture profile whose session needs MFA or a passkey.
+
 ## [1.6.1] - 2026-10-28
 
 ### Changed

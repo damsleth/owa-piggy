@@ -384,6 +384,7 @@ owa-piggy profiles list --json                # machine-readable registry
 owa-piggy profiles set-default work           # change the default pointer
 owa-piggy status --profile personal           # health check, per profile
 owa-piggy reseed --profile work               # recover one profile after 24h
+owa-piggy reseed --profile work --visual      # same, in a visible window (MFA / passkey)
 owa-piggy profiles delete personal            # remove a profile (config + Edge)
 owa-piggy profiles schedule work              # add 'work' to the shared hourly agent
 owa-piggy profiles unschedule work            # stop auto-reseeding 'work'

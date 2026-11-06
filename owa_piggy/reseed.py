@@ -242,8 +242,13 @@ def _headless_pref(config: dict[str, str]) -> bool:
     return age_hours > _HEADLESS_PREF_TTL_HOURS
 
 
-def do_reseed(alias: str) -> int:
+def do_reseed(alias: str, *, visual: bool = False) -> int:
     """Run the headless reseed flow for profile <alias>.
+
+    `visual=True` (`reseed --visual`) skips the silent capture and signs
+    in through a visible Edge window instead: a live session completes on
+    its own, a dead one waits for the user (MFA, a passkey prompt) -
+    the attended way out of a back-off.
 
     Two backends, picked by the profile's OWA_AUTH_MODE:
 
@@ -282,16 +287,24 @@ def do_reseed(alias: str) -> int:
         return 0
     auth_mode = (config.get("OWA_AUTH_MODE") or "").strip()
     if auth_mode == "capture":
-        return _do_reseed_capture(alias, config)
+        return _do_reseed_capture(alias, config, visual=visual)
+    if visual:
+        # ponytail: the legacy scrape script has no visible mode
+        # (OWA_RESEED_HEADLESS=0 is offscreen); add one if a scrape profile needs it.
+        print(
+            f"[{alias}] --visual applies to capture profiles only; reseeding as usual",
+            file=sys.stderr,
+        )
     return _do_reseed_scrape(alias)
 
 
-def _do_reseed_capture(alias: str, config: dict[str, str]) -> int:
+def _do_reseed_capture(alias: str, config: dict[str, str], *, visual: bool = False) -> int:
     """Network-capture reseed: headless Edge, intercept /token, persist
     the rotated refresh token. No window appears under any condition;
     if the sidecar session has expired we exit non-zero and ask the
     user to re-run `setup --email` interactively."""
-    is_tty = sys.stdin.isatty()
+    # --visual is an explicit "a human is watching", same as a TTY.
+    is_tty = visual or sys.stdin.isatty()
     fails = _reauth_fails(config)
     if not is_tty and fails >= _MAX_REAUTH_FAILS:
         # Backing off before Edge starts: launching it is what fires the
@@ -341,13 +354,24 @@ def _do_reseed_capture(alias: str, config: dict[str, str]) -> int:
     # burst can carry other clients' tokens, and a DevOps/Teams profile
     # must not end up persisting one of those as its refresh token.
     client_id = (config.get("OWA_CLIENT_ID") or "").strip() or None
-    status, captured = capture.capture_silent(
-        alias,
-        headless=headless,
-        user_agent=user_agent,
-        capture_url=capture_url,
-        expected_client_id=client_id,
-    )
+    if visual and not (config.get("OWA_EMAIL") or "").strip():
+        # Without an email the reauth branch below records an unattended
+        # failure - wrong for a run the user is sitting in front of.
+        print(
+            f"ERROR: [{alias}] --visual needs OWA_EMAIL; run setup --email first", file=sys.stderr
+        )
+        return 1
+    if visual:
+        # Straight to the visible sign-in below; nothing silent to try.
+        status, captured = "reauth", None
+    else:
+        status, captured = capture.capture_silent(
+            alias,
+            headless=headless,
+            user_agent=user_agent,
+            capture_url=capture_url,
+            expected_client_id=client_id,
+        )
     # Transient 'error' on the first attempt (CDP hiccup, slow /token
     # round-trip past the timeout, etc.) is the most common cause of
     # hourly cron failures in the refresh.log. One retry recovers nearly
@@ -413,8 +437,9 @@ def _do_reseed_capture(alias: str, config: dict[str, str]) -> int:
         # capture_signin reuses the same profile dir.
         email = config.get("OWA_EMAIL", "")
         if email and is_tty:
+            why = "--visual" if visual else "sidecar cookies expired"
             print(
-                f"[{alias}] sidecar cookies expired - opening Edge for "
+                f"[{alias}] {why} - opening Edge for "
                 f"interactive sign-in (complete MFA in the window)...",
                 file=sys.stderr,
             )

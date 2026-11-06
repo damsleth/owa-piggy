@@ -101,6 +101,7 @@ examples:
   owa-piggy status --profile work                  # one profile
   owa-piggy debug                                  # full diagnostics
   owa-piggy reseed --profile work                  # recover from 24h hard-expiry
+  owa-piggy reseed --profile work --visual         # same, in a visible Edge window
   owa-piggy reseed --all                           # reseed every configured profile
   owa-piggy reseed --scheduled                      # reseed only OWA_SCHEDULED (launchd uses this)
   owa-piggy edge --profile work                    # open Edge with the profile's sidecar session
@@ -355,6 +356,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="reseed only profiles in OWA_SCHEDULED (the set "
         "the shared launchd agent rotates); used by the "
         "launchd agent itself",
+    )
+    p_reseed.add_argument(
+        "--visual",
+        action="store_true",
+        help="reseed in a visible Edge window (sign in / approve MFA or a "
+        "passkey there) instead of headlessly",
     )
     p_reseed.add_argument("--json", action="store_true", help="emit action envelope on stdout")
 
@@ -954,6 +961,8 @@ def _cmd_reseed(args: argparse.Namespace) -> int:
     # --all, --scheduled and --profile are mutually exclusive selectors.
     if all_profiles and scheduled:
         return _usage_error("--all and --scheduled are mutually exclusive")
+    if (all_profiles or scheduled) and getattr(args, "visual", False):
+        return _usage_error("--visual reseeds one profile; pass --profile instead")
     if (all_profiles or scheduled) and args.profile:
         flag = "--all" if all_profiles else "--scheduled"
         return _usage_error(f"{flag} and --profile are mutually exclusive")
@@ -996,7 +1005,7 @@ def _cmd_reseed(args: argparse.Namespace) -> int:
     # pre-reseed identity/session after the user has explicitly asked
     # for a fresh credential.
     clear_cache()
-    rc = do_reseed(alias)
+    rc = do_reseed(alias, visual=bool(getattr(args, "visual", False)))
     if as_json:
         _act(
             t0,
