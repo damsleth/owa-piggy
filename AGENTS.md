@@ -62,6 +62,8 @@ owa_piggy/
   reseed.py          # do_reseed(alias), do_reseed_all, do_reseed_scheduled
                      # (launchd entry point: reseeds OWA_SCHEDULED only)
   capture.py         # headless Edge /token interception (capture-mode setup + reseed)
+  signin.py          # opt-in unattended Entra sign-in (stored password + TOTP,
+                     # `creds` subcommand); drives login.* pages over CDP
   cdp.py             # tiny Chrome DevTools Protocol websocket client used by capture.py
   profiles.py        # registry lifecycle: create/delete/enable/disable/set_default_profile
   profile_tui.py     # interactive `owa-piggy profiles` TUI (run_picker + action handlers)

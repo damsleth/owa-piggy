@@ -328,7 +328,7 @@ def _do_reseed_capture(alias: str, config: dict[str, str], *, visual: bool = Fal
 
     # Local import: keeps the CDP/capture machinery off the import path
     # for the legacy reseed users that don't need it.
-    from . import capture
+    from . import capture, signin
     from . import clients as clients_mod
 
     print(f"[{alias}] reseed via network capture (OWA_AUTH_MODE=capture)", file=sys.stderr)
@@ -354,6 +354,9 @@ def _do_reseed_capture(alias: str, config: dict[str, str], *, visual: bool = Fal
     # burst can carry other clients' tokens, and a DevOps/Teams profile
     # must not end up persisting one of those as its refresh token.
     client_id = (config.get("OWA_CLIENT_ID") or "").strip() or None
+    # Opt-in stored password + TOTP (`owa-piggy creds`): a dead session
+    # gets signed back in inside the silent capture instead of 'reauth'.
+    creds = signin.credentials(config)
     if visual and not (config.get("OWA_EMAIL") or "").strip():
         # Without an email the reauth branch below records an unattended
         # failure - wrong for a run the user is sitting in front of.
@@ -371,6 +374,7 @@ def _do_reseed_capture(alias: str, config: dict[str, str], *, visual: bool = Fal
             user_agent=user_agent,
             capture_url=capture_url,
             expected_client_id=client_id,
+            credentials=creds,
         )
     # Transient 'error' on the first attempt (CDP hiccup, slow /token
     # round-trip past the timeout, etc.) is the most common cause of
@@ -386,6 +390,7 @@ def _do_reseed_capture(alias: str, config: dict[str, str], *, visual: bool = Fal
             user_agent=user_agent,
             capture_url=capture_url,
             expected_client_id=client_id,
+            credentials=creds,
         )
     # Whether *headless* is what produced the token, decided here and not at
     # the bottom: everything below can reach 'ok' by another route (offscreen
@@ -411,6 +416,7 @@ def _do_reseed_capture(alias: str, config: dict[str, str], *, visual: bool = Fal
             user_agent=user_agent,
             capture_url=capture_url,
             expected_client_id=client_id,
+            credentials=creds,
         )
         fell_back = True
     if status == "headless_blocked" and not is_tty:
@@ -428,6 +434,7 @@ def _do_reseed_capture(alias: str, config: dict[str, str], *, visual: bool = Fal
             user_agent=user_agent,
             capture_url=capture_url,
             expected_client_id=client_id,
+            credentials=creds,
         )
         fell_back = True
     if status == "reauth" or (status == "headless_blocked" and is_tty):

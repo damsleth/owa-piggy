@@ -62,6 +62,15 @@ Edge on their own machine, running the CLI under their own account.
   user can read it. The 1.3.x migration left `config.v1.bak` /
   `clients.json.v1.bak` (also 0600, holding the tokens as of migration)
   behind; delete them once the migrated profile works.
+- Opt-in only: `owa-piggy creds --op-item ...` stores the account password
+  and TOTP seed (`OWA_PASSWORD`, `OWA_TOTP_SECRET`) in the same
+  `config.json`, so unattended reseed can complete password + verification
+  code sign-in when the sidecar session dies. That is a software
+  authenticator on disk: any process running as the user can complete the
+  account's MFA, the same way it could already use the refresh token. It
+  does not phish or bypass anything - the tenant must already allow
+  password + TOTP for the account. Keep it off profiles where that trade
+  is not yours to make; `creds --clear` removes it.
 - Access tokens are cached per profile at
   `~/.config/owa-piggy/profiles/<alias>/cache.json`, same mode,
   same rules - keyed by `(tenant, client, scope)`, valid until

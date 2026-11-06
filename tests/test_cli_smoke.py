@@ -1615,3 +1615,59 @@ def test_bound_and_foci_tokens_do_not_share_a_cache_entry(
     assert get_cached_token("tid", teams_id, scope) == token
     assert get_cached_token("tid", CLIENT_ID, scope) is None
 
+
+# --- creds (stored password + TOTP for unattended sign-in) ---
+
+
+def _fake_op(fields):
+    import json
+    import subprocess
+
+    def run(cmd, **kw):
+        assert cmd[:3] == ["op", "item", "get"]
+        return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(fields), stderr="")
+
+    return run
+
+
+def test_creds_op_item_stores_password_and_totp_seed(monkeypatch, capsys, tmp_config, clean_env):
+    write_doc(tmp_config, {"OWA_EMAIL": "a@b.no", "OWA_REFRESH_TOKEN": "fake-rt-for-tests"})
+    monkeypatch.setattr(
+        cli_mod.subprocess,
+        "run",
+        _fake_op(
+            [
+                {"label": "password", "value": "hunter2"},
+                {"label": "one-time password", "value": "otpauth://totp/x?secret=ABCDEFGH"},
+            ]
+        ),
+    )
+    assert _run(monkeypatch, ["creds", "--op-item", "cj-nc-prod"]) == 0
+    settings = read_settings(tmp_config)
+    assert settings["OWA_PASSWORD"] == "hunter2"
+    assert settings["OWA_TOTP_SECRET"] == "ABCDEFGH"
+    assert settings["OWA_REFRESH_TOKEN"] == "fake-rt-for-tests"
+    out = capsys.readouterr().out
+    assert "hunter2" not in out and "ABCDEFGH" not in out
+
+    assert _run(monkeypatch, ["creds"]) == 0
+    assert "credentials: set" in capsys.readouterr().out
+
+    assert _run(monkeypatch, ["creds", "--clear"]) == 0
+    assert not read_settings(tmp_config).get("OWA_PASSWORD")
+    assert _run(monkeypatch, ["creds"]) == 0
+    assert "credentials: not set" in capsys.readouterr().out
+
+
+def test_creds_requires_email_and_both_fields(monkeypatch, capsys, tmp_config, clean_env):
+    write_doc(tmp_config, {"OWA_REFRESH_TOKEN": "fake-rt-for-tests"})
+    assert _run(monkeypatch, ["creds", "--op-item", "x"]) == 1
+    assert "no OWA_EMAIL" in capsys.readouterr().err
+
+    write_doc(tmp_config, {"OWA_EMAIL": "a@b.no", "OWA_REFRESH_TOKEN": "fake-rt-for-tests"})
+    monkeypatch.setattr(
+        cli_mod.subprocess, "run", _fake_op([{"label": "password", "value": "hunter2"}])
+    )
+    assert _run(monkeypatch, ["creds", "--op-item", "x"]) == 1
+    assert "needs both" in capsys.readouterr().err
+    assert "OWA_PASSWORD" not in read_settings(tmp_config)

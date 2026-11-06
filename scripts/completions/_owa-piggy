@@ -10,6 +10,7 @@ _owa_piggy() {
     'remaining:print minutes remaining on the current access token'
     'setup:interactive first-time setup; creates the profile if new'
     'reseed:fetch a fresh refresh token headlessly from the Edge sidecar'
+    'creds:store (or clear) a password + TOTP secret so unattended reseed can sign in when the sidecar session dies'
     'edge:open a normal Edge window using a profile'\''s sidecar session'
     'tui:interactive token-health dashboard (profiles + freshness)'
     'audiences:list all audiences'
@@ -30,6 +31,7 @@ _owa_piggy() {
     remaining) compadd -- -h --help --profile --no-cache --audience --scope --sharepoint-tenant ;;
     setup) compadd -- -h --help --profile --email --from-trau --trau-tenant --trau-sub --user-agent --sharepoint-tenant --with-client --google --google-client-id --google-client-secret --json ;;
     reseed) compadd -- -h --help --profile --all --scheduled --visual --json ;;
+    creds) compadd -- -h --help --profile --op-item --clear ;;
     edge) compadd -- -h --help --profile ;;
     tui) compadd -- -h --help --profile --no-cache --audience --scope --sharepoint-tenant ;;
     audiences) compadd -- -h --help ;;

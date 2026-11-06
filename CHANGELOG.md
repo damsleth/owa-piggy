@@ -12,6 +12,11 @@ Releases before v0.12.0 are recorded only in the annotated git tags
 
 ### Added
 
+- `owa-piggy creds --op-item <1Password item>` stores a profile's password
+  and TOTP seed (0600, next to the refresh token). With them, an unattended
+  reseed whose sidecar session has died signs back in on its own - password,
+  verification code, stay signed in - instead of waiting for `setup`. Opt-in
+  per profile; `creds --clear` forgets them. See SECURITY.md.
 - `reseed --visual` signs in through a visible Edge window instead of
   headlessly, also past the unattended back-off: the way back in for a
   capture profile whose session needs MFA or a passkey.
