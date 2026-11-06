@@ -46,6 +46,7 @@ from pathlib import Path
 from typing import Any
 
 from . import config as _config
+from . import signin
 from .cdp import CdpError, CdpSession, browser_ws, find_tab
 from .jwt import decode_jwt_segment
 
@@ -1131,6 +1132,9 @@ def _is_login_host(host: str) -> bool:
     """True for the AAD/MSA sign-in hosts a dead session parks on."""
     return (
         host.startswith("login.")
+        # device.login.microsoftonline.com: the device-registration TLS hop
+        # a fresh sign-in makes on its way back; still AAD, not the app.
+        or ".login." in host
         or host.endswith(".b2clogin.com")
         or host == "account.microsoft.com"
     )
@@ -1206,6 +1210,7 @@ def capture_silent(
     user_agent: str | None = None,
     capture_url: str | None = None,
     expected_client_id: str | None = None,
+    credentials: signin.Credentials | None = None,
 ) -> tuple[str, dict[str, str] | None]:
     """Headless Edge for scheduled reseed. Returns (status, config_dict):
 
@@ -1244,6 +1249,11 @@ def capture_silent(
     the token. Without this the silent reseed loads OWA, MSAL never touches
     the non-FOCI client's cache, and the round-trip yields the wrong RT (or
     none) - so launchd reseed silently rots and the user reseeds by hand.
+
+    `credentials` (email, password, TOTP secret - `signin.credentials`)
+    turns a dead session from a 'reauth' verdict into a sign-in: the page
+    is driven through password + verification code and the capture carries
+    on as if the cookies had been fine. Without it, login.* is final.
     """
     if timeout is None:
         try:
@@ -1305,7 +1315,22 @@ def capture_silent(
         # and a redirect-based app spends another ~5s bouncing through AAD.
         # Every second short here is a bogus 'headless_blocked' and a
         # fallback that puts a window onscreen for no reason.
-        host = _settle_host(session, budget=20.0, log=log, phase="post-load")
+        def _signed_in(host: str, phase: str) -> str:
+            # login.* is a verdict only without stored credentials. With
+            # them, sign in and let the app land where it was going.
+            if not credentials or not _is_login_host(host):
+                return host
+            print(
+                f"[{alias}] sidecar session expired; signing in with stored credentials...",
+                file=sys.stderr,
+            )
+            if not signin.drive(session, credentials, log=log, is_login=_is_login_host):
+                return host
+            return _settle_host(session, budget=20.0, log=log, phase=f"{phase}/signed-in")
+
+        host = _signed_in(
+            _settle_host(session, budget=20.0, log=log, phase="post-load"), "post-load"
+        )
         if _is_login_host(host):
             log(f"post-load parked on {host} (reauth required)")
             return "reauth", None
@@ -1404,7 +1429,10 @@ def capture_silent(
         # document had in flight - Chromium frees its body when the new
         # document lands, getResponseBody fails, and the capture then waits
         # out its full timeout for an exchange MSAL has no reason to repeat.
-        h = _settle_host(session, budget=12.0, linger=4.0, log=log, phase="post-reload")
+        h = _signed_in(
+            _settle_host(session, budget=12.0, linger=4.0, log=log, phase="post-reload"),
+            "post-reload",
+        )
         if _is_login_host(h):
             log(f"post-reload parked on {h} (reauth required, fast-fail)")
             return "reauth", None

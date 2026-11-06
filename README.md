@@ -358,6 +358,7 @@ Writes are atomic (temp file + fsync + rename) so a crash mid-rotation cannot co
 - `OWA_CAPTURE_URL` - point the capture/reseed sidecar at a non-OWA SPA so its bound refresh token is grabbed off the wire instead of OWA's. Use for non-FOCI clients (e.g. the Azure DevOps app) whose RT the FOCI client cannot mint itself (AADSTS65002 preauth wall). Persisted on the profile so scheduled reseeds rotate the *same* client's token; env wins for ad-hoc runs.
 - `OWA_ORIGIN` - override the `Origin` header used in the token exchange. Auto-derived per client; set automatically alongside `OWA_CLIENT_ID` / `OWA_CAPTURE_URL` when capturing a non-FOCI client so the exchange replays under the minting origin.
 - `OWA_DEFAULT_AUDIENCE` - change the default audience (a short name from `owa-piggy audiences` like `outlook`, or a full https URL). Command-line `--audience` / `--scope` still wins. A profile bound to a non-default `OWA_CLIENT_ID` implies its own default: the Azure DevOps client defaults to `devops`, the Teams web client to `teams`, so `owa-piggy token --profile nc-ado` and `--profile dno-teams` need no `--audience` at all. Only the graph fallback is replaced - every explicit tier above still wins.
+- `OWA_PASSWORD`, `OWA_TOTP_SECRET` - written by `owa-piggy creds --op-item <item>` (never by hand): the account password and the base32 seed behind its one-time password, copied from 1Password via `op`. With both set, a scheduled reseed that finds the sidecar session dead signs in itself (password, verification code, stay signed in) instead of backing off. Opt-in per profile, and a real trade - see SECURITY.md. `creds --clear` removes them.
 - `OWA_SHAREPOINT_TENANT` - SharePoint tenant name (the `.onmicrosoft.com` prefix, e.g. `contoso365`) used to fill the `{tenant}` placeholder for the `sharepoint` / `sharepoint-admin` audiences. Auto-derived and persisted on first use; `--sharepoint-tenant` overrides it. See [SharePoint](#sharepoint-tenant-admin).
 - `OWA_PROFILE` - select the active profile, overriding `OWA_DEFAULT_PROFILE`. Equivalent to `--profile <alias>`.
 - `OWA_AUTH_MODE` - stamped on the profile config by `setup` (`scrape` for legacy MSAL paste flow, `capture` for the network-capture flow used by encrypted-MSAL / Okta-federated tenants). `reseed` branches on this to pick the right mechanism.
@@ -385,6 +386,7 @@ owa-piggy profiles set-default work           # change the default pointer
 owa-piggy status --profile personal           # health check, per profile
 owa-piggy reseed --profile work               # recover one profile after 24h
 owa-piggy reseed --profile work --visual      # same, in a visible window (MFA / passkey)
+owa-piggy creds --profile work --op-item "work m365"   # password+TOTP from 1Password, for unattended sign-in
 owa-piggy profiles delete personal            # remove a profile (config + Edge)
 owa-piggy profiles schedule work              # add 'work' to the shared hourly agent
 owa-piggy profiles unschedule work            # stop auto-reseeding 'work'

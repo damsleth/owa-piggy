@@ -3,7 +3,7 @@ _owa_piggy() {
   local cur prev cmd
   cur="${COMP_WORDS[COMP_CWORD]}"
   cmd="${COMP_WORDS[1]}"
-  local commands="token status debug decode remaining setup reseed edge tui audiences install-owa-tools version clients profiles"
+  local commands="token status debug decode remaining setup reseed creds edge tui audiences install-owa-tools version clients profiles"
   local globals="-h --help --version -v"
   if [ "$COMP_CWORD" -eq 1 ]; then
     COMPREPLY=( $(compgen -W "$commands $globals" -- "$cur") )
@@ -17,6 +17,7 @@ _owa_piggy() {
     remaining) COMPREPLY=( $(compgen -W "-h --help --profile --no-cache --audience --scope --sharepoint-tenant" -- "$cur") ) ;;
     setup) COMPREPLY=( $(compgen -W "-h --help --profile --email --from-trau --trau-tenant --trau-sub --user-agent --sharepoint-tenant --with-client --google --google-client-id --google-client-secret --json" -- "$cur") ) ;;
     reseed) COMPREPLY=( $(compgen -W "-h --help --profile --all --scheduled --visual --json" -- "$cur") ) ;;
+    creds) COMPREPLY=( $(compgen -W "-h --help --profile --op-item --clear" -- "$cur") ) ;;
     edge) COMPREPLY=( $(compgen -W "-h --help --profile" -- "$cur") ) ;;
     tui) COMPREPLY=( $(compgen -W "-h --help --profile --no-cache --audience --scope --sharepoint-tenant" -- "$cur") ) ;;
     audiences) COMPREPLY=( $(compgen -W "-h --help" -- "$cur") ) ;;

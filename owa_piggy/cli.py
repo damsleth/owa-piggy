@@ -42,6 +42,7 @@ from .config import (
     profile_edge_dir,
     profile_is_disabled,
     resolve_profile,
+    save_config,
     set_active_profile,
     validate_alias,
 )
@@ -59,6 +60,7 @@ from .scopes import (
 )
 from .setup import companion_install_cmd, offer_companions
 from .sharepoint import derive_sharepoint_tenant
+from .signin import PASSWORD_KEY, TOTP_KEY, credentials, parse_otpauth
 from .status import do_debug, do_status, do_status_all, status_all_report, status_report
 from .token_flow import exchange_fresh
 
@@ -102,6 +104,7 @@ examples:
   owa-piggy debug                                  # full diagnostics
   owa-piggy reseed --profile work                  # recover from 24h hard-expiry
   owa-piggy reseed --profile work --visual         # same, in a visible Edge window
+  owa-piggy creds --profile work --op-item "work m365"  # store password+TOTP for unattended sign-in
   owa-piggy reseed --all                           # reseed every configured profile
   owa-piggy reseed --scheduled                      # reseed only OWA_SCHEDULED (launchd uses this)
   owa-piggy edge --profile work                    # open Edge with the profile's sidecar session
@@ -364,6 +367,20 @@ def _build_parser() -> argparse.ArgumentParser:
         "passkey there) instead of headlessly",
     )
     p_reseed.add_argument("--json", action="store_true", help="emit action envelope on stdout")
+
+    p_creds = sub.add_parser(
+        "creds",
+        help="store (or clear) a password + TOTP secret so unattended reseed "
+        "can sign in when the sidecar session dies",
+    )
+    _add_common_options(p_creds, audience_scope=False)
+    p_creds.add_argument(
+        "--op-item",
+        metavar="ITEM",
+        help="1Password item (name or id) to copy the password and "
+        "one-time password from, via the `op` CLI",
+    )
+    p_creds.add_argument("--clear", action="store_true", help="forget the stored credentials")
 
     p_edge = sub.add_parser(
         "edge", help="open a normal Edge window using a profile's sidecar session"
@@ -1022,6 +1039,64 @@ def _cmd_reseed(args: argparse.Namespace) -> int:
     return rc
 
 
+def _cmd_creds(args: argparse.Namespace) -> int:
+    """Store a password + TOTP secret in the profile config (0600) so a
+    dead sidecar session is signed back in unattended (signin.py).
+
+    The only source is 1Password's `op` CLI: the password field and the
+    base32 seed behind the one-time password field. Values are never
+    echoed; `creds` without flags only says whether they are set.
+    """
+    alias, rc = _resolve_and_activate(args)
+    if rc:
+        return rc
+    config, _ = load_config()
+    if args.clear:
+        save_config({PASSWORD_KEY: "", TOTP_KEY: ""})
+        print(f"[{alias}] stored credentials cleared")
+        return 0
+    if not args.op_item:
+        state = "set" if credentials(config) else "not set"
+        print(f"[{alias}] credentials: {state}")
+        return 0
+    if not (config.get("OWA_EMAIL") or "").strip():
+        print(f"ERROR: [{alias}] no OWA_EMAIL; run setup --email first", file=sys.stderr)
+        return 1
+    cmd = [
+        "op",
+        "item",
+        "get",
+        args.op_item,
+        "--fields",
+        "label=password,label=one-time password",
+        "--format",
+        "json",
+    ]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    except OSError as e:
+        print(f"ERROR: could not run op: {e}", file=sys.stderr)
+        return 1
+    if proc.returncode:
+        print(f"ERROR: op failed: {proc.stderr.strip()}", file=sys.stderr)
+        return 1
+    fields = {f.get("label"): f.get("value") or "" for f in json.loads(proc.stdout or "[]")}
+    password = fields.get("password") or ""
+    secret = parse_otpauth(fields.get("one-time password") or "")
+    if not password or not secret:
+        print(
+            f"ERROR: item {args.op_item!r} needs both a password and a one-time password field",
+            file=sys.stderr,
+        )
+        return 1
+    save_config({PASSWORD_KEY: password, TOTP_KEY: secret})
+    print(
+        f"[{alias}] stored password + TOTP secret in {profile_config_path(alias)} (0600); "
+        f"unattended reseed signs in with them. `creds --clear` forgets them."
+    )
+    return 0
+
+
 def _cmd_edge(args: argparse.Namespace) -> int:
     """Open a normal, interactive Edge window against the profile's sidecar
     userdata dir, then return - leaving the browser running.
@@ -1595,6 +1670,7 @@ _DISPATCH: dict[str, Callable[[argparse.Namespace], int]] = {
     "reseed": _cmd_reseed,
     "decode": _cmd_decode,
     "remaining": _cmd_remaining,
+    "creds": _cmd_creds,
     "edge": _cmd_edge,
     "tui": _cmd_tui,
     "audiences": _cmd_audiences,
