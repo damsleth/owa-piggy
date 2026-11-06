@@ -696,3 +696,30 @@ def test_reauth_failure_stamps_last_attempt(monkeypatch, tmp_config, clean_env):
     assert set(saved) == {"OWA_REAUTH_FAILS", "OWA_REAUTH_FAILS_AT", "OWA_REAUTH_LAST_AT"}
     merged = {**config, **saved}
     assert reseed_mod.reseed_health(merged)["last_attempt_at"] == saved["OWA_REAUTH_LAST_AT"]
+
+
+def test_visual_reseed_skips_silent_capture_and_backoff(monkeypatch, tmp_config, clean_env):
+    """`reseed --visual` goes straight to the visible sign-in window, even
+    off a TTY and even when unattended reseed has backed off - the user
+    asked for the window, so they are there to answer MFA or a passkey."""
+    calls, _ = _mock_capture_reseed(monkeypatch, [])
+    monkeypatch.setattr(reseed_mod.sys.stdin, "isatty", lambda: False, raising=False)
+    signins = []
+    monkeypatch.setattr(
+        capture_mod,
+        "capture_signin",
+        lambda alias, email, **kw: signins.append(email) or {"OWA_REFRESH_TOKEN": "rt"},
+    )
+    monkeypatch.setattr(capture_mod, "capture_bound_clients", lambda *a, **kw: None)
+    stamp = "2026-08-18T00:00:00Z"
+    cfg = {
+        "OWA_AUTH_MODE": "capture",
+        "OWA_EMAIL": "a@b.no",
+        "OWA_RT_ISSUED_AT": stamp,
+        "OWA_REAUTH_FAILS": "3",
+        "OWA_REAUTH_FAILS_AT": stamp,
+    }
+
+    assert reseed_mod._do_reseed_capture("nc", cfg, visual=True) == 0
+    assert calls == []
+    assert signins == ["a@b.no"]

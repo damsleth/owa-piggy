@@ -421,7 +421,7 @@ def test_reseed_clears_cache(monkeypatch, tmp_config, clean_env):
 
     observed = {}
 
-    def _fake_reseed(alias):
+    def _fake_reseed(alias, **_kw):
         observed["cache"] = load_cache()
         return 0
 
@@ -631,7 +631,7 @@ def test_reseed_bypasses_cache(monkeypatch, tmp_config, clean_env, make_jwt):
 
     called = {"n": 0}
 
-    def _fake_reseed(alias):
+    def _fake_reseed(alias, **_kw):
         called["n"] += 1
         return 0
 
@@ -1415,6 +1415,12 @@ def test_reseed_all_and_scheduled_mutually_exclusive(monkeypatch, capsys, tmp_co
     assert "--all and --scheduled are mutually exclusive" in capsys.readouterr().err
 
 
+def test_reseed_visual_is_single_profile(monkeypatch, capsys, tmp_config, clean_env):
+    rc = _run(monkeypatch, ["reseed", "--all", "--visual"])
+    assert rc != 0
+    assert "--visual reseeds one profile" in capsys.readouterr().err
+
+
 def test_reseed_scheduled_and_profile_mutually_exclusive(
     monkeypatch, capsys, tmp_config, clean_env
 ):
@@ -1608,3 +1614,4 @@ def test_bound_and_foci_tokens_do_not_share_a_cache_entry(
     scope, _ = resolve_audience(audience="teams")
     assert get_cached_token("tid", teams_id, scope) == token
     assert get_cached_token("tid", CLIENT_ID, scope) is None
+

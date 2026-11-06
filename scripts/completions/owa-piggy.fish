@@ -74,6 +74,7 @@ complete -c owa-piggy -n '__fish_seen_subcommand_from reseed' -l help
 complete -c owa-piggy -n '__fish_seen_subcommand_from reseed' -l profile
 complete -c owa-piggy -n '__fish_seen_subcommand_from reseed' -l all
 complete -c owa-piggy -n '__fish_seen_subcommand_from reseed' -l scheduled
+complete -c owa-piggy -n '__fish_seen_subcommand_from reseed' -l visual
 complete -c owa-piggy -n '__fish_seen_subcommand_from reseed' -l json
 complete -c owa-piggy -n '__fish_seen_subcommand_from edge' -o h
 complete -c owa-piggy -n '__fish_seen_subcommand_from edge' -l help
