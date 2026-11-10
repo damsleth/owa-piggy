@@ -874,3 +874,24 @@ def test_silent_authorize_count():
     events = [req(base + "&prompt=none"), req(base), req("https://app.example.com/")]
     assert capture.silent_authorize_count(events) == 1
     assert capture.silent_authorize_count([]) == 0
+
+
+def test_prune_storage_drops_junk_every_run(monkeypatch, tmp_path):
+    """History, GPU caches and unused components go on every prune, under the
+    threshold too, files and dirs alike; sign-in state stays."""
+    monkeypatch.setattr(capture, "_singleton_pid", lambda d: None)
+    history = tmp_path / "Default" / "History"
+    model = tmp_path / "EdgeOnDeviceSpeechModel" / "model.bin"
+    keep = [
+        tmp_path / "Default" / "Cookies",
+        tmp_path / "Default" / "Local Storage" / "db",
+        tmp_path / "Default" / "IndexedDB" / "db",
+        tmp_path / "Local State",
+    ]
+    for f in [history, model, *keep]:
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_bytes(b"x" * 10)
+    assert capture.prune_storage(tmp_path) == 20
+    assert not history.exists() and not model.parent.exists()
+    assert all(f.exists() for f in keep)
+    assert capture.prune_storage(tmp_path) == 0
