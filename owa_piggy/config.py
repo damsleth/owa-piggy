@@ -341,7 +341,12 @@ def load_profiles_conf() -> dict[str, Any]:
     reseeded by `reseed --all`, shows in `status`) without being
     scheduled for unattended hourly rotation.
     """
-    out: dict[str, Any] = {"OWA_DEFAULT_PROFILE": "", "OWA_PROFILES": [], "OWA_SCHEDULED": []}
+    out: dict[str, Any] = {
+        "OWA_DEFAULT_PROFILE": "",
+        "OWA_PROFILES": [],
+        "OWA_SCHEDULED": [],
+        "OWA_EDGE_PATH": "",
+    }
     path = profiles_conf_path()
     if not path.exists():
         return out
@@ -352,6 +357,8 @@ def load_profiles_conf() -> dict[str, Any]:
             out["OWA_PROFILES"] = [p for p in v.split() if p]
         elif k == "OWA_SCHEDULED":
             out["OWA_SCHEDULED"] = [p for p in v.split() if p]
+        elif k == "OWA_EDGE_PATH":
+            out["OWA_EDGE_PATH"] = v
     return out
 
 
@@ -384,6 +391,10 @@ def save_profiles_conf(data: dict[str, Any]) -> None:
         f'OWA_PROFILES="{" ".join(uniq)}"\n'
         f'OWA_SCHEDULED="{" ".join(sched_uniq)}"\n'
     )
+    # Carried through untouched; only hand-set (see capture.find_edge).
+    edge = data.get("OWA_EDGE_PATH") or load_profiles_conf()["OWA_EDGE_PATH"]
+    if edge:
+        payload += f'OWA_EDGE_PATH="{edge}"\n'
     atomic_write(profiles_conf_path(), payload)
 
 

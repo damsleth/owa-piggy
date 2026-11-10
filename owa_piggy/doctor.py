@@ -77,6 +77,25 @@ def run_doctor(*, fix: bool = False) -> DoctorPayload:
             )
         )
 
+    # --- Edge channel -------------------------------------------------------
+    from owa_piggy.capture import _EDGE_STABLE, find_edge
+
+    if find_edge() == _EDGE_STABLE:
+        payload.findings.append(
+            DoctorFinding(
+                id="edge_stable_channel",
+                severity="warning",
+                message=(
+                    "Sidecars run on stable Edge, so clicking Edge in the Dock"
+                    " during a reseed can open into its hidden window."
+                ),
+                hint=(
+                    "brew install --cask microsoft-edge@dev, then"
+                    " `owa-piggy reseed --profile <alias> --visual` once per profile"
+                ),
+            )
+        )
+
     return payload
 
 

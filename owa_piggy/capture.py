@@ -104,8 +104,23 @@ _PRUNE_THRESHOLD_BYTES = 500 * 1024 * 1024
 
 # Edge binaries we know about. macOS first since this tool is macOS-first;
 # the Linux paths exist for the rare dev who runs the test suite on Linux.
+#
+# Edge Dev before stable, on purpose. A capture Edge run from the stable
+# bundle *is* "Microsoft Edge" to LaunchServices: click Edge in the Dock while
+# only a reseed's headless Edge is up and the click reopens into that
+# invisible instance, so the user sees nothing happen. A separate bundle id
+# (com.microsoft.edgemac.Dev) can never catch the user's click, and a visible
+# Edge Dev window doubles as a "reseed running" signal.
+#
+# Switching channels costs one visible sign-in per profile: Edge Dev reads
+# the cookies stable Edge wrote (after a one-time keychain "Always Allow"),
+# but AAD rejects that session from the other channel (AADSTS50058 on every
+# silent sign-in). `reseed --profile <alias> --visual` in Edge Dev fixes it.
+_EDGE_DEV = "/Applications/Microsoft Edge Dev.app/Contents/MacOS/Microsoft Edge Dev"
+_EDGE_STABLE = "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"
 _EDGE_CANDIDATES = (
-    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+    _EDGE_DEV,
+    _EDGE_STABLE,
     "/usr/bin/microsoft-edge",
     "/usr/bin/microsoft-edge-stable",
 )
@@ -114,8 +129,13 @@ _EDGE_CANDIDATES = (
 def find_edge() -> str | None:
     """Return the path to a Microsoft Edge binary, or None if absent.
 
-    PATH lookup last so a brew-installed `microsoft-edge` shim doesn't
-    win over the canonical .app bundle on macOS."""
+    OWA_EDGE_PATH (env, else profiles.conf) wins, then `_EDGE_CANDIDATES`
+    in order (Edge Dev first, see there). PATH lookup last so a
+    brew-installed `microsoft-edge` shim doesn't win over the canonical .app
+    bundle on macOS."""
+    override = os.environ.get("OWA_EDGE_PATH") or _config.load_profiles_conf()["OWA_EDGE_PATH"]
+    if override:
+        return override if os.access(override, os.X_OK) else None
     for path in _EDGE_CANDIDATES:
         if os.path.isfile(path) and os.access(path, os.X_OK):
             return path
@@ -132,13 +152,22 @@ def find_free_port() -> int:
 
 
 # How long to wait for another owa-piggy to let go of an Edge profile dir.
-# Generous because the holder may be mid-capture: a cold start plus a
-# redirect chain plus the start-up burst window is comfortably 30s.
-_EDGE_LOCK_WAIT = 60.0
+# Must outlast one full turn of the holder: a capture that runs into its own
+# OWA_CAPTURE_TIMEOUT (60s) plus Edge start and teardown is already past 60s,
+# so a 60s wait failed against a single slow-but-healthy client.
+_EDGE_LOCK_WAIT = 150.0
+
+# Waiters poll every 0.25s, so a process that releases and re-takes the lock
+# in the same breath (reseed walking client after client) wins every race and
+# starves them for the whole multi-minute run. After releasing, a process sits
+# out this long before re-taking, which hands the turn to any waiter.
+# ponytail: courtesy gap, not a queue; a FIFO ticket lock if it still starves.
+_EDGE_LOCK_HANDOFF = 0.6
 
 # pid -> lock fd. A dict rather than an attribute stashed on the Popen so
 # mypy stays happy without a cast.
 _EDGE_LOCKS: dict[int, int] = {}
+_LAST_RELEASE = 0.0
 
 
 def _acquire_edge_lock(edge_dir: Path) -> int:
@@ -161,6 +190,9 @@ def _acquire_edge_lock(edge_dir: Path) -> int:
     behaviour anyway - the second caller wants the same browser profile, and
     once the first is done it is free.
     """
+    gap = _LAST_RELEASE + _EDGE_LOCK_HANDOFF - time.monotonic()
+    if gap > 0:
+        time.sleep(gap)
     fd = os.open(edge_dir / ".owa-lock", os.O_CREAT | os.O_RDWR, 0o600)
     deadline = time.monotonic() + _EDGE_LOCK_WAIT
     waited = False
@@ -187,11 +219,13 @@ def _acquire_edge_lock(edge_dir: Path) -> int:
 
 
 def _release_edge_lock(pid: int) -> None:
+    global _LAST_RELEASE
     fd = _EDGE_LOCKS.pop(pid, None)
     if fd is not None:
         # Closing the fd drops the flock; no explicit LOCK_UN needed.
         with contextlib.suppress(OSError):
             os.close(fd)
+        _LAST_RELEASE = time.monotonic()
 
 
 # The flag that marks an Edge as one *we* launched for capture. `launch_edge`
@@ -1052,6 +1086,8 @@ def capture_signin(
         log(f"capture URL overridden to {capture_url}")
     proc = launch_edge(edge_dir, port, headless=False, url=capture_url, user_agent=user_agent)
     session = None
+    # Named in the error below, so a dropped window says where it dropped.
+    phase = "waiting for sign-in"
     try:
         session = _open_session(port)
         session.call("Network.enable", {})
@@ -1084,6 +1120,7 @@ def capture_signin(
         # sidecar profile ends up with valid session cookies but empty
         # MSAL localStorage, and the next silent reseed has nothing to
         # refresh - so it bounces to login.* and fast-fails to 'reauth'.
+        phase = "signed in, waiting for MSAL to persist"
         log("waiting up to 8s for MSAL to persist localStorage...")
         persist_deadline = time.monotonic() + 8.0
         while time.monotonic() < persist_deadline:
@@ -1114,12 +1151,18 @@ def capture_signin(
         # clients' tokens, which must not happen for the wrong user.
         config = _build_config(token_response, email=email, mode="capture")
         if on_session is not None:
+            phase = "signed in, capturing bound clients"
             on_session(session)
     except (ConnectionError, CdpError, OSError) as e:
         # User force-closed Edge mid-auth, or the WS dropped for some
         # other reason. Surface a friendly RuntimeError instead of a raw
-        # WebSocket traceback - the caller already prints a usable error.
-        raise RuntimeError("Edge closed before sign-in completed (auth interrupted)") from e
+        # WebSocket traceback, but keep the cause and the phase: a bare
+        # "Edge closed" sent a 2026-11-10 failure in for guesswork.
+        last = auth_errors(session._buffered) if session is not None else []
+        raise RuntimeError(
+            f"Edge closed before sign-in completed ({phase}; {type(e).__name__}: {e})"
+            + "".join(f"\n  AAD said: {a}" for a in last)
+        ) from e
     finally:
         if session is not None:
             session.close()
@@ -1453,14 +1496,37 @@ def capture_silent(
             # tenant, and the /token advice below would be nonsense here.
             print(f"[{alias}] Edge never came up on CDP port {port}: {e}", file=sys.stderr)
         else:
+            errors = auth_errors(session._buffered)
+            if errors:
+                # The app *tried* to refresh and AAD refused: a real fault,
+                # not the quiet "tokens still fresh" miss. Say what AAD said.
+                hint = " Its AAD sign-in failed:\n" + "\n".join(f"  {e}" for e in errors)
+                if any(e.startswith(("login_required", "interaction_required")) for e in errors):
+                    hint += (
+                        "\n  The sidecar's login.microsoftonline.com session is gone or"
+                        " unreadable; sign in again with"
+                        f" `owa-piggy reseed --profile {alias} --visual`."
+                    )
+            elif tries := silent_authorize_count(session._buffered):
+                # AAD can refuse with a 200 "Redirecting" page whose JS
+                # carries the error (seen: AADSTS50058 for an nc Teams
+                # capture in Edge Dev, 2026-11-10), so no Location to read.
+                # Tries without a /token redemption still mean "refused".
+                hint = (
+                    f" The app tried {tries} silent sign-in(s) and redeemed no code:"
+                    " AAD most likely refused the sidecar session. Sign in again with"
+                    f" `owa-piggy reseed --profile {alias} --visual`."
+                )
+            elif headless:
+                hint = (
+                    " The app made no sign-in attempt: it likely still holds fresh"
+                    " tokens (a normal miss)."
+                )
+            else:
+                hint = ""
             print(
                 f"[{alias}] timed out after {timeout}s waiting for the "
-                f"{_client_label(expected_client_id)} token."
-                + (
-                    " Tenant may require non-headless Edge - try OWA_CAPTURE_HEADLESS=0."
-                    if headless
-                    else ""
-                ),
+                f"{_client_label(expected_client_id)} token." + hint,
                 file=sys.stderr,
             )
         log(f"timeout: {e}")
@@ -1598,6 +1664,43 @@ def capture_halo(
         if session is not None:
             session.close()
         _terminate(proc)
+
+
+def auth_errors(events: list[dict[str, Any]]) -> list[str]:
+    """Distinct AAD errors carried by /authorize redirects among buffered
+    CDP events, as "error: description" (trace/correlation ids cut).
+
+    A silent sign-in that AAD refuses (prompt=none in a hidden iframe)
+    comes back as a 302 to the app with `#error=login_required&...` in the
+    Location header. The app then just retries quietly, so without reading
+    that header a dead session looks exactly like a slow app: a bare 60s
+    timeout. Seen 2026-11-09 when Edge Dev could not decrypt the cookies
+    stable Edge wrote: AADSTS50058 on every attempt, while OWA (refresh
+    token in localStorage, no cookie needed) still reseeded fine."""
+    seen: dict[str, None] = {}
+    for m in events:
+        if m.get("method") != "Network.requestWillBeSent":
+            continue
+        headers = (m.get("params", {}).get("redirectResponse") or {}).get("headers") or {}
+        loc = next((v for k, v in headers.items() if k.lower() == "location"), "")
+        parts = urllib.parse.urlsplit(loc)
+        q = dict(urllib.parse.parse_qsl(parts.fragment or parts.query))
+        if q.get("error"):
+            desc = q.get("error_description", "").split(" Trace ID")[0].strip()
+            seen[f"{q['error']}: {desc}" if desc else q["error"]] = None
+    return list(seen)
+
+
+def silent_authorize_count(events: list[dict[str, Any]]) -> int:
+    """How many silent (prompt=none) /authorize requests the page made."""
+    return sum(
+        1
+        for m in events
+        if m.get("method") == "Network.requestWillBeSent"
+        and "/oauth2/v2.0/authorize"
+        in (url := m.get("params", {}).get("request", {}).get("url", ""))
+        and "prompt=none" in url
+    )
 
 
 def _document_hosts(session: CdpSession) -> set[str]:

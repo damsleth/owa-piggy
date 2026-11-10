@@ -6,7 +6,8 @@
 # want it. Homebrew users: `brew install damsleth/tap/owa-tools` instead.
 #
 # OWA_TOOLS=0 installs owa-piggy only. OWA_TUI=1|0 answers the owa-tui
-# question without a terminal (default: no).
+# question without a terminal (default: no). OWA_EDGE_DEV=1|0 answers the
+# Edge Dev question (macOS with Homebrew; default: yes).
 # Prompts read /dev/tty, because under `curl | bash` stdin is this script.
 
 set -euo pipefail
@@ -69,6 +70,15 @@ main() {
 
   # The questions above were owa-piggy's first-run offer; don't repeat it.
   mkdir -p "$HOME/.config/owa-piggy" && touch "$HOME/.config/owa-piggy/.companions-offered"
+
+  # Sidecars run on Edge Dev when it is installed, so clicking stable Edge in
+  # the Dock can never land in a reseed's hidden window. See capture.py.
+  if [ "$(uname)" = Darwin ] && [ ! -d "/Applications/Microsoft Edge Dev.app" ] \
+    && command -v brew >/dev/null 2>&1 \
+    && ask OWA_EDGE_DEV "Install Microsoft Edge Dev for owa-piggy's background sign-ins (recommended)?" y; then
+    brew install --cask microsoft-edge@dev \
+      || say "Edge Dev install failed; owa-piggy falls back to stable Edge"
+  fi
 
   say "==> adding the tool bin dir to PATH"
   if [ "$backend" = uv ]; then uv tool update-shell || true; else pipx ensurepath || true; fi

@@ -47,6 +47,31 @@ owa-tui if they are not on PATH yet, once. A successful interactive `setup`
 checks again. Scripts and piped output never see the question, and
 `OWA_PIGGY_NO_COMPANIONS=1` turns it off.
 
+### Edge Dev (macOS, recommended)
+
+owa-piggy signs in through a hidden Edge window. It uses **Edge Dev** when
+it is installed, and stable Edge otherwise:
+
+```bash
+brew install --cask microsoft-edge@dev   # install.sh offers this
+```
+
+With stable Edge, clicking Edge in the Dock while a reseed runs can open
+into owa-piggy's hidden window, so nothing seems to happen. Edge Dev is a
+separate app, so your own Edge never collides with it, and an Edge Dev
+icon in the Dock tells you a reseed is running.
+
+Switching an existing profile to Edge Dev takes one visible sign-in, since
+Microsoft won't accept the stable Edge session from another Edge:
+
+```bash
+owa-piggy reseed --profile <alias> --visual
+```
+
+The first launch also asks for keychain access to "Microsoft Edge Safe
+Storage": choose **Always Allow**. `OWA_EDGE_PATH` (environment or
+`profiles.conf`) picks a different Edge binary.
+
 ## Quickstart
 
 ```bash

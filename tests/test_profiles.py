@@ -73,7 +73,12 @@ def test_set_active_profile_redirects_cache(tmp_config, clean_env):
 def test_load_profiles_conf_missing_returns_defaults(tmp_config, clean_env):
     assert not profiles_conf_path().exists()
     out = load_profiles_conf()
-    assert out == {"OWA_DEFAULT_PROFILE": "", "OWA_PROFILES": [], "OWA_SCHEDULED": []}
+    assert out == {
+        "OWA_DEFAULT_PROFILE": "",
+        "OWA_PROFILES": [],
+        "OWA_SCHEDULED": [],
+        "OWA_EDGE_PATH": "",
+    }
 
 
 def test_save_and_load_profiles_conf_round_trip(tmp_config, clean_env):
