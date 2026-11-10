@@ -1,7 +1,9 @@
 """signin.py: TOTP, otpauth parsing, and the page-driving loop against a
 scripted CDP session. No Edge, no network."""
 
-from owa_piggy import signin
+import pytest
+
+from owa_piggy import capture, signin
 from owa_piggy.cdp import CdpError
 
 RFC_SECRET = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"  # ascii "12345678901234567890"
@@ -32,6 +34,7 @@ class _Session:
     def __init__(self, hosts, steps):
         self.hosts, self.steps, self.typed = list(hosts), list(steps), []
         self.refocus = None  # drive re-runs the step script before typing
+        self.url = "https://login.microsoftonline.com/"
 
     def call(self, method, params=None, **_):
         if method == "Input.insertText":
@@ -48,7 +51,9 @@ class _Session:
 
             self.typed.append(json.loads(expr.split("const t = ", 1)[1].split(";", 1)[0]))
             return {"result": {"value": 6}}
-        if expr == "location.hostname":
+        if expr == "location.href":
+            value = self.url
+        elif expr == "location.hostname":
             value = self.hosts.pop(0) if len(self.hosts) > 1 else self.hosts[0]
         elif expr.startswith("\n(() => {\n  const vis") and "activeElement" not in expr:
             if self.refocus:
@@ -68,6 +73,34 @@ def _no_sleep(monkeypatch):
     monkeypatch.setattr(signin.time, "sleep", lambda *_: None)
     monkeypatch.setattr(signin, "_SETTLE_AFTER_SUBMIT", 0.0)
     monkeypatch.setattr(signin, "_SETTLE_BEFORE_TYPE", 0.0)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://login.microsoftonline.com/",
+        "https://login.evil.example/",
+        "https://login.microsoftonline.com.evil.example/",
+        "https://login.microsoftonline.com@evil.example/",
+        "about:blank",
+        "https://[invalid/",
+    ],
+)
+@pytest.mark.parametrize("redirect", [False, True])
+def test_drive_refuses_untrusted_url_before_typing(monkeypatch, url, redirect):
+    _no_sleep(monkeypatch)
+    sess = _Session(hosts=["login.microsoftonline.com"], steps=["password"])
+    if redirect:
+        monkeypatch.setattr(signin.time, "sleep", lambda *_: setattr(sess, "url", url))
+    else:
+        sess.url = url
+    assert not signin.drive(
+        sess,
+        ("alice@example.com", "fake-password", RFC_SECRET),
+        log=lambda *_: None,
+        is_login=capture._is_login_host,
+    )
+    assert sess.typed == []
 
 
 def test_drive_walks_the_pages_and_types_only_secrets(monkeypatch):

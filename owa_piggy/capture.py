@@ -1130,14 +1130,16 @@ def capture_signin(
 
 def _is_login_host(host: str) -> bool:
     """True for the AAD/MSA sign-in hosts a dead session parks on."""
-    return (
-        host.startswith("login.")
-        # device.login.microsoftonline.com: the device-registration TLS hop
-        # a fresh sign-in makes on its way back; still AAD, not the app.
-        or ".login." in host
-        or host.endswith(".b2clogin.com")
-        or host == "account.microsoft.com"
-    )
+    return host.lower() in {
+        "login.microsoftonline.com",
+        "login.microsoft.com",
+        "login.live.com",
+        "account.live.com",
+        "account.microsoft.com",
+        "device.login.microsoftonline.com",
+        "login.microsoftonline.us",
+        "login.partner.microsoftonline.cn",
+    }
 
 
 def _settle_host(

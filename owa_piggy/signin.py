@@ -240,6 +240,16 @@ def drive(
     """
     email, password, secret = creds
     step_js = _STEP_JS % json.dumps(email.lower())
+
+    def trusted_page() -> bool:
+        # Inspect the URL, not just the hostname: credentials must never be
+        # entered over HTTP, even when the host itself is allowlisted.
+        try:
+            url = urllib.parse.urlsplit(_eval(session, "location.href"))
+            return url.scheme == "https" and is_login(url.hostname or "")
+        except ValueError:
+            return False
+
     # Headless Edge is launched with --window-size=1,1: every element centre
     # is outside that viewport and a mouse click there lands on nothing.
     # Give the page a real one for the duration of the walk.
@@ -264,6 +274,8 @@ def drive(
             if host and host != "about:blank" and not is_login(host):
                 log(f"signed in; landed on {host}")
                 return True
+            if not trusted_page():
+                return False
             raw = _eval(session, step_js)
         except CdpError as e:
             # Mid-navigation; the next sample lands on the new document.
@@ -298,6 +310,8 @@ def drive(
             # Verify clicked during that request is dropped and the box
             # cleared. Let the view settle, then focus the box again.
             time.sleep(_SETTLE_BEFORE_TYPE)
+            if not trusted_page():
+                return False
             _eval(session, step_js)
             if step == "otc":
                 text = totp(secret)
