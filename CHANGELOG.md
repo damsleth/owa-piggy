@@ -36,6 +36,13 @@ Releases before v0.12.0 are recorded only in the annotated git tags
 
 ### Fixed
 
+- Sidecar profiles shrink from about 1 GB to 300-500 MB. Every reseed now
+  deletes what a sidecar never needs (history, GPU and shader caches,
+  metrics, and Edge's on-device models, Wallet, Shopping and Widevine
+  components), and launches pass `--disable-component-update` so those
+  stay gone. Service-worker storage is pruned past 320 MB instead of
+  500 MB, and the disk cache cap drops from 100 MB to 32 MB. Cookies,
+  Local Storage, IndexedDB and extensions are kept.
 - A running reseed no longer starves `owa-piggy token` (and the profiles
   TUI) on the same profile. Reseed released the Edge profile lock between
   clients and took it back at once, so a waiter never got a turn and failed

@@ -544,7 +544,7 @@ def _do_reseed_capture(alias: str, config: dict[str, str], *, visual: bool = Fal
     except (OSError, RuntimeError) as e:
         print(f"[{alias}] storage prune skipped: {e}", file=sys.stderr)
     else:
-        if freed:
+        if freed >= 32 << 20:  # the hourly few-MB junk sweep is not news
             print(f"[{alias}] pruned {freed >> 20} MB of browser storage", file=sys.stderr)
     return 0
 

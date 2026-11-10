@@ -86,7 +86,7 @@ _WIPE_ACCESS_TOKENS_JS = r"""(() => {
 # it. A warm reseed's working set is ~30 MB, so the cap costs no extra
 # download, and Chromium trims an oversized cache down to it on the next run
 # (measured: 791 -> 104 MB in one 20s launch).
-_DISK_CACHE_BYTES = 100 * 1024 * 1024
+_DISK_CACHE_BYTES = 32 * 1024 * 1024
 
 # Storage the cache cap does not reach: Service Worker CacheStorage and
 # WebStorage (partitioned CacheStorage/IndexedDB) are quota-managed, and the
@@ -95,12 +95,61 @@ _DISK_CACHE_BYTES = 100 * 1024 * 1024
 # elsewhere). Edge is killed seconds after /token lands, so a service worker
 # never reaches the activate step that would drop its old cache versions, and
 # the pile only grows. Pruned past _PRUNE_THRESHOLD_BYTES rather than every
-# run: a wiped Teams profile re-downloads ~35 MB on its next reseed (12s vs
-# 8s), then settles back to ~3 MB per run. The threshold sits well above a
-# warm Teams profile's ~200 MB, so a prune is a once-in-weeks cost, not an
-# hourly one.
+# run: a wiped profile re-downloads its apps' offline assets on the next
+# reseed - measured 2026-11-10 at 150-180 MB for Outlook + Teams, so 128 MB
+# pruned on every single run - then grows a few MB per run. 320 MB is about
+# two fresh loads: a prune every few days instead of hourly downloads, and
+# a profile around 300-500 MB instead of a gigabyte (was 500 MB).
 _PRUNE_DIRS = ("Default/Service Worker", "Default/WebStorage", "component_crx_cache")
-_PRUNE_THRESHOLD_BYTES = 500 * 1024 * 1024
+_PRUNE_THRESHOLD_BYTES = 320 * 1024 * 1024
+
+# What a sidecar never needs, pruned after every reseed (no threshold):
+# browsing history, GPU/shader caches, metrics, and the components Edge
+# downloads for features a token broker never touches (on-device models,
+# Wallet, Shopping, Provenance, Widevine...). Launches pass
+# --disable-component-update so the components stay gone. Measured
+# 2026-11-10 at ~400 MB of a 1.3 GB nc profile. Sign-in state (Cookies,
+# Local Storage, IndexedDB, Session Storage, Preferences, Local State) is
+# not on this list; neither are Extensions, which the user may rely on in
+# `owa-piggy edge` windows (a password manager for the sign-in).
+_JUNK_PATHS = (
+    "BrowserMetrics",
+    "DeferredBrowserMetrics",
+    "Diagnostic Data",
+    "Diagnostic Data-wal",
+    "Edge Entity Extraction",
+    "Edge Shopping",
+    "Edge Sidebar",
+    "Edge Wallet",
+    "EdgeLanguageDetectionModel",
+    "EdgeOnDeviceSpeechModel",
+    "Functional UTC Data",
+    "Functional UTC Data-wal",
+    "GPUPersistentCache",
+    "GrShaderCache",
+    "GraphiteDawnCache",
+    "OnDeviceHeadSuggestModel",
+    "ProvenanceData",
+    "ProvenanceDataAllowList",
+    "ProvenanceDataTensors",
+    "ShaderCache",
+    "Subresource Filter",
+    "WidevineCdm",
+    "extensions_crx_cache",
+    "Default/DawnGraphiteCache",
+    "Default/DawnWebGPUCache",
+    "Default/EdgeCoupons",
+    "Default/Favicons",
+    "Default/Favicons-journal",
+    "Default/GPUCache",
+    "Default/History",
+    "Default/History-journal",
+    "Default/Top Sites",
+    "Default/Top Sites-journal",
+    "Default/Visited Links",
+    "Default/load_statistics.db",
+    "Default/load_statistics.db-wal",
+)
 
 # Edge binaries we know about. macOS first since this tool is macOS-first;
 # the Linux paths exist for the rare dev who runs the test suite on Linux.
@@ -434,6 +483,8 @@ def launch_edge(
         # long-running browser survives an in-place update, which a sidecar
         # that lives for seconds does not need.
         "--disable-features=MacAppCodeSignClone",
+        # Keeps the components `_JUNK_PATHS` prunes from downloading again.
+        "--disable-component-update",
         f"--disk-cache-size={_DISK_CACHE_BYTES}",
         "--remote-debugging-address=127.0.0.1",
         f"--remote-debugging-port={port}",
@@ -594,6 +645,10 @@ def _terminate(proc: subprocess.Popen[bytes] | None) -> None:
 
 
 def _tree_bytes(path: Path) -> int:
+    if path.is_file() or path.is_symlink():
+        with contextlib.suppress(OSError):
+            return path.lstat().st_size
+        return 0
     total = 0
     for root, _, files in os.walk(path):
         for name in files:
@@ -603,31 +658,38 @@ def _tree_bytes(path: Path) -> int:
 
 
 def prune_storage(edge_dir: Path) -> int:
-    """Delete `_PRUNE_DIRS` under `edge_dir` once together they pass
-    `_PRUNE_THRESHOLD_BYTES`. Returns the bytes freed (0 when under the
-    threshold or skipped). See `_PRUNE_DIRS` for why these and why a
-    threshold.
+    """Delete `_JUNK_PATHS` under `edge_dir` on every call, and
+    `_PRUNE_DIRS` once together they pass `_PRUNE_THRESHOLD_BYTES`. Returns
+    the bytes freed. See both lists for why these, and why a threshold for
+    the second.
 
     Taken under the profile flock so no capture Edge can start mid-delete,
     and skipped while any browser holds the dir: `open_edge` windows take
     no flock, and ripping storage out from under a session the user is
     driving is exactly the regression this must not cause. The size scan
     is a stat walk (~0.1s on a 1.2 GB, 6k-file profile)."""
+    junk = [edge_dir / d for d in _JUNK_PATHS]
     dirs = [edge_dir / d for d in _PRUNE_DIRS]
     size = sum(_tree_bytes(d) for d in dirs)
-    if size < _PRUNE_THRESHOLD_BYTES:
+    targets = junk + (dirs if size >= _PRUNE_THRESHOLD_BYTES else [])
+    before = sum(_tree_bytes(d) for d in targets)
+    if not before:
         return 0
     fd = _acquire_edge_lock(edge_dir)
     try:
         if _singleton_pid(edge_dir) is not None:
             return 0
-        for d in dirs:
+        for d in targets:
             # A leftover file is harmless (Chromium rebuilds a damaged
             # storage DB); the re-scan below reports what actually went.
-            shutil.rmtree(d, ignore_errors=True)
+            if d.is_dir() and not d.is_symlink():
+                shutil.rmtree(d, ignore_errors=True)
+            else:
+                with contextlib.suppress(OSError):
+                    d.unlink()
     finally:
         os.close(fd)
-    return size - sum(_tree_bytes(d) for d in dirs)
+    return before - sum(_tree_bytes(d) for d in targets)
 
 
 # --- Pure helpers (unit-tested) --------------------------------------------
