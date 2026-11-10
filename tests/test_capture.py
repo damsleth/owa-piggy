@@ -895,3 +895,16 @@ def test_prune_storage_drops_junk_every_run(monkeypatch, tmp_path):
     assert not history.exists() and not model.parent.exists()
     assert all(f.exists() for f in keep)
     assert capture.prune_storage(tmp_path) == 0
+
+
+def test_mark_clean_exit_clears_crashed_state(tmp_path):
+    """A killed capture Edge leaves exit_type "Crashed", which makes the next
+    visible window show "Restore pages". Marked clean, other prefs intact."""
+    prefs = tmp_path / "Default" / "Preferences"
+    prefs.parent.mkdir()
+    prefs.write_text(json.dumps({"profile": {"exit_type": "Crashed", "name": "x"}, "k": 1}))
+    capture._mark_clean_exit(tmp_path)
+    data = json.loads(prefs.read_text())
+    assert data["profile"] == {"exit_type": "Normal", "exited_cleanly": True, "name": "x"}
+    assert data["k"] == 1
+    capture._mark_clean_exit(tmp_path / "missing")  # no Preferences: no error

@@ -36,6 +36,9 @@ Releases before v0.12.0 are recorded only in the annotated git tags
 
 ### Fixed
 
+- No more "Restore pages" bubble in `--visual` and `owa-piggy edge` windows.
+  Capture Edges are always killed, which left the sidecar profile marked as
+  crashed; owa-piggy now marks it cleanly closed before each launch.
 - Sidecar profiles shrink from about 1 GB to 300-500 MB. Every reseed now
   deletes what a sidecar never needs (history, GPU and shader caches,
   metrics, and Edge's on-device models, Wallet, Shopping and Widevine

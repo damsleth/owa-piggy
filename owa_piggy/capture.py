@@ -338,6 +338,29 @@ def orphan_edge_pids(ps_output: str, edge_dir: Path) -> list[int]:
     return pids
 
 
+def _mark_clean_exit(edge_dir: Path) -> None:
+    """Record the last session as a clean exit, so Edge shows no "Restore
+    pages" bubble. Call only while no browser runs on `edge_dir`.
+
+    Capture Edges are always killed (`_terminate`), which leaves
+    `profile.exit_type` at "Crashed", and the next *visible* window - a
+    `--visual` reseed or `owa-piggy edge` - greets the user with "Restore
+    pages: Microsoft Edge closed while you had some pages open". The
+    --hide-crash-restore-bubble switch we pass does not stop it in Edge.
+    Best effort: an unreadable Preferences just means the bubble shows."""
+    prefs = edge_dir / "Default" / "Preferences"
+    try:
+        data = json.loads(prefs.read_text())
+        profile = data.setdefault("profile", {})
+        if profile.get("exit_type") == "Normal" and profile.get("exited_cleanly") is True:
+            return
+        profile["exit_type"] = "Normal"
+        profile["exited_cleanly"] = True
+        _config.atomic_write(prefs, json.dumps(data, separators=(",", ":")))
+    except (OSError, ValueError, AttributeError):
+        pass
+
+
 def _singleton_pid(edge_dir: Path) -> int | None:
     """The pid recorded in Chromium's `SingletonLock`, a symlink whose target
     is `<hostname>-<pid>`. None if absent/unparseable, or if that pid is dead
@@ -545,6 +568,7 @@ def launch_edge(
     # parent is garbage from a killed run, and would silently steal this
     # launch via the singleton socket.
     _reap_orphan_edge(edge_dir)
+    _mark_clean_exit(edge_dir)
     # Detach stdout/stderr so a slow CDP consumer can't backpressure
     # Edge into a hang; Edge's own crash logs land in the userdata dir.
     try:
@@ -598,6 +622,8 @@ def open_edge(alias: str, *, url: str | None = None) -> tuple[subprocess.Popen[b
     # left alone: forwarding into it raises it and opens the URL as a tab,
     # which is what the user wants anyway.
     _reap_orphan_edge(edge_dir)
+    if _singleton_pid(edge_dir) is None:
+        _mark_clean_exit(edge_dir)
     binary = find_edge()
     if not binary:
         raise RuntimeError(
