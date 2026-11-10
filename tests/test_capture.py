@@ -20,6 +20,40 @@ from owa_piggy import capture
 
 
 @pytest.mark.parametrize(
+    "host",
+    [
+        "login.microsoftonline.com",
+        "LOGIN.MICROSOFTONLINE.COM",
+        "login.microsoft.com",
+        "login.live.com",
+        "account.live.com",
+        "account.microsoft.com",
+        "device.login.microsoftonline.com",
+        "login.microsoftonline.us",
+        "login.partner.microsoftonline.cn",
+    ],
+)
+def test_is_login_host_accepts_known_identity_hosts(host):
+    assert capture._is_login_host(host)
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "login.evil.example",
+        "login.microsoftonline.com.evil.example",
+        "evil.example.login.microsoftonline.com",
+        "example.b2clogin.com",
+        "adfs.example.com",
+        "login.microsoftonline.com.",
+        "",
+    ],
+)
+def test_is_login_host_rejects_unlisted_hosts(host):
+    assert not capture._is_login_host(host)
+
+
+@pytest.mark.parametrize(
     "url",
     [
         "https://login.microsoftonline.com/common/oauth2/v2.0/token",
