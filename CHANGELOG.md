@@ -10,6 +10,17 @@ Releases before v0.12.0 are recorded only in the annotated git tags
 
 ## [Unreleased]
 
+### Changed
+
+- Sidecars run on Edge Dev when it is installed (stable Edge otherwise).
+  On stable, clicking Edge in the Dock while a reseed ran opened into the
+  reseed's hidden window and nothing appeared. **Upgrading with Edge Dev
+  installed:** run `owa-piggy reseed --profile <alias> --visual` once per
+  profile and allow keychain access. Until then the profile's reseeds fail
+  with AADSTS50058, because Microsoft won't accept stable Edge's session
+  from Edge Dev. `install.sh` offers to install Edge Dev, and `--doctor`
+  warns while sidecars still use stable Edge.
+
 ### Added
 
 - `owa-piggy creds --op-item <1Password item>` stores a profile's password
@@ -20,6 +31,21 @@ Releases before v0.12.0 are recorded only in the annotated git tags
 - `reseed --visual` signs in through a visible Edge window instead of
   headlessly, also past the unattended back-off: the way back in for a
   capture profile whose session needs MFA or a passkey.
+- `OWA_EDGE_PATH` (env or `profiles.conf`) picks the Edge binary the
+  sidecars run, e.g. another Edge channel.
+
+### Fixed
+
+- A running reseed no longer starves `owa-piggy token` (and the profiles
+  TUI) on the same profile. Reseed released the Edge profile lock between
+  clients and took it back at once, so a waiter never got a turn and failed
+  with "another process is using the Edge profile". A process now pauses
+  briefly after releasing so a waiter goes first, and the wait is 150s
+  instead of 60s, enough to outlast one slow client capture.
+- A capture that times out now says why when AAD refused the app's silent
+  sign-in (e.g. `login_required: AADSTS50058 ...`, with the `--visual`
+  command to fix it), instead of a generic "try non-headless" hint. With no
+  refusal seen it says the app made no /token call, the normal miss.
 
 ## [1.6.1] - 2026-10-28
 

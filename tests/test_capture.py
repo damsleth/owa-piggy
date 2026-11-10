@@ -11,6 +11,7 @@ token response into the profile-config KV dict.
 import json
 import os
 import re
+import time
 
 import pytest
 
@@ -660,6 +661,30 @@ def test_edge_lock_is_exclusive_and_released(monkeypatch, tmp_path):
     os.close(capture._acquire_edge_lock(tmp_path))
 
 
+def test_edge_lock_hands_off_to_a_waiter(tmp_path):
+    """A holder that releases and re-takes back to back (reseed walking its
+    clients) must yield to a waiter, not starve it for the whole run."""
+    import threading
+
+    order: list[str] = []
+    capture._EDGE_LOCKS[4243] = capture._acquire_edge_lock(tmp_path)
+
+    def waiter():
+        fd = capture._acquire_edge_lock(tmp_path)
+        order.append("waiter")
+        os.close(fd)
+
+    t = threading.Thread(target=waiter)
+    t.start()
+    time.sleep(0.3)  # waiter is now polling
+    capture._release_edge_lock(4243)
+    fd = capture._acquire_edge_lock(tmp_path)
+    order.append("holder")
+    os.close(fd)
+    t.join()
+    assert order == ["waiter", "holder"]
+
+
 # --- session services (Kova) ------------------------------------------------
 
 
@@ -804,3 +829,48 @@ def test_prune_storage_threshold_keeps_signin_state(monkeypatch, tmp_path):
     assert capture.prune_storage(tmp_path) == 64
     assert not (tmp_path / "Default" / "Service Worker").exists()
     assert all(f.exists() for f in keep)
+
+
+def test_auth_errors_reads_aad_refusals_from_redirects():
+    """A refused silent sign-in must surface as the AAD error, not a bare
+    timeout."""
+    loc = (
+        "https://teams.example.com/auth#error=login_required&error_description="
+        "AADSTS50058%3A+no+user+is+signed+in.+Trace+ID%3A+1111"
+    )
+    redirect = {
+        "method": "Network.requestWillBeSent",
+        "params": {"redirectResponse": {"headers": {"Location": loc}}},
+    }
+    plain = {"method": "Network.requestWillBeSent", "params": {"request": {"url": "x"}}}
+    other = {"method": "Network.loadingFinished", "params": {}}
+    assert capture.auth_errors([redirect, plain, other, redirect]) == [
+        "login_required: AADSTS50058: no user is signed in."
+    ]
+    assert capture.auth_errors([plain, other]) == []
+
+
+def test_find_edge_prefers_edge_dev(monkeypatch):
+    """Edge Dev wins over stable when both are installed, so a Dock click on
+    stable Edge can never reopen into a reseed's hidden window. An explicit
+    OWA_EDGE_PATH still wins over both."""
+    present = {capture._EDGE_DEV, capture._EDGE_STABLE}
+    monkeypatch.setattr(capture.os.path, "isfile", lambda p: p in present)
+    monkeypatch.setattr(capture.os, "access", lambda p, _m: p in present)
+    monkeypatch.delenv("OWA_EDGE_PATH", raising=False)
+    assert capture.find_edge() == capture._EDGE_DEV
+    present.discard(capture._EDGE_DEV)
+    assert capture.find_edge() == capture._EDGE_STABLE
+    monkeypatch.setenv("OWA_EDGE_PATH", capture._EDGE_STABLE)
+    present.add(capture._EDGE_DEV)
+    assert capture.find_edge() == capture._EDGE_STABLE
+
+
+def test_silent_authorize_count():
+    def req(url):
+        return {"method": "Network.requestWillBeSent", "params": {"request": {"url": url}}}
+
+    base = "https://login.example.com/t/oauth2/v2.0/authorize?client_id=x"
+    events = [req(base + "&prompt=none"), req(base), req("https://app.example.com/")]
+    assert capture.silent_authorize_count(events) == 1
+    assert capture.silent_authorize_count([]) == 0
