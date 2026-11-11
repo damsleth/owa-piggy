@@ -23,6 +23,7 @@ import os
 import subprocess
 import sys
 import zlib
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 from . import config as _config
@@ -589,20 +590,13 @@ def _do_reseed_scrape(alias: str) -> int:
         return 1
 
 
-def do_reseed_all() -> int:
-    """Run the headless reseed flow for every configured profile, in order.
-
-    Sequential rather than parallel: each profile drives its own Edge
-    instance with a unique CDP port, but spinning up multiple Edge
-    processes against shared OS resources (Keychain prompts, login.live
-    cookie jar, port allocation) is the kind of complexity this tool
-    has consistently chosen to avoid. The wallclock cost is ~15s per
-    profile, which is fine for a hand-run command.
+def do_reseed_all(*, visual: bool = False) -> int:
+    """Run the reseed flow for every configured profile, in parallel (see
+    `_reseed_parallel`). `visual=True` (`reseed --all --visual`) opens one
+    visible Edge window per profile at once.
 
     Returns the max exit code across profiles so a partial failure is
     still surfaced to scripts (`if owa-piggy reseed --all; then ...`).
-    Each profile's stderr is prefixed with [alias] by the shell script
-    so output stays attributable.
     """
     on_disk = list_profiles()
     if not on_disk:
@@ -627,10 +621,10 @@ def do_reseed_all() -> int:
     if not active:
         print("no active profiles to reseed (registry has no enabled profiles).", file=sys.stderr)
         return 1
-    return _reseed_aliases(active)
+    return _reseed_parallel(active, visual=visual)
 
 
-def do_reseed_scheduled() -> int:
+def do_reseed_scheduled(*, visual: bool = False) -> int:
     """Reseed only the profiles in OWA_SCHEDULED - the set the single
     shared launchd agent rotates hourly (`reseed --scheduled`).
 
@@ -665,26 +659,76 @@ def do_reseed_scheduled() -> int:
     if not aliases:
         print("no scheduled profiles to reseed (OWA_SCHEDULED is empty).", file=sys.stderr)
         return 0
-    return _reseed_aliases(aliases)
+    return _reseed_sequential(aliases, visual=visual)
 
 
-def _reseed_aliases(aliases: list[str]) -> int:
-    """Reseed each alias in `aliases` sequentially. Returns the max exit
-    code so a partial failure is still surfaced. Shared by do_reseed_all
-    and do_reseed_scheduled.
+def _reseed_cmd(alias: str, visual: bool) -> list[str]:
+    """argv for reseeding one profile in a child owa-piggy. A PyInstaller
+    build is its own interpreter-less binary, so it re-invokes itself."""
+    base = (
+        [sys.executable] if getattr(sys, "frozen", False) else [sys.executable, "-m", "owa_piggy"]
+    )
+    return base + ["reseed", "--profile", alias] + (["--visual"] if visual else [])
+
+
+def _run_child(alias: str, visual: bool) -> int:
+    """Reseed `alias` in a child process, relaying its output to our stderr
+    with every line tagged `[alias]` so interleaved runs stay attributable.
+    stdin is inherited, so a TTY parent still gets interactive sign-in."""
+    tag = f"[{alias}]"
+    try:
+        proc = subprocess.Popen(
+            _reseed_cmd(alias, visual),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            errors="replace",
+        )
+    except OSError as e:
+        print(f"ERROR: {tag} failed to start reseed: {e}", file=sys.stderr)
+        return 1
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        sys.stderr.write(line if line.startswith(tag) else f"{tag} {line}")
+    return proc.wait()
+
+
+def _reseed_sequential(aliases: list[str], *, visual: bool = False) -> int:
+    """Reseed each alias in turn, in-process. Returns the max exit code so
+    a partial failure is still surfaced. Used by do_reseed_scheduled: the
+    unattended hourly agent has no one waiting on it, so it keeps to one
+    Edge at a time rather than racing several against Keychain and AAD.
     """
     rc = 0
     for i, alias in enumerate(aliases):
         if i:
             print(file=sys.stderr)
         print(f"=== reseed [profile={alias}] ({i + 1}/{len(aliases)}) ===", file=sys.stderr)
-        # set_active_profile rebinds CONFIG_PATH so the nested setup writes
-        # land in the right per-profile config. do_reseed shells out to a
-        # script that calls owa-piggy setup --profile <alias>, which sets
-        # the active profile itself - but the parent caller (cli.py
-        # _cmd_reseed) clears the cache for the explicit alias, and we do
-        # not have that hook here, so re-bind explicitly per profile to
-        # keep the cache layer coherent.
+        # do_reseed rebinds the active profile itself; re-bind here too so the
+        # cache layer is coherent even before do_reseed gets that far.
         set_active_profile(alias)
-        rc = max(rc, do_reseed(alias))
+        rc = max(rc, do_reseed(alias, visual=visual))
     return rc
+
+
+def _reseed_parallel(aliases: list[str], *, visual: bool = False) -> int:
+    """Reseed every alias at once, one child process each. Returns the max
+    exit code so a partial failure is still surfaced. Used by
+    do_reseed_all (`reseed --all`, hand-run, where wallclock matters).
+
+    Child processes, not threads: the active profile is module-global
+    state (`set_active_profile` rebinds CONFIG_PATH, the AT cache follows
+    it), so two profiles in one process would write each other's config.
+    Each profile owns its Edge user-data-dir, and two profiles that share
+    one (a folded alias) queue on `capture._acquire_edge_lock`.
+    """
+    # ponytail: unbounded fan-out, one Edge per profile; cap the pool if a
+    # machine with many profiles starts choking.
+    names = ", ".join(aliases)
+    print(f"=== reseeding {len(aliases)} profile(s) in parallel: {names} ===", file=sys.stderr)
+    with ThreadPoolExecutor(max_workers=len(aliases)) as pool:
+        rcs = list(pool.map(lambda a: _run_child(a, visual), aliases))
+    print(file=sys.stderr)
+    for alias, rc in zip(aliases, rcs):
+        print(f"=== [{alias}] {'ok' if rc == 0 else f'FAILED (exit {rc})'}", file=sys.stderr)
+    return max(rcs)

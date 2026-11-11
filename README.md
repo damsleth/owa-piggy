@@ -411,6 +411,7 @@ owa-piggy profiles set-default work           # change the default pointer
 owa-piggy status --profile personal           # health check, per profile
 owa-piggy reseed --profile work               # recover one profile after 24h
 owa-piggy reseed --profile work --visual      # same, in a visible window (MFA / passkey)
+owa-piggy reseed --all [--visual]             # every enabled profile, in parallel
 owa-piggy creds --profile work --op-item "work m365"   # password+TOTP from 1Password, for unattended sign-in
 owa-piggy profiles delete personal            # remove a profile (config + Edge)
 owa-piggy profiles schedule work              # add 'work' to the shared hourly agent

@@ -20,6 +20,10 @@ Releases before v0.12.0 are recorded only in the annotated git tags
   with AADSTS50058, because Microsoft won't accept stable Edge's session
   from Edge Dev. `install.sh` offers to install Edge Dev, and `--doctor`
   warns while sidecars still use stable Edge.
+- `reseed --all` reseeds every profile at once, one child process each,
+  instead of one after another. The hourly `reseed --scheduled` agent
+  stays sequential. Output lines are
+  tagged `[alias]`, and a per-profile ok/FAILED summary closes the run.
 
 ### Added
 
@@ -30,7 +34,8 @@ Releases before v0.12.0 are recorded only in the annotated git tags
   per profile; `creds --clear` forgets them. See SECURITY.md.
 - `reseed --visual` signs in through a visible Edge window instead of
   headlessly, also past the unattended back-off: the way back in for a
-  capture profile whose session needs MFA or a passkey.
+  capture profile whose session needs MFA or a passkey. `reseed --all
+  --visual` opens one window per profile, all at once.
 - `OWA_EDGE_PATH` (env or `profiles.conf`) picks the Edge binary the
   sidecars run, e.g. another Edge channel.
 

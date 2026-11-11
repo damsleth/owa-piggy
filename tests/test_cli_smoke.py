@@ -1415,10 +1415,12 @@ def test_reseed_all_and_scheduled_mutually_exclusive(monkeypatch, capsys, tmp_co
     assert "--all and --scheduled are mutually exclusive" in capsys.readouterr().err
 
 
-def test_reseed_visual_is_single_profile(monkeypatch, capsys, tmp_config, clean_env):
+def test_reseed_all_visual_passes_visual_through(monkeypatch, capsys, tmp_config, clean_env):
+    seen = []
+    monkeypatch.setattr(cli_mod, "do_reseed_all", lambda *, visual: seen.append(visual) or 0)
     rc = _run(monkeypatch, ["reseed", "--all", "--visual"])
-    assert rc != 0
-    assert "--visual reseeds one profile" in capsys.readouterr().err
+    assert rc == 0
+    assert seen == [True]
 
 
 def test_reseed_scheduled_and_profile_mutually_exclusive(
@@ -1433,14 +1435,14 @@ def test_reseed_scheduled_dispatches_to_do_reseed_scheduled(
     monkeypatch, capsys, tmp_config, clean_env
 ):
     called = []
-    monkeypatch.setattr(cli_mod, "do_reseed_scheduled", lambda: called.append(True) or 0)
+    monkeypatch.setattr(cli_mod, "do_reseed_scheduled", lambda **kw: called.append(True) or 0)
     rc = _run(monkeypatch, ["reseed", "--scheduled"])
     assert rc == 0
     assert called == [True]
 
 
 def test_reseed_scheduled_json_envelope_scope(monkeypatch, capsys, tmp_config, clean_env):
-    monkeypatch.setattr(cli_mod, "do_reseed_scheduled", lambda: 0)
+    monkeypatch.setattr(cli_mod, "do_reseed_scheduled", lambda **kw: 0)
     rc = _run(monkeypatch, ["reseed", "--scheduled", "--json"])
     assert rc == 0
     env = json.loads(capsys.readouterr().out)

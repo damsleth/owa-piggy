@@ -37,8 +37,8 @@ def test_reseed_all_skips_when_registry_present_but_empty(
     calls = []
     monkeypatch.setattr(
         reseed_mod,
-        "do_reseed",
-        lambda alias: calls.append(alias) or 0,
+        "_run_child",
+        lambda alias, visual: calls.append(alias) or 0,
     )
 
     rc = reseed_mod.do_reseed_all()
@@ -59,8 +59,8 @@ def test_reseed_all_keeps_legacy_fallback_when_registry_missing(monkeypatch, tmp
     calls = []
     monkeypatch.setattr(
         reseed_mod,
-        "do_reseed",
-        lambda alias: calls.append(alias) or 0,
+        "_run_child",
+        lambda alias, visual: calls.append(alias) or 0,
     )
 
     rc = reseed_mod.do_reseed_all()
@@ -87,7 +87,7 @@ def test_reseed_scheduled_only_touches_scheduled_profiles(monkeypatch, tmp_confi
     monkeypatch.setattr(
         reseed_mod,
         "do_reseed",
-        lambda alias: calls.append(alias) or 0,
+        lambda alias, **kw: calls.append(alias) or 0,
     )
 
     rc = reseed_mod.do_reseed_scheduled()
@@ -113,7 +113,7 @@ def test_reseed_scheduled_empty_is_not_an_error(monkeypatch, tmp_config, clean_e
     monkeypatch.setattr(
         reseed_mod,
         "do_reseed",
-        lambda alias: calls.append(alias) or 0,
+        lambda alias, **kw: calls.append(alias) or 0,
     )
 
     rc = reseed_mod.do_reseed_scheduled()
@@ -142,7 +142,7 @@ def test_reseed_scheduled_skips_missing_profile_dir(monkeypatch, tmp_config, cle
     monkeypatch.setattr(
         reseed_mod,
         "do_reseed",
-        lambda alias: calls.append(alias) or 0,
+        lambda alias, **kw: calls.append(alias) or 0,
     )
 
     rc = reseed_mod.do_reseed_scheduled()
@@ -150,6 +150,42 @@ def test_reseed_scheduled_skips_missing_profile_dir(monkeypatch, tmp_config, cle
     assert rc == 0
     assert calls == ["work"]
     assert "skipping scheduled profile with no config on disk: ghost" in capsys.readouterr().err
+
+
+def test_reseed_parallel_runs_children_concurrently_and_tags_output(monkeypatch, capsys):
+    """Each profile reseeds in its own child; untagged output lines get the
+    [alias] prefix, already-tagged ones are left alone, the worst exit code
+    wins, and the children overlap instead of running one after another."""
+    import sys
+    import time
+
+    child = (
+        "import sys, time; time.sleep(0.5); "
+        "print('plain line'); print(f'[{sys.argv[1]}] tagged', file=sys.stderr); "
+        "sys.exit(2 if sys.argv[1] == 'bad' else 0)"
+    )
+    monkeypatch.setattr(
+        reseed_mod, "_reseed_cmd", lambda alias, visual: [sys.executable, "-c", child, alias]
+    )
+    t0 = time.monotonic()
+    rc = reseed_mod._reseed_parallel(["good", "bad", "also"], visual=True)
+    elapsed = time.monotonic() - t0
+
+    assert rc == 2
+    assert elapsed < 1.4  # three 0.5s children, sequential would be >= 1.5s
+    err = capsys.readouterr().err
+    for alias in ("good", "bad", "also"):
+        assert f"[{alias}] plain line" in err
+        assert f"[{alias}] tagged" in err
+        assert f"[{alias}] [{alias}]" not in err
+    assert "=== [bad] FAILED (exit 2)" in err
+    assert "=== [good] ok" in err
+
+
+def test_reseed_cmd_passes_visual_and_profile():
+    argv = reseed_mod._reseed_cmd("work", True)
+    assert argv[-4:] == ["reseed", "--profile", "work", "--visual"]
+    assert "--visual" not in reseed_mod._reseed_cmd("work", False)
 
 
 def test_profile_cdp_port_is_stable_and_matches_shell_formula():

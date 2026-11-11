@@ -105,7 +105,8 @@ examples:
   owa-piggy reseed --profile work                  # recover from 24h hard-expiry
   owa-piggy reseed --profile work --visual         # same, in a visible Edge window
   owa-piggy creds --profile work --op-item "work m365"  # store password+TOTP for unattended sign-in
-  owa-piggy reseed --all                           # reseed every configured profile
+  owa-piggy reseed --all                           # reseed every configured profile, in parallel
+  owa-piggy reseed --all --visual                  # same, one visible Edge window per profile
   owa-piggy reseed --scheduled                      # reseed only OWA_SCHEDULED (launchd uses this)
   owa-piggy edge --profile work                    # open Edge with the profile's sidecar session
   owa-piggy setup --profile new                    # paste-flow setup
@@ -364,7 +365,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--visual",
         action="store_true",
         help="reseed in a visible Edge window (sign in / approve MFA or a "
-        "passkey there) instead of headlessly",
+        "passkey there) instead of headlessly; with --all, one window per profile",
     )
     p_reseed.add_argument("--json", action="store_true", help="emit action envelope on stdout")
 
@@ -978,8 +979,6 @@ def _cmd_reseed(args: argparse.Namespace) -> int:
     # --all, --scheduled and --profile are mutually exclusive selectors.
     if all_profiles and scheduled:
         return _usage_error("--all and --scheduled are mutually exclusive")
-    if (all_profiles or scheduled) and getattr(args, "visual", False):
-        return _usage_error("--visual reseeds one profile; pass --profile instead")
     if (all_profiles or scheduled) and args.profile:
         flag = "--all" if all_profiles else "--scheduled"
         return _usage_error(f"{flag} and --profile are mutually exclusive")
@@ -989,7 +988,8 @@ def _cmd_reseed(args: argparse.Namespace) -> int:
         # set_active_profile + the nested `owa-piggy setup` call's own
         # clear_cache, so we do not pre-clear here.
         scope = "all" if all_profiles else "scheduled"
-        rc = do_reseed_all() if all_profiles else do_reseed_scheduled()
+        visual = bool(getattr(args, "visual", False))
+        rc = do_reseed_all(visual=visual) if all_profiles else do_reseed_scheduled(visual=visual)
         if as_json:
             _act(
                 t0,
