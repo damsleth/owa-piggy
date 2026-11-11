@@ -271,3 +271,16 @@ switched-off profile starts popping browser windows again.
 - Don't silently widen scopes or change the default audience.
   `OWA_DEFAULT_AUDIENCE` is the documented override.
 - Don't add emoji, badges, or marketing copy to docs.
+
+### Teams silent sign-in failures hide in a 200 page
+
+When a Teams capture times out with "tried N silent sign-in(s) and redeemed
+no code", AAD answered each `prompt=none` iframe with a **200 "Redirecting"
+page** carrying `$Config.sErrorCode` (seen: 50058), not a 302, so
+`capture.auth_errors` (which reads `Location` headers) reports nothing. The
+iframe is an out-of-process frame; to see the code, auto-attach with
+`Target.setAutoAttach {flatten, waitForDebuggerOnStart}` and evaluate
+`$Config` in the iframe session before it navigates to `/v2/authv2`. Teams
+only falls back to that iframe once its own 24h SPA refresh token is spent,
+so a dead AAD cookie session shows up in Teams roughly a day after it died,
+while OWA keeps reseeding off its refresh token.
