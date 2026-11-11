@@ -338,24 +338,34 @@ def orphan_edge_pids(ps_output: str, edge_dir: Path) -> list[int]:
     return pids
 
 
-def _mark_clean_exit(edge_dir: Path) -> None:
-    """Record the last session as a clean exit, so Edge shows no "Restore
-    pages" bubble. Call only while no browser runs on `edge_dir`.
+def _mark_last_exit(edge_dir: Path, *, clean: bool) -> None:
+    """Record how the last session ended before a launch. Call only while no
+    browser runs on `edge_dir`.
 
-    Capture Edges are always killed (`_terminate`), which leaves
-    `profile.exit_type` at "Crashed", and the next *visible* window - a
-    `--visual` reseed or `owa-piggy edge` - greets the user with "Restore
-    pages: Microsoft Edge closed while you had some pages open". The
+    The two choices trade a cosmetic bubble against sign-ins. Chromium drops
+    every cookie without an expiry at startup unless the last session
+    crashed (ProfileImpl::ShouldRestoreOldSessionCookies; Edge Dev records a
+    SIGTERMed capture as "SessionEnded", which drops them too, measured
+    2026-11-10). A crash, though, greets the next *visible* window - a
+    `--visual` reseed or `owa-piggy edge` - with "Restore pages: Microsoft
+    Edge closed while you had some pages open", and the
     --hide-crash-restore-bubble switch we pass does not stop it in Edge.
-    Best effort: an unreadable Preferences just means the bubble shows."""
+
+    So visible launches are marked clean (no bubble; they keep only the
+    session cookies `_pin_before_exit` gave an expiry) and hidden capture
+    launches crashed (nobody sees a bubble, and whatever an unpinned path
+    left behind - an `owa-piggy edge` window, AAD rewriting a pinned cookie
+    without its expiry - is restored and re-pinned at teardown). Best
+    effort: an unreadable Preferences just means Chromium decides."""
+    exit_type = "Normal" if clean else "Crashed"
     prefs = edge_dir / "Default" / "Preferences"
     try:
         data = json.loads(prefs.read_text())
         profile = data.setdefault("profile", {})
-        if profile.get("exit_type") == "Normal" and profile.get("exited_cleanly") is True:
+        if profile.get("exit_type") == exit_type and profile.get("exited_cleanly") is clean:
             return
-        profile["exit_type"] = "Normal"
-        profile["exited_cleanly"] = True
+        profile["exit_type"] = exit_type
+        profile["exited_cleanly"] = clean
         _config.atomic_write(prefs, json.dumps(data, separators=(",", ":")))
     except (OSError, ValueError, AttributeError):
         pass
@@ -568,7 +578,7 @@ def launch_edge(
     # parent is garbage from a killed run, and would silently steal this
     # launch via the singleton socket.
     _reap_orphan_edge(edge_dir)
-    _mark_clean_exit(edge_dir)
+    _mark_last_exit(edge_dir, clean=not (headless or offscreen))
     # Detach stdout/stderr so a slow CDP consumer can't backpressure
     # Edge into a hang; Edge's own crash logs land in the userdata dir.
     try:
@@ -623,7 +633,7 @@ def open_edge(alias: str, *, url: str | None = None) -> tuple[subprocess.Popen[b
     # which is what the user wants anyway.
     _reap_orphan_edge(edge_dir)
     if _singleton_pid(edge_dir) is None:
-        _mark_clean_exit(edge_dir)
+        _mark_last_exit(edge_dir, clean=True)
     binary = find_edge()
     if not binary:
         raise RuntimeError(
@@ -1253,6 +1263,7 @@ def capture_signin(
         ) from e
     finally:
         if session is not None:
+            _pin_before_exit(session, log)
             session.close()
         _terminate(proc)
 
@@ -1348,8 +1359,9 @@ def capture_silent(
     """Headless Edge for scheduled reseed. Returns (status, config_dict):
 
       ('ok', dict)              success - dict has OWA_REFRESH_TOKEN/OWA_TENANT_ID
-      ('reauth', None)          sidecar session cookies expired; user must
-                                re-run `setup --email` interactively
+      ('reauth', None)          sidecar session cookies expired, or AAD refused
+                                its silent sign-in; user must re-run
+                                `setup --email` interactively
       ('headless_blocked', None) headless Edge never reached OWA - tenant's
                                 CA/device-compliance probably rejects truly
                                 headless. Caller should retry with
@@ -1579,6 +1591,13 @@ def capture_silent(
             session, deadline=deadline, log=log, tick=tick, expected_client_id=expected_client_id
         )
     except TimeoutError as e:
+        # AAD refused the sidecar session: a verdict, not a slow app. Reported
+        # as 'error' it bought a retry and an offscreen fallback (three Edge
+        # launches, each able to fire an Authenticator push) every hour, and
+        # never counted toward reseed's back-off. brkh, 2026-11-10. Headless
+        # still gets its one offscreen try (headless_blocked), because some
+        # tenants only refuse truly headless Edge; offscreen refused is final.
+        refused = False
         if session is None:
             # Edge never exposed a debuggable tab. Nothing to do with the
             # tenant, and the /token advice below would be nonsense here.
@@ -1590,6 +1609,7 @@ def capture_silent(
                 # not the quiet "tokens still fresh" miss. Say what AAD said.
                 hint = " Its AAD sign-in failed:\n" + "\n".join(f"  {e}" for e in errors)
                 if any(e.startswith(("login_required", "interaction_required")) for e in errors):
+                    refused = True
                     hint += (
                         "\n  The sidecar's login.microsoftonline.com session is gone or"
                         " unreadable; sign in again with"
@@ -1600,6 +1620,7 @@ def capture_silent(
                 # carries the error (seen: AADSTS50058 for an nc Teams
                 # capture in Edge Dev, 2026-11-10), so no Location to read.
                 # Tries without a /token redemption still mean "refused".
+                refused = True
                 hint = (
                     f" The app tried {tries} silent sign-in(s) and redeemed no code:"
                     " AAD most likely refused the sidecar session. Sign in again with"
@@ -1618,12 +1639,15 @@ def capture_silent(
                 file=sys.stderr,
             )
         log(f"timeout: {e}")
+        if refused:
+            return ("headless_blocked" if headless else "reauth"), None
         return "error", None
     except (ConnectionError, CdpError, OSError) as e:
         log(f"CDP failure: {e}")
         return "error", None
     finally:
         if session is not None:
+            _pin_before_exit(session, log)
             session.close()
         _terminate(proc)
 
@@ -1750,6 +1774,7 @@ def capture_halo(
         return "error", None
     finally:
         if session is not None:
+            _pin_before_exit(session, log)
             session.close()
         _terminate(proc)
 
@@ -1810,7 +1835,7 @@ def _document_hosts(session: CdpSession) -> set[str]:
         hosts.add(urllib.parse.urlsplit(params.get("request", {}).get("url", "")).netloc)
 
 
-def _pin_session_cookies(session: CdpSession, hosts: set[str], days: int = 14) -> int:
+def _pin_session_cookies(session: CdpSession, hosts: set[str] | None = None, days: int = 14) -> int:
     """Give the session cookies of `hosts` an expiry, so they outlive Edge.
 
     Okta (and the apps behind it) issue their sign-in cookies without an
@@ -1819,13 +1844,16 @@ def _pin_session_cookies(session: CdpSession, hosts: set[str], days: int = 14) -
     A sidecar exits after every capture, so without this every capture
     would start signed out. Re-setting the same cookie with `expires` makes
     Chromium store it; the server's own session lifetime still applies,
-    and each capture re-pins whatever the server rotated.
+    and each capture re-pins whatever the server rotated. `hosts=None`
+    pins every host's session cookies.
     """
     pinned = 0
     for c in session.call("Network.getAllCookies", {}).get("cookies", []):
         domain = c.get("domain", "")
         bare = domain.lstrip(".")
-        if not c.get("session") or not any(h == bare or h.endswith("." + bare) for h in hosts):
+        if not c.get("session") or (
+            hosts is not None and not any(h == bare or h.endswith("." + bare) for h in hosts)
+        ):
             continue
         cookie = {k: c[k] for k in ("name", "value", "path", "secure", "httpOnly") if k in c}
         if c.get("sameSite"):
@@ -1839,6 +1867,29 @@ def _pin_session_cookies(session: CdpSession, hosts: set[str], days: int = 14) -
         if session.call("Network.setCookie", cookie).get("success"):
             pinned += 1
     return pinned
+
+
+def _pin_before_exit(session: CdpSession, log: Callable[[str], None]) -> None:
+    """Pin every session cookie before a capture Edge is stopped, on success
+    and failure alike: a run that ends without pinning hands the next launch
+    a profile whose session cookies Chromium drops at startup.
+
+    Why every capture needs it: Chromium keeps cookies without an expiry
+    across a relaunch only when the last session crashed (`_mark_last_exit`),
+    and a visible window is launched after a clean one, so tenants whose
+    sign-in lives in such a cookie (conditional access "no persistent
+    browser session" leaves AAD's in ESTSAUTH; Okta keeps its own in one)
+    lost it and sent an Okta Verify push every hourly reseed, right after a
+    `--visual` sign-in too. brkh, 2026-11-10. Edge Dev's graceful SIGTERM
+    shutdown usually flushes the pin (measured: a cookie set 2s before
+    SIGTERM survives), and a hidden launch restores session cookies anyway,
+    so a pin lost to a slow flush only matters to the next visible window.
+    Best effort: a dead CDP socket only costs the pin."""
+    try:
+        if pinned := _pin_session_cookies(session):
+            log(f"pinned {pinned} session cookies")
+    except (CdpError, ConnectionError, OSError, TimeoutError) as e:
+        log(f"could not pin session cookies: {e}")
 
 
 def _close_cleanly(port: int, proc: subprocess.Popen[bytes], log: Callable[[str], None]) -> None:

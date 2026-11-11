@@ -636,6 +636,46 @@ def test_silent_unusable_refresh_response_is_an_error_not_a_crash(monkeypatch, t
     assert capture.capture_silent("nc", headless=True) == ("error", None)
 
 
+def test_silent_timeout_after_refused_sign_in_is_reauth(monkeypatch, tmp_path):
+    """The app tried a silent sign-in and never redeemed a code: AAD refused
+    the session. Offscreen that is 'reauth' (no retry, counted toward the
+    back-off; each launch can fire an MFA push); headless it is
+    'headless_blocked' (one offscreen try, then that). A bare timeout with no
+    attempt stays 'error' and keeps its retry."""
+
+    edge_dir = tmp_path / "edge-profile"
+    edge_dir.mkdir()
+    monkeypatch.setattr(capture._config, "profile_edge_dir", lambda a: edge_dir)
+    monkeypatch.setattr(capture, "launch_edge", lambda *a, **kw: None)
+    monkeypatch.setattr(capture, "_terminate", lambda proc: None)
+    monkeypatch.setattr(capture, "_settle_host", lambda *a, **kw: "outlook.cloud.microsoft")
+
+    def no_token(*a, **kw):
+        raise TimeoutError("no /token")
+
+    monkeypatch.setattr(capture, "_capture_token_response", no_token)
+    authorize = {
+        "method": "Network.requestWillBeSent",
+        "params": {
+            "request": {
+                "url": "https://login.microsoftonline.com/t/oauth2/v2.0/authorize?prompt=none"
+            }
+        },
+    }
+    cases = (
+        ([authorize], False, "reauth"),
+        # Some tenants refuse only truly headless Edge: one offscreen try left.
+        ([authorize], True, "headless_blocked"),
+        ([], True, "error"),
+    )
+    for buffered, headless, want in cases:
+        session = _BurstSession("")
+        session._buffered = buffered
+        monkeypatch.setattr(capture, "_open_session", lambda port, s=session: s)
+        monkeypatch.setattr(capture, "_open_parked_session", lambda port, log, s=session: s)
+        assert capture.capture_silent("brkh", headless=headless) == (want, None)
+
+
 def test_edge_lock_is_exclusive_and_released(monkeypatch, tmp_path):
     """Two callers must not hold one Edge profile dir at once. Without this,
     Chromium silently hands the second launch's command line to the first
@@ -743,6 +783,22 @@ def test_pin_session_cookies_only_touches_session_cookies_of_the_chain():
     assert "domain" not in idx
     assert (arr["name"], arr["domain"]) == ("ARRAffinity", ".www.kova.no")
     assert all(c["expires"] > 0 for c in s.set)
+    # No host filter (every AAD capture's teardown): all three session cookies.
+    s.set.clear()
+    assert capture._pin_session_cookies(s) == 3
+    assert "ESTSAUTH" in {c["name"] for c in s.set}
+
+
+def test_pin_before_exit_survives_a_dead_socket():
+    """Teardown pins on failure paths too, where the CDP socket may be gone."""
+
+    class Dead:
+        def call(self, method, params=None):
+            raise ConnectionError("gone")
+
+    logs = []
+    capture._pin_before_exit(Dead(), logs.append)
+    assert logs == ["could not pin session cookies: gone"]
 
 
 def test_bound_clients_of_a_disabled_profile_are_not_captured(monkeypatch, tmp_config, clean_env):
@@ -897,14 +953,17 @@ def test_prune_storage_drops_junk_every_run(monkeypatch, tmp_path):
     assert capture.prune_storage(tmp_path) == 0
 
 
-def test_mark_clean_exit_clears_crashed_state(tmp_path):
-    """A killed capture Edge leaves exit_type "Crashed", which makes the next
-    visible window show "Restore pages". Marked clean, other prefs intact."""
+def test_mark_last_exit_clean_for_visible_crashed_for_hidden(tmp_path):
+    """Visible windows start after a clean exit (no "Restore pages" bubble);
+    hidden captures after a crash, the one state in which Chromium keeps
+    session cookies. Other prefs intact, no Preferences no error."""
     prefs = tmp_path / "Default" / "Preferences"
     prefs.parent.mkdir()
-    prefs.write_text(json.dumps({"profile": {"exit_type": "Crashed", "name": "x"}, "k": 1}))
-    capture._mark_clean_exit(tmp_path)
+    prefs.write_text(json.dumps({"profile": {"exit_type": "SessionEnded", "name": "x"}, "k": 1}))
+    capture._mark_last_exit(tmp_path, clean=True)
     data = json.loads(prefs.read_text())
     assert data["profile"] == {"exit_type": "Normal", "exited_cleanly": True, "name": "x"}
     assert data["k"] == 1
-    capture._mark_clean_exit(tmp_path / "missing")  # no Preferences: no error
+    capture._mark_last_exit(tmp_path, clean=False)
+    assert json.loads(prefs.read_text())["profile"]["exit_type"] == "Crashed"
+    capture._mark_last_exit(tmp_path / "missing", clean=True)

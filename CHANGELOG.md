@@ -39,6 +39,13 @@ Releases before v0.12.0 are recorded only in the annotated git tags
 - No more "Restore pages" bubble in `--visual` and `owa-piggy edge` windows.
   Capture Edges are always killed, which left the sidecar profile marked as
   crashed; owa-piggy now marks it cleanly closed before each launch.
+- Sidecars keep session-cookie sign-ins across reseeds. Chromium drops
+  every cookie without an expiry at a launch that follows a clean exit, so
+  tenants whose sign-in lives in one (no persistent browser session, or an
+  Okta-federated IdP) lost it every run: hourly Okta Verify pushes, even
+  right after `reseed --visual`. Every capture now gives its session
+  cookies an expiry before Edge stops; the server's own session lifetime
+  still applies.
 - Sidecar profiles shrink from about 1 GB to 300-500 MB. Every reseed now
   deletes what a sidecar never needs (history, GPU and shader caches,
   metrics, and Edge's on-device models, Wallet, Shopping and Widevine

@@ -381,7 +381,9 @@ def _do_reseed_capture(alias: str, config: dict[str, str], *, visual: bool = Fal
     # hourly cron failures in the refresh.log. One retry recovers nearly
     # all of them. Skip the retry for 'reauth' (user action required) and
     # 'headless_blocked' (handled by the headless->offscreen fallback
-    # below) since neither benefits from re-running the same path.
+    # below) since neither benefits from re-running the same path. A
+    # timeout where AAD visibly refused the silent sign-in is one of those
+    # two, never 'error': retrying it only fires more MFA pushes.
     if status == "error":
         print(f"[{alias}] capture returned transient error; retrying once...", file=sys.stderr)
         status, captured = capture.capture_silent(
