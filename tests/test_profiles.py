@@ -93,6 +93,13 @@ def test_save_and_load_profiles_conf_round_trip(tmp_config, clean_env):
     assert out["OWA_PROFILES"] == ["default", "work", "personal"]
 
 
+def test_save_profiles_conf_carries_hand_set_edge_path(tmp_config, clean_env):
+    """OWA_EDGE_PATH is only ever hand-set; a registry write must not drop it."""
+    save_profiles_conf({"OWA_PROFILES": ["x"], "OWA_EDGE_PATH": "/Applications/Edge.app"})
+    save_profiles_conf({"OWA_PROFILES": ["x", "y"]})
+    assert load_profiles_conf()["OWA_EDGE_PATH"] == "/Applications/Edge.app"
+
+
 def test_save_profiles_conf_permissions(tmp_config, clean_env):
     save_profiles_conf({"OWA_DEFAULT_PROFILE": "x", "OWA_PROFILES": ["x"]})
     mode = stat.S_IMODE(profiles_conf_path().stat().st_mode)
