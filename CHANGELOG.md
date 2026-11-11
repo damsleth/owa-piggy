@@ -41,6 +41,10 @@ Releases before v0.12.0 are recorded only in the annotated git tags
 
 ### Fixed
 
+- The Teams client is captured at `https://teams.cloud.microsoft/` instead
+  of `teams.microsoft.com`, which now only redirects there. Profiles that
+  stored the old URL switch over on their next reseed. The token-exchange
+  `Origin` is unchanged.
 - No more "Restore pages" bubble in `--visual` and `owa-piggy edge` windows.
   Capture Edges are always killed, which left the sidecar profile marked as
   crashed; owa-piggy now marks it cleanly closed before each launch.

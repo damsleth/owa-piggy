@@ -45,7 +45,7 @@ def test_save_and_load_round_trip(profile):
     # Origin and capture URL default from the known-client registry so the
     # caller never has to restate them.
     assert entry["origin"] == "https://teams.microsoft.com"
-    assert entry["capture_url"] == "https://teams.microsoft.com/"
+    assert entry["capture_url"] == "https://teams.cloud.microsoft/"
     assert entry["rt_issued_at"]
 
 
@@ -93,7 +93,7 @@ def test_forget_client_removes_only_that_client(profile):
 def test_declare_records_a_site_without_a_token(profile):
     entry, err = clients.declare_client(profile, TEAMS)
     assert err == ""
-    assert entry["capture_url"] == "https://teams.microsoft.com/"
+    assert entry["capture_url"] == "https://teams.cloud.microsoft/"
     assert entry["refresh_token"] == ""
     # Declared but not captured: reseed knows where to go, routing does not
     # hand callers an empty token.
@@ -136,7 +136,7 @@ def test_declare_drops_the_token_when_the_sign_in_host_changes(profile):
 
 def test_parse_spec_forms():
     # A bare name resolves to that client's default sign-in URL.
-    assert clients.parse_spec("teams") == (TEAMS, "https://teams.microsoft.com/", "")
+    assert clients.parse_spec("teams") == (TEAMS, "https://teams.cloud.microsoft/", "")
     cid, url, err = clients.parse_spec("devops=https://dev.azure.com/o/p/_workitems")
     assert (cid, url, err) == (DEVOPS_CLIENT_ID, "https://dev.azure.com/o/p/_workitems", "")
     _, _, err = clients.parse_spec("nonesuch")
@@ -293,4 +293,13 @@ def test_windows_app_client_has_a_name():
         clients.MSCLOUD_CLIENT_ID,
         "https://windows.cloud.microsoft",
         "",
+    )
+
+
+def test_capture_targets_moves_legacy_teams_url(tmp_config):
+    """Profiles bound before Teams moved still hold teams.microsoft.com/;
+    capture must open the new host without the user re-adding the client."""
+    clients._put("work", TEAMS, {"capture_url": "https://teams.microsoft.com/"}, replace=True)
+    assert dict(clients.capture_targets("work"))[TEAMS]["capture_url"] == (
+        "https://teams.cloud.microsoft/"
     )

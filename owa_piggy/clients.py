@@ -24,7 +24,7 @@ Each record:
 
     {"name": "teams", "client_id": "5e3ce6c0-...", "enabled": true,
      "refresh_token": "...", "origin": "https://teams.microsoft.com",
-     "capture_url": "https://teams.microsoft.com/",
+     "capture_url": "https://teams.cloud.microsoft/",
      "rt_issued_at": "2026-08-25T17:16:35Z"}
 
 Non-AAD services (halo, kova) and declared-only services (swodp) have no
@@ -94,7 +94,9 @@ KNOWN_CLIENTS: dict[str, ClientMeta] = {
     TEAMS_WEB_CLIENT_ID: {
         "name": "teams",
         "origin": "https://teams.microsoft.com",
-        "capture_url": "https://teams.microsoft.com/",
+        # Teams web moved to teams.cloud.microsoft; the old host only
+        # redirects there, and the extra hop made silent captures flaky.
+        "capture_url": "https://teams.cloud.microsoft/",
     },
     # Windows App (windows.cloud.microsoft, the Windows 365 / AVD web client).
     MSCLOUD_CLIENT_ID: {
@@ -361,6 +363,11 @@ def parse_spec(spec: str | None) -> tuple[str | None, str | None, str]:
     return client_id, normalize_capture_url(client_id, url), ""
 
 
+# Capture URLs that older builds persisted into config.json -> where they
+# live now. Rewritten on read, persisted by the next successful capture.
+_MOVED_CAPTURE_URLS = {"https://teams.microsoft.com/": "https://teams.cloud.microsoft/"}
+
+
 def capture_targets(alias: str) -> list[tuple[str, ClientEntry]]:
     """[(client_id, entry)] for every client this profile declares.
 
@@ -372,9 +379,9 @@ def capture_targets(alias: str) -> list[tuple[str, ClientEntry]]:
     # never start an interactive device-code sign-in. Declared-only services
     # (swodp) have no capture_url: nothing to capture.
     return [
-        (cid, entry)
+        (cid, {**entry, "capture_url": _MOVED_CAPTURE_URLS.get(url, url)})
         for cid, entry in load_clients(alias).items()
-        if cid != PIM_CLIENT_ID and entry.get("capture_url")
+        if cid != PIM_CLIENT_ID and (url := entry.get("capture_url"))
     ]
 
 

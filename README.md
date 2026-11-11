@@ -366,7 +366,7 @@ Per-profile config lives at `~/.config/owa-piggy/profiles/<alias>/config.json`, 
   },
   "clients": [
     {"name": "teams", "client_id": "5e3ce6c0-...", "enabled": true,
-     "refresh_token": "...", "capture_url": "https://teams.microsoft.com/"},
+     "refresh_token": "...", "capture_url": "https://teams.cloud.microsoft/"},
     {"name": "swodp", "enabled": true}
   ]
 }
